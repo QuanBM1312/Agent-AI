@@ -1,0 +1,185 @@
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["postgresqlExtensions"]
+}
+
+datasource db {
+  provider   = "postgresql"
+  url        = env("DATABASE_URL")
+  extensions = [uuid_ossp(map: "uuid-ossp", schema: "extensions"), vector]
+}
+
+model calendar_events {
+  id                 String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  related_job_id     String?  @db.Uuid
+  created_by_user_id String?  @db.Uuid
+  title              String
+  start_time         DateTime @db.Timestamptz(6)
+  end_time           DateTime @db.Timestamptz(6)
+  attendees          Json?
+  users              users?   @relation(fields: [created_by_user_id], references: [id], onUpdate: NoAction)
+  jobs               jobs?    @relation(fields: [related_job_id], references: [id], onUpdate: NoAction)
+}
+
+model chat_messages {
+  id                String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  session_id        String         @db.Uuid
+  role              chat_role_enum
+  content           String
+  retrieved_context Json?
+  timestamp         DateTime       @default(now()) @db.Timestamptz(6)
+  chat_sessions     chat_sessions  @relation(fields: [session_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+}
+
+model chat_sessions {
+  id            String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  user_id       String          @db.Uuid
+  created_at    DateTime        @default(now()) @db.Timestamptz(6)
+  summary       String?
+  chat_messages chat_messages[]
+  users         users           @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+}
+
+model customers {
+  id             String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  company_name   String?
+  contact_person String
+  phone          String?
+  address        String?
+  customer_type  customer_type_enum?
+  jobs           jobs[]
+}
+
+model departments {
+  id    String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name  String  @unique
+  users users[]
+}
+
+model job_line_items {
+  id                     String                 @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  job_id                 String                 @db.Uuid
+  item_id                String                 @db.Uuid
+  quantity               Decimal                @db.Decimal
+  unit_price             Decimal                @db.Decimal
+  materials_and_services materials_and_services @relation(fields: [item_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  jobs                   jobs                   @relation(fields: [job_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+}
+
+model job_reports {
+  id                 String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  job_id             String   @db.Uuid
+  created_by_user_id String   @db.Uuid
+  problem_summary    String?
+  actions_taken      String?
+  image_urls         String[]
+  voice_message_url  String?
+  timestamp          DateTime @default(now()) @db.Timestamptz(6)
+  users              users    @relation(fields: [created_by_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  jobs               jobs     @relation(fields: [job_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+}
+
+model jobs {
+  id                                       String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  job_code                                 String            @unique
+  customer_id                              String            @db.Uuid
+  assigned_technician_id                   String?           @db.Uuid
+  created_by_user_id                       String?           @db.Uuid
+  job_type                                 job_type_enum?
+  status                                   job_status_enum   @default(M_i)
+  scheduled_start_time                     DateTime?         @db.Timestamptz(6)
+  scheduled_end_time                       DateTime?         @db.Timestamptz(6)
+  actual_start_time                        DateTime?         @db.Timestamptz(6)
+  actual_end_time                          DateTime?         @db.Timestamptz(6)
+  notes                                    String?
+  calendar_events                          calendar_events[]
+  job_line_items                           job_line_items[]
+  job_reports                              job_reports[]
+  users_jobs_assigned_technician_idTousers users?            @relation("jobs_assigned_technician_idTousers", fields: [assigned_technician_id], references: [id], onUpdate: NoAction)
+  users_jobs_created_by_user_idTousers     users?            @relation("jobs_created_by_user_idTousers", fields: [created_by_user_id], references: [id], onUpdate: NoAction)
+  customers                                customers         @relation(fields: [customer_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+}
+
+model knowledge_chunks {
+  id          String                 @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  content     String?
+  embedding   Unsupported("vector")?
+  origin_id   String?                @db.Uuid
+  origin_type knowledge_origin_enum?
+  metadata    Json?
+}
+
+model knowledge_sources {
+  id              String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  source_name     String
+  source_type     String
+  hash            String?
+  last_updated_at DateTime? @db.Timestamptz(6)
+  metadata        Json?
+}
+
+model materials_and_services {
+  id             String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  item_code      String           @unique
+  name           String
+  type           item_type_enum
+  unit           String
+  price          Decimal          @db.Decimal
+  job_line_items job_line_items[]
+}
+
+model users {
+  id                                      String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  department_id                           String?           @db.Uuid
+  email                                   String            @unique
+  full_name                               String?
+  role                                    user_role_enum
+  calendar_events                         calendar_events[]
+  chat_sessions                           chat_sessions[]
+  job_reports                             job_reports[]
+  jobs_jobs_assigned_technician_idTousers jobs[]            @relation("jobs_assigned_technician_idTousers")
+  jobs_jobs_created_by_user_idTousers     jobs[]            @relation("jobs_created_by_user_idTousers")
+  departments                             departments?      @relation(fields: [department_id], references: [id], onUpdate: NoAction)
+}
+
+enum chat_role_enum {
+  user
+  assistant
+}
+
+enum customer_type_enum {
+  C__nh_n      @map("Cá nhân")
+  Doanh_nghi_p @map("Doanh nghiệp")
+}
+
+enum item_type_enum {
+  V_t_t_    @map("Vật tư")
+  Nh_n_c_ng @map("Nhân công")
+}
+
+enum job_status_enum {
+  M_i           @map("Mới")
+  ph_n_c_ng     @map("Đã phân công")
+  ang_th_c_hi_n @map("Đang thực hiện")
+  Ho_n_th_nh    @map("Hoàn thành")
+  Treo
+}
+
+enum job_type_enum {
+  B_o_h_nh    @map("Bảo hành")
+  L_p___t_m_i @map("Lắp đặt mới")
+  S_a_ch_a    @map("Sửa chữa")
+}
+
+enum knowledge_origin_enum {
+  KNOWLEDGE_SOURCE
+  JOB_REPORT
+  GOOGLE_SHEET_ROW
+}
+
+enum user_role_enum {
+  Admin
+  Manager
+  Technician
+  Sales
+}

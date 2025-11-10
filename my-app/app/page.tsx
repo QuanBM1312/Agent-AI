@@ -1,16 +1,16 @@
 import Image from "next/image";
-import { createClient } from "@/lib/supabase/server";
-import { cookies } from "next/headers";
 
 export default async function Page() {
-  const cookieStore = cookies();
-  const supabase = createClient(cookieStore);
-  const { data: users } = await supabase.from("users").select();
-
+  // Logic kết nối database đã được chuyển sang các API routes.
+  // Trang này có thể là một trang tĩnh đơn giản hoặc một client component
+  // để gọi và lấy dữ liệu từ các API endpoint (ví dụ: /api/users).
   return (
     <div>
-      <h1>Users</h1>
-      <pre>{JSON.stringify(users, null, 2)}</pre>
+      <h1>Welcome</h1>
+      <p>
+        Các API route đã được cấu hình để kết nối đến cơ sở dữ liệu bằng
+        Prisma.
+      </p>
     </div>
   );
 }
