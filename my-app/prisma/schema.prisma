@@ -102,20 +102,27 @@ model jobs {
 
 model knowledge_chunks {
   id          String                 @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  content     String?
-  embedding   Unsupported("vector")?
-  origin_id   String?                @db.Uuid
-  origin_type knowledge_origin_enum?
+  content     String
+  embedding   Unsupported("vector(1536)") // Ghi rõ kích thước vector là best practice
+  source_id   String                 @db.Uuid
   metadata    Json?
+  
+  // Thêm mối quan hệ tại đây
+  source      knowledge_sources      @relation(fields: [source_id], references: [id], onDelete: Cascade)
+
+  @@index([source_id])
 }
 
 model knowledge_sources {
   id              String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   source_name     String
   source_type     String
-  hash            String?
-  last_updated_at DateTime? @db.Timestamptz(6)
+  hash            String    @unique // Đảm bảo hash là duy nhất và không rỗng
+  last_updated_at DateTime  @default(now()) @db.Timestamptz(6)
   metadata        Json?
+
+  // Thêm mối quan hệ ngược lại
+  chunks          knowledge_chunks[]
 }
 
 model materials_and_services {

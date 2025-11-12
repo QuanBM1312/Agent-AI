@@ -2,10 +2,10 @@ import { NextResponse } from 'next/server';
 
 /**
  * @swagger
- * /api/chat-with-agent:
+ * /api/chat/internal:
  *   post:
  *     summary: Send a message to the n8n RAG agent
- *     description: This endpoint receives a message from the user and a session ID, then forwards it to the n8n workflow for processing and returns the agent's response.
+ *     description: This endpoint forwards a user's message and session ID to the main n8n workflow for processing and returns the agent's response.
  *     tags: [Chat]
  *     requestBody:
  *       required: true
@@ -17,7 +17,7 @@ import { NextResponse } from 'next/server';
  *               chatInput:
  *                 type: string
  *                 description: The user's message.
- *                 example: "What is Formula 1?"
+ *                 example: "What is the F1 regulation for 2025?"
  *               sessionId:
  *                 type: string
  *                 description: A unique ID for each chat session to maintain context.
@@ -28,11 +28,6 @@ import { NextResponse } from 'next/server';
  *     responses:
  *       200:
  *         description: Successful response from the n8n agent.
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               description: The structure of the response will depend on the n8n workflow's output.
  *       400:
  *         description: Invalid request due to missing `chatInput` or `sessionId`.
  *       500:
@@ -49,10 +44,10 @@ export async function POST(request: Request) {
       );
     }
 
-    const n8nWebhookUrl = process.env.N8N_CHAT_WEBHOOK_URL;
+    const n8nWebhookUrl = process.env.N8N_MAIN_RAG_WEBHOOK_URL;
 
     if (!n8nWebhookUrl) {
-      throw new Error('N8N_CHAT_WEBHOOK_URL is not defined in environment variables');
+      throw new Error('N8N_MAIN_RAG_WEBHOOK_URL is not defined in environment variables');
     }
 
     const response = await fetch(n8nWebhookUrl, {
@@ -70,14 +65,11 @@ export async function POST(request: Request) {
         const errorText = await response.text();
         console.error('Failed to call n8n agent:', errorText);
         return NextResponse.json(
-          { message: 'Failed to call n8n agent' }, 
+          { message: 'Failed to call n8n agent' },
           { status: response.status }
         );
       }
-  
-    // n8n chat trigger thường trả về một response stream.
-    // Cách xử lý sẽ phụ thuộc vào việc bạn có muốn stream câu trả lời về frontend hay không.
-    // Ở đây chúng ta chỉ đơn giản là trả về toàn bộ kết quả khi nó hoàn thành.
+
     const result = await response.json();
 
     return NextResponse.json(result);
