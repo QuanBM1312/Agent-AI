@@ -37,10 +37,10 @@ const prisma = new PrismaClient();
  */
 export async function GET(
   request: Request,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const { id } = params;
+    const { id } = await params;
     const department = await prisma.departments.findUnique({
       where: {
         id: id as string,
@@ -105,10 +105,10 @@ export async function GET(
  */
 export async function PATCH(
   request: Request,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   const body = await request.json();
-  const { id } = params;
+  const { id } = await params;
 
   const updatedDepartment = await prisma.departments.update({
     where: { id },
@@ -145,9 +145,9 @@ export async function PATCH(
  */
 export async function DELETE(
   request: Request,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
-  const { id } = params;
+  const { id } = await params;
   const deletedDepartment = await prisma.departments.delete({
     where: { id },
   });

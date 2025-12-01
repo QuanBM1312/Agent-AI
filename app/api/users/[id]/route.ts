@@ -50,10 +50,10 @@ const prisma = new PrismaClient();
  */
 export async function GET(
   request: Request,
-  context: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const { id } = context.params;
+    const { id } = await params;
     const user = await prisma.users.findUnique({
       where: {
         id: id as string,
@@ -136,9 +136,9 @@ export async function GET(
  */
 export async function PATCH(
   request: Request,
-  context: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
-  const { id } = context.params;
+  const { id } = await params;
   const body = await request.json();
 
   const updatedUser = await prisma.users.update({
@@ -176,9 +176,9 @@ export async function PATCH(
  */
 export async function DELETE(
   request: Request,
-  context: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
-  const { id } = context.params;
+  const { id } = await params;
   const deletedUser = await prisma.users.delete({
     where: { id },
   });

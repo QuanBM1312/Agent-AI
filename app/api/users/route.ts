@@ -70,8 +70,12 @@ export async function GET() {
  *           schema:
  *             type: object
  *             required:
+ *               - id
  *               - full_name
  *             properties:
+ *               id:
+ *                 type: string
+ *                 format: uuid
  *               full_name:
  *                 type: string
  *               email: string
@@ -104,7 +108,7 @@ export async function GET() {
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-    const { full_name, email, role, department_id } =
+    const { id, full_name, email, role, department_id } =
       body;
 
     if (!full_name) {
@@ -114,8 +118,16 @@ export async function POST(request: Request) {
       );
     }
 
+    if (!id) {
+      return NextResponse.json(
+        { error: "id is required (must match auth_users id)" },
+        { status: 400 }
+      );
+    }
+
     const newUser = await prisma.users.create({
       data: {
+        id,
         full_name,
         email,
         role,
