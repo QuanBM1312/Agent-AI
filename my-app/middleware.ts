@@ -1,70 +1,62 @@
+import { clerkMiddleware, createRouteMatcher } from "@clerk/nextjs/server";
 import { NextResponse } from "next/server";
-import type { NextRequest } from "next/server";
 
-// Các đường dẫn API cần bảo vệ bằng API Key (dành cho n8n hoặc server-to-server)
-// Lưu ý: Các API này sẽ KHÔNG check session của user, chỉ check API Key trong Header
-const PROTECTED_API_ROUTES = [
+// Define public routes that don't require Clerk authentication
+const isPublicRoute = createRouteMatcher([
+  '/sign-in(.*)',
+  '/sign-up(.*)',
+  '/api/webhooks(.*)',
+  '/docs(.*)',
+  '/',
+  '/api/chat/internal', // Often public or handled via API key
+  // Add other public routes here
+]);
+
+// API routes that are protected by API Key (for n8n/server-to-server)
+// We treat these as "public" for Clerk (so no redirect to login), 
+// but verify the API Key manually.
+const API_KEY_PROTECTED_ROUTES = [
   "/api/job-reports",
   "/api/calendar-events",
   "/api/knowledge/sources",
   "/api/jobs",
-  // "/api/chat/internal" // Nếu muốn bảo vệ cả chat nội bộ
 ];
 
-export function middleware(request: NextRequest) {
-  const { pathname } = request.nextUrl;
+export default clerkMiddleware(async (auth, req) => {
+  const { pathname } = req.nextUrl;
 
-  // 1. Bỏ qua các request đến trang tài liệu, static files, hoặc các route public khác
-  if (
-    pathname.startsWith("/docs") ||
-    pathname.startsWith("/_next") ||
-    pathname.startsWith("/favicon.ico") ||
-    pathname === "/"
-  ) {
-    return NextResponse.next();
-  }
-
-  // 2. Kiểm tra API Key cho các route được bảo vệ (Server-to-Server / n8n)
-  // Logic: Nếu request gửi đến các path trong PROTECTED_API_ROUTES và method là POST/PUT/DELETE (thay đổi dữ liệu)
-  // thì bắt buộc phải có API Key. GET có thể mở (hoặc chặn tùy nhu cầu).
-  if (PROTECTED_API_ROUTES.some((route) => pathname.startsWith(route))) {
-    
-    // Chỉ bảo vệ các method thay đổi dữ liệu (POST, PUT, DELETE, PATCH)
-    // GET method thường dùng cho UI hiển thị, có thể cần xử lý Auth User riêng (Session)
-    // Ở đây ta tập trung chặn n8n/bot lạ spam dữ liệu rác.
-    if (["POST", "PUT", "DELETE", "PATCH"].includes(request.method)) {
-      const apiKey = request.headers.get("x-api-key");
+  // 1. API Key Validation for specific routes
+  if (API_KEY_PROTECTED_ROUTES.some((route) => pathname.startsWith(route))) {
+    // Only protect state-changing methods (POST, PUT, DELETE, PATCH)
+    if (["POST", "PUT", "DELETE", "PATCH"].includes(req.method)) {
+      const apiKey = req.headers.get("x-api-key");
       const validApiKey = process.env.API_SECRET_KEY;
 
-      // Nếu chưa set biến môi trường thì cảnh báo (nhưng vẫn cho qua ở dev mode hoặc chặn luôn tùy bạn)
       if (!validApiKey) {
-        console.warn("WARNING: API_SECRET_KEY is not set in environment variables. API is unprotected.");
-        return NextResponse.next();
-      }
-
-      if (apiKey !== validApiKey) {
+        console.warn("WARNING: API_SECRET_KEY is not set. API is unprotected.");
+      } else if (apiKey !== validApiKey) {
         return NextResponse.json(
           { error: "Unauthorized: Invalid API Key" },
           { status: 401 }
         );
       }
     }
+    // If API Key checks pass (or it's a GET request), allow access
+    // We don't call auth.protect() here because these are machine-to-machine
+    return NextResponse.next();
   }
 
-  // 3. Các logic auth khác (ví dụ check session user cho Frontend) có thể thêm vào đây sau này.
+  // 2. Clerk Authentication for everything else
+  if (!isPublicRoute(req)) {
+    await auth.protect();
+  }
+});
 
-  return NextResponse.next();
-}
-
-// Cấu hình matcher để middleware chỉ chạy trên các path cần thiết (Tối ưu hiệu năng)
 export const config = {
   matcher: [
-    /*
-     * Match all request paths except for the ones starting with:
-     * - _next/static (static files)
-     * - _next/image (image optimization files)
-     * - favicon.ico (favicon file)
-     */
-    "/((?!_next/static|_next/image|favicon.ico).*)",
+    // Skip Next.js internals and all static files, unless found in search params
+    '/((?!_next|[^?]*\\.(?:html?|css|js(?!on)|jpe?g|webp|png|gif|svg|ttf|woff2?|ico|csv|docx?|xlsx?|zip|webmanifest)).*)',
+    // Always run for API routes
+    '/(api|trpc)(.*)',
   ],
 };

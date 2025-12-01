@@ -1,16 +1,25 @@
-import Image from "next/image";
+"use client"
 
-export default async function Page() {
-  // Logic kết nối database đã được chuyển sang các API routes.
-  // Trang này có thể là một trang tĩnh đơn giản hoặc một client component
-  // để gọi và lấy dữ liệu từ các API endpoint (ví dụ: /api/users).
+import { useState } from "react"
+import { Sidebar } from "@/components/sidebar"
+import { ChatInterface } from "@/components/chat-interface"
+import { KnowledgePortal } from "@/components/knowledge-portal"
+import { SchedulingPanel } from "@/components/scheduling-panel"
+import { StoragePanel } from "@/components/storage-panel"
+
+export default function Home() {
+  const [activeTab, setActiveTab] = useState("chat")
+
   return (
-    <div>
-      <h1>Welcome</h1>
-      <p>
-        Các API route đã được cấu hình để kết nối đến cơ sở dữ liệu bằng
-        Prisma.
-      </p>
+    <div className="flex h-screen bg-background">
+      <Sidebar activeTab={activeTab} setActiveTab={setActiveTab} />
+
+      <main className="flex-1 overflow-hidden">
+        {activeTab === "chat" && <ChatInterface />}
+        {activeTab === "knowledge" && <KnowledgePortal />}
+        {activeTab === "scheduling" && <SchedulingPanel />}
+        {activeTab === "storage" && <StoragePanel />}
+      </main>
     </div>
-  );
+  )
 }

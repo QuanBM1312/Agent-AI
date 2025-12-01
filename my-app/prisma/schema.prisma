@@ -18,10 +18,10 @@ model calendar_events {
   title              String
   start_time         DateTime @db.Timestamptz(6)
   end_time           DateTime @db.Timestamptz(6)
-  description        String?  // Thêm trường mô tả
-  location           String?  // Thêm địa điểm
-  google_event_id    String?  // ID từ Google Calendar để map
   attendees          Json?
+  description        String?
+  google_event_id    String?
+  location           String?
   users              users?   @relation(fields: [created_by_user_id], references: [id], onUpdate: NoAction)
   jobs               jobs?    @relation(fields: [related_job_id], references: [id], onUpdate: NoAction)
 
@@ -87,12 +87,12 @@ model job_reports {
   id                 String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   job_id             String?  @db.Uuid
   created_by_user_id String   @db.Uuid
-  customer_ref       String?  // Thêm trường tham chiếu khách hàng (text thuần) nếu chưa có Job ID
   problem_summary    String?
   actions_taken      String?
   image_urls         String[]
   voice_message_url  String?
   timestamp          DateTime @default(now()) @db.Timestamptz(6)
+  customer_ref       String?
   users              users    @relation(fields: [created_by_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   jobs               jobs?    @relation(fields: [job_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
 
@@ -123,24 +123,24 @@ model jobs {
 }
 
 model knowledge_chunks {
-  id          String                   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  content     String?
-  embedding   Unsupported("vector")?
-  origin_id   String?                  @db.Uuid
-  origin_type knowledge_origin_enum?
-  metadata    Json?
-  fts         Unsupported("tsvector")? @default(dbgenerated("to_tsvector('english'::regconfig, COALESCE(content, ''::text))"))
+  id        String                   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  content   String?
+  metadata  Json?
+  fts       Unsupported("tsvector")? @default(dbgenerated("to_tsvector('simple'::regconfig, immutable_unaccent(COALESCE(content, ''::text)))"))
+  embedding Unsupported("vector")?
 
+  @@index([embedding], map: "knowledge_chunks_embedding_hnsw_idx")
+  @@index([fts], map: "knowledge_chunks_fts_gin_idx", type: Gin)
   @@schema("public")
 }
 
 model knowledge_sources {
-  id              String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  source_name     String
-  source_type     String
-  hash            String?
-  last_updated_at DateTime? @db.Timestamptz(6)
-  metadata        Json?
+  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  drive_file_id String?
+  drive_name    String?
+  created_at    DateTime @default(now()) @db.Timestamptz(6)
+  hash          String?
+  sheet_name    String?
 
   @@schema("public")
 }
@@ -159,8 +159,8 @@ model materials_and_services {
 
 model metadata_fields {
   id             String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  metadata_name  String @unique // Ví dụ: "motorsport_category", "year", "document_type"
-  allowed_values String      // Ví dụ: "F1, Rally, WEC", "2024, 2025", "Regulation, Manual"
+  metadata_name  String @unique
+  allowed_values String
 
   @@schema("public")
 }
@@ -456,6 +456,7 @@ model schema_migrations {
   @@schema("auth")
 }
 
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
 /// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
 /// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
 model sessions {
