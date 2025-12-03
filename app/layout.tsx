@@ -29,14 +29,14 @@ export default function RootLayout({
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
-        <header className="flex justify-end p-4 border-b">
+        {/* <header className="flex justify-end p-4 border-b">
           <SignedOut>
             <SignInButton />
           </SignedOut>
           <SignedIn>
             <UserButton />
           </SignedIn>
-        </header>
+        </header> */}
         {children}
       </body>
       </html>
