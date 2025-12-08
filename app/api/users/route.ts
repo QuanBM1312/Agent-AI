@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
-import {PrismaClient} from "@prisma/client";
+import { PrismaClient } from "@prisma/client";
+import { checkRole } from "@/lib/auth";
 
 const prisma = new PrismaClient();
 
@@ -22,7 +23,6 @@ const prisma = new PrismaClient();
  *                 properties:
  *                   id:
  *                     type: string
- *                     format: uuid
  *                   full_name:
  *                     type: string
  *                   email:
@@ -40,6 +40,10 @@ const prisma = new PrismaClient();
  */
 export async function GET() {
   try {
+    if (!await checkRole(['Admin'])) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    }
+
     const users = await prisma.users.findMany({
       orderBy: {
         full_name: "asc",
@@ -75,7 +79,6 @@ export async function GET() {
  *             properties:
  *               id:
  *                 type: string
- *                 format: uuid
  *               full_name:
  *                 type: string
  *               email: string
@@ -91,7 +94,6 @@ export async function GET() {
  *               properties:
  *                 id:
  *                   type: string
- *                   format: uuid
  *                 full_name:
  *                   type: string
  *                 email:
@@ -107,6 +109,10 @@ export async function GET() {
  */
 export async function POST(request: Request) {
   try {
+    if (!await checkRole(['Admin'])) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    }
+
     const body = await request.json();
     const { id, full_name, email, role, department_id } =
       body;
@@ -120,7 +126,7 @@ export async function POST(request: Request) {
 
     if (!id) {
       return NextResponse.json(
-        { error: "id is required (must match auth_users id)" },
+        { error: "id is required" },
         { status: 400 }
       );
     }

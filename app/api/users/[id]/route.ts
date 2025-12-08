@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-
+import { checkRole } from "@/lib/auth";
 import { PrismaClient } from "@prisma/client";
 
 const prisma = new PrismaClient();
@@ -17,7 +17,6 @@ const prisma = new PrismaClient();
  *         required: true
  *         schema:
  *           type: string
- *           format: uuid
  *         description: The ID of the user to retrieve.
  *     responses:
  *       200:
@@ -29,7 +28,6 @@ const prisma = new PrismaClient();
  *               properties:
  *                 id:
  *                   type: string
- *                   format: uuid
  *                 full_name:
  *                   type: string
  *                 email:
@@ -42,7 +40,6 @@ const prisma = new PrismaClient();
  *                   properties:
  *                     id:
  *                       type: string
- *                       format: uuid
  *                     name:
  *                       type: string
  *       404:
@@ -53,6 +50,10 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    if (!await checkRole(['Admin'])) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    }
+
     const { id } = await params;
     const user = await prisma.users.findUnique({
       where: {
@@ -86,7 +87,6 @@ export async function GET(
  *         required: true
  *         schema:
  *           type: string
- *           format: uuid
  *         description: The ID of the user to update.
  *     requestBody:
  *       required: true
@@ -104,7 +104,6 @@ export async function GET(
  *                 type: string
  *               department_id:
  *                 type: string
- *                 format: uuid
  *     responses:
  *       200:
  *         description: The updated user.
@@ -115,7 +114,6 @@ export async function GET(
  *               properties:
  *                 id:
  *                   type: string
- *                   format: uuid
  *                 full_name:
  *                   type: string
  *                 email:
@@ -128,7 +126,6 @@ export async function GET(
  *                   properties:
  *                     id:
  *                       type: string
- *                       format: uuid
  *                     name:
  *                       type: string
  *       404:
@@ -138,6 +135,10 @@ export async function PATCH(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  if (!await checkRole(['Admin'])) {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+  }
+
   const { id } = await params;
   const body = await request.json();
 
@@ -166,9 +167,8 @@ export async function PATCH(
  *         required: true
  *         schema:
  *           type: string
- *           format: uuid
  *         description: The ID of the user to delete.
- *     responses:
+ *     responses: 
  *       204:
  *         description: User deleted successfully.
  *       404:
@@ -178,6 +178,10 @@ export async function DELETE(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  if (!await checkRole(['Admin'])) {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+  }
+
   const { id } = await params;
   const deletedUser = await prisma.users.delete({
     where: { id },

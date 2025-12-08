@@ -3,11 +3,13 @@
 import { useState, useRef, useEffect } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { Plus, MessageSquare, MoreVertical, Send, Paperclip, Bot, User, Mic, Loader2 } from "lucide-react"
+import { Plus, MessageSquare, MoreVertical, Send, Paperclip, Bot, User, Mic, Loader2, X, Image as ImageIcon } from "lucide-react"
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter'
 import { oneDark, oneLight } from 'react-syntax-highlighter/dist/esm/styles/prism'
+import { v4 as uuidv4 } from 'uuid'
+import { useMediaRecorder } from "@/hooks/use-media-recorder"
 
 // --- 1. Types Definition ---
 type Role = "user" | "assistant"
@@ -30,16 +32,16 @@ interface ChatSession {
 // --- 2. Sub-components ---
 
 // Component: Sidebar hiển thị lịch sử
-function ChatSidebar({ 
-  sessions, 
-  activeId, 
-  onSelect, 
-  onNew 
-}: { 
-  sessions: ChatSession[], 
-  activeId: string, 
-  onSelect: (id: string) => void, 
-  onNew: () => void 
+function ChatSidebar({
+  sessions,
+  activeId,
+  onSelect,
+  onNew
+}: {
+  sessions: ChatSession[],
+  activeId: string,
+  onSelect: (id: string) => void,
+  onNew: () => void
 }) {
   return (
     <div className="hidden md:flex w-80 border-l border-border bg-muted/10 flex-col h-full">
@@ -50,22 +52,22 @@ function ChatSidebar({
       </div>
       <div className="flex-1 overflow-y-auto p-2 space-y-1">
         {sessions.length === 0 ? (
-            <div className="text-center text-sm text-muted-foreground p-4">Chưa có lịch sử chat</div>
+          <div className="text-center text-sm text-muted-foreground p-4">Chưa có lịch sử chat</div>
         ) : (
-            sessions.map(session => (
+          sessions.map(session => (
             <button
-                key={session.id}
-                onClick={() => onSelect(session.id)}
-                className={`w-full text-left p-3 rounded-lg text-sm transition-colors flex gap-3 items-start
+              key={session.id}
+              onClick={() => onSelect(session.id)}
+              className={`w-full text-left p-3 rounded-lg text-sm transition-colors flex gap-3 items-start
                 ${activeId === session.id ? "bg-primary/10 text-primary" : "hover:bg-muted"}`}
             >
-                <MessageSquare className="w-4 h-4 mt-1 shrink-0 opacity-70" />
-                <div className="overflow-hidden">
+              <MessageSquare className="w-4 h-4 mt-1 shrink-0 opacity-70" />
+              <div className="overflow-hidden">
                 <div className="font-medium truncate">{session.title}</div>
                 <div className="text-xs text-muted-foreground truncate">{session.preview}</div>
-                </div>
+              </div>
             </button>
-            ))
+          ))
         )}
       </div>
     </div>
@@ -75,10 +77,10 @@ function ChatSidebar({
 // Component: Hiển thị một tin nhắn
 function MessageItem({ message }: { message: Message }) {
   const isAI = message.role === "assistant"
-  
+
   // Cấu hình màu sắc khác nhau cho AI (nền sáng) và User (nền màu)
   const components = {
-    code({node, inline, className, children, ...props}: any) {
+    code({ node, inline, className, children, ...props }: any) {
       const match = /language-(\w+)/.exec(className || '')
       return !inline && match ? (
         <SyntaxHighlighter
@@ -92,32 +94,30 @@ function MessageItem({ message }: { message: Message }) {
           {String(children).replace(/\n$/, '')}
         </SyntaxHighlighter>
       ) : (
-        <code className={`${className} px-1 py-0.5 rounded font-mono text-xs ${
-            isAI ? "bg-pink-100 text-pink-600" : "bg-blue-700 text-white border border-blue-500"
-        }`} {...props}>
+        <code className={`${className} px-1 py-0.5 rounded font-mono text-xs ${isAI ? "bg-pink-100 text-pink-600" : "bg-blue-700 text-white border border-blue-500"
+          }`} {...props}>
           {children}
         </code>
       )
     },
-    h1: ({node, ...props}: any) => <h1 className={`text-lg font-bold mt-4 mb-2 ${isAI ? "text-blue-600" : "text-white"}`} {...props} />,
-    h2: ({node, ...props}: any) => <h2 className={`text-base font-bold mt-3 mb-2 ${isAI ? "text-indigo-600" : "text-white"}`} {...props} />,
-    h3: ({node, ...props}: any) => <h3 className={`text-sm font-bold mt-2 mb-1 ${isAI ? "text-purple-600" : "text-white"}`} {...props} />,
-    a: ({node, ...props}: any) => <a className={`underline ${isAI ? "text-blue-500 hover:text-blue-700" : "text-blue-100 hover:text-white"}`} target="_blank" rel="noopener noreferrer" {...props} />,
-    ul: ({node, ...props}: any) => <ul className="list-disc pl-4 my-2 space-y-1" {...props} />,
-    ol: ({node, ...props}: any) => <ol className="list-decimal pl-4 my-2 space-y-1" {...props} />,
-    blockquote: ({node, ...props}: any) => <blockquote className={`border-l-4 pl-4 py-1 my-2 italic ${isAI ? "border-orange-400 bg-orange-50 text-muted-foreground" : "border-white/50 bg-white/10"}`} {...props} />,
-    table: ({node, ...props}: any) => <div className="overflow-x-auto my-2"><table className={`min-w-full divide-y rounded-md ${isAI ? "divide-border border border-border" : "divide-white/20 border border-white/20"}`} {...props} /></div>,
-    th: ({node, ...props}: any) => <th className={`px-3 py-2 text-left text-xs font-medium uppercase tracking-wider ${isAI ? "bg-muted/50 text-muted-foreground" : "bg-white/10 text-white"}`} {...props} />,
-    td: ({node, ...props}: any) => <td className={`px-3 py-2 whitespace-nowrap text-sm ${isAI ? "border-t border-border" : "border-t border-white/10"}`} {...props} />,
+    h1: ({ node, ...props }: any) => <h1 className={`text-lg font-bold mt-4 mb-2 ${isAI ? "text-blue-600" : "text-white"}`} {...props} />,
+    h2: ({ node, ...props }: any) => <h2 className={`text-base font-bold mt-3 mb-2 ${isAI ? "text-indigo-600" : "text-white"}`} {...props} />,
+    h3: ({ node, ...props }: any) => <h3 className={`text-sm font-bold mt-2 mb-1 ${isAI ? "text-purple-600" : "text-white"}`} {...props} />,
+    a: ({ node, ...props }: any) => <a className={`underline ${isAI ? "text-blue-500 hover:text-blue-700" : "text-blue-100 hover:text-white"}`} target="_blank" rel="noopener noreferrer" {...props} />,
+    ul: ({ node, ...props }: any) => <ul className="list-disc pl-4 my-2 space-y-1" {...props} />,
+    ol: ({ node, ...props }: any) => <ol className="list-decimal pl-4 my-2 space-y-1" {...props} />,
+    blockquote: ({ node, ...props }: any) => <blockquote className={`border-l-4 pl-4 py-1 my-2 italic ${isAI ? "border-orange-400 bg-orange-50 text-muted-foreground" : "border-white/50 bg-white/10"}`} {...props} />,
+    table: ({ node, ...props }: any) => <div className="overflow-x-auto my-2"><table className={`min-w-full divide-y rounded-md ${isAI ? "divide-border border border-border" : "divide-white/20 border border-white/20"}`} {...props} /></div>,
+    th: ({ node, ...props }: any) => <th className={`px-3 py-2 text-left text-xs font-medium uppercase tracking-wider ${isAI ? "bg-muted/50 text-muted-foreground" : "bg-white/10 text-white"}`} {...props} />,
+    td: ({ node, ...props }: any) => <td className={`px-3 py-2 whitespace-nowrap text-sm ${isAI ? "border-t border-border" : "border-t border-white/10"}`} {...props} />,
   }
 
   return (
     <div className={`flex w-full ${isAI ? "justify-start" : "justify-end"} px-4 py-2`}>
-      <div className={`max-w-[90%] lg:max-w-[80%] rounded-lg px-4 py-3 ${
-        isAI 
-          ? "bg-muted/50 border border-border" 
-          : "bg-primary text-primary-foreground"
-      }`}>
+      <div className={`max-w-[90%] lg:max-w-[80%] rounded-lg px-4 py-3 ${isAI
+        ? "bg-muted/50 border border-border"
+        : "bg-primary text-primary-foreground"
+        }`}>
         <div className="flex items-center gap-2 mb-1">
           {isAI && <Bot className="w-4 h-4 opacity-70" />}
           <span className={`text-xs font-medium ${isAI ? "opacity-70" : "opacity-90"}`}>
@@ -127,14 +127,14 @@ function MessageItem({ message }: { message: Message }) {
             {message.timestamp.toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" })}
           </span>
         </div>
-        
+
         <div className={`text-sm leading-relaxed overflow-hidden ${isAI ? "markdown-body" : ""}`}>
-            <ReactMarkdown
-              remarkPlugins={[remarkGfm]}
-              components={components}
-            >
-              {message.content}
-            </ReactMarkdown>
+          <ReactMarkdown
+            remarkPlugins={[remarkGfm]}
+            components={components}
+          >
+            {message.content}
+          </ReactMarkdown>
         </div>
 
         {isAI && message.citations && message.citations.length > 0 && (
@@ -156,19 +156,26 @@ function MessageItem({ message }: { message: Message }) {
 
 // --- 3. Main Component ---
 export function ChatInterface() {
-  const [sessions, setSessions] = useState<ChatSession[]>([]) 
-  const [activeSessionId, setActiveSessionId] = useState<string>(() => `session-${Date.now()}`)
-  
-  // INIT MESSAGE: Thêm mẫu Markdown vào đây để test ngay
+  const [sessions, setSessions] = useState<ChatSession[]>([])
+  const [activeSessionId, setActiveSessionId] = useState<string>(() => uuidv4())
+
+  // Media Recorder Hook
+  const { isRecording, mediaBlob, startRecording, stopRecording, clearRecording } = useMediaRecorder()
+
+  // Image Upload State
+  const [selectedImage, setSelectedImage] = useState<File | null>(null)
+  const imageInputRef = useRef<HTMLInputElement>(null)
+
+  // INIT MESSAGE
   const [messages, setMessages] = useState<Message[]>([
     {
       id: "1",
       role: "assistant",
-      content: "Xin chào! Tôi là Trợ lý AI của bạn. Tôi có thể giúp bạn tra cứu thông tin, tạo lịch hẹn, hoặc trả lời các câu hỏi về quy trình vận hành. Bạn cần gì?",
+      content: "Xin chào! Tôi là Trợ lý AI Đa phương thức. Bạn có thể gửi tin nhắn Text, ghi âm Giọng nói hoặc tải lên Hình ảnh để tôi xử lý.",
       timestamp: new Date(),
     },
   ])
-  
+
   const [input, setInput] = useState("")
   const [isLoading, setIsLoading] = useState(false)
   const messagesEndRef = useRef<HTMLDivElement>(null)
@@ -181,56 +188,76 @@ export function ChatInterface() {
     scrollToBottom()
   }, [messages])
 
+  // Cleanup blob URLs to avoid memory leaks if we were previewing them (optional optimization)
+
   const handleNewSession = () => {
-    const newSessionId = `session-${Date.now()}`
+    const newSessionId = uuidv4()
     setActiveSessionId(newSessionId)
     setMessages([
-        {
-            id: Date.now().toString(),
-            role: "assistant",
-            content: "Xin chào! Chúng ta bắt đầu cuộc hội thoại mới nhé. Bạn cần giúp gì?",
-            timestamp: new Date(),
-        }
+      {
+        id: Date.now().toString(),
+        role: "assistant",
+        content: "Xin chào! Chúng ta bắt đầu cuộc hội thoại mới nhé. Bạn cần giúp gì?",
+        timestamp: new Date(),
+      }
     ])
+    clearMedia()
+  }
+
+  const clearMedia = () => {
+    clearRecording()
+    setSelectedImage(null)
+    if (imageInputRef.current) imageInputRef.current.value = ""
   }
 
   const handleSendMessage = async () => {
-    if (!input.trim() || isLoading) return
+    if ((!input.trim() && !mediaBlob && !selectedImage) || isLoading) return
 
-    const userContent = input
+    setIsLoading(true)
+
+    // Build FormData for n8n/API
+    const formData = new FormData()
+    formData.append("sessionId", activeSessionId)
+
+    let userDisplayContent = ""
+
+    if (mediaBlob) {
+      formData.append("file", mediaBlob, "recording.webm")
+      formData.append("type", "voice")
+      userDisplayContent += "🎤 [Ghi âm giọng nói] "
+    } else if (selectedImage) {
+      formData.append("file", selectedImage)
+      formData.append("type", "image")
+      userDisplayContent += `🖼️ [Hình ảnh: ${selectedImage.name}] `
+    } else {
+      formData.append("type", "chat")
+    }
+
+    if (input.trim()) {
+      formData.append("text", input)
+      userDisplayContent += input
+    }
+
+    // Optimistic UI Update
     const userMessage: Message = {
       id: Date.now().toString(),
       role: "user",
-      content: userContent,
+      content: userDisplayContent,
       timestamp: new Date(),
     }
-
     setMessages((prev) => [...prev, userMessage])
     setInput("")
-    setIsLoading(true)
 
-    // Mock session update
-    setSessions(prev => {
-        const existing = prev.find(s => s.id === activeSessionId)
-        if (existing) {
-            return prev.map(s => s.id === activeSessionId ? { ...s, preview: userContent, updatedAt: new Date() } : s)
-        }
-        return [{
-            id: activeSessionId,
-            title: userContent.slice(0, 30) + (userContent.length > 30 ? "..." : ""),
-            preview: userContent,
-            updatedAt: new Date()
-        }, ...prev]
-    })
+    // Clear media states immediately after sending (optimistic)
+    const currentMediaBlob = mediaBlob
+    const currentSelectedImage = selectedImage
+    clearMedia()
 
     try {
-      const response = await fetch("/api/chat/internal", {
+      // Use the n8n proxy route
+      const response = await fetch("/api/chat/n8n", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          chatInput: userContent,
-          sessionId: activeSessionId, 
-        }),
+        body: formData, // fetch automatically sets Content-Type boundary
       })
 
       if (!response.ok) {
@@ -238,16 +265,16 @@ export function ChatInterface() {
       }
 
       const data = await response.json()
-      
-      const aiContent = data.output || data.message || JSON.stringify(data)
-      const citations = data.citations || [] 
+
+      // Handle response - assume standard output structure
+      const aiContent = data.output || data.text || data.message || JSON.stringify(data)
 
       const assistantMessage: Message = {
         id: (Date.now() + 1).toString(),
         role: "assistant",
         content: aiContent,
         timestamp: new Date(),
-        citations: citations
+        citations: data.citations || []
       }
 
       setMessages((prev) => [...prev, assistantMessage])
@@ -256,7 +283,7 @@ export function ChatInterface() {
       const errorMessage: Message = {
         id: (Date.now() + 1).toString(),
         role: "assistant",
-        content: "Xin lỗi, tôi đang gặp sự cố kết nối. Vui lòng thử lại sau.",
+        content: "Xin lỗi, tôi gặp lỗi khi xử lý yêu cầu. Vui lòng thử lại.",
         timestamp: new Date(),
       }
       setMessages((prev) => [...prev, errorMessage])
@@ -265,13 +292,23 @@ export function ChatInterface() {
     }
   }
 
+  const handleImageSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files[0]) {
+      setSelectedImage(e.target.files[0])
+      clearRecording() // Exclusive choice: Image or Audio (simplification)
+    }
+  }
+
   return (
     <div className="flex h-full bg-background overflow-hidden">
       <div className="flex-1 flex flex-col min-w-0 border-r border-border">
         <div className="border-b border-border p-6">
-          <h2 className="text-2xl font-bold text-foreground">Trợ lý Tri thức Tương tác</h2>
-          <p className="text-sm text-muted-foreground mt-1">Hỏi bất cứ điều gì về quy trình, tồn kho, hoặc công việc</p>
-          <p className="text-xs text-muted-foreground/50 mt-1">Session ID: {activeSessionId}</p>
+          <h2 className="text-2xl font-bold text-foreground">Trợ lý Đa phương thức</h2>
+          <p className="text-sm text-muted-foreground mt-1">Hỗ trợ Chat, Voice (Whisper) và Nhận diện ảnh (OCR)</p>
+          <div className="flex items-center gap-2 mt-1">
+            <span className="text-xs text-muted-foreground/50">Session ID: {activeSessionId}</span>
+            <div className={`w-2 h-2 rounded-full ${isLoading ? "bg-yellow-400 animate-pulse" : "bg-green-400"}`} />
+          </div>
         </div>
 
         <div className="flex-1 overflow-y-auto scroll-smooth">
@@ -279,13 +316,6 @@ export function ChatInterface() {
             <div className="h-full flex flex-col items-center justify-center text-center p-8 text-muted-foreground">
               <Bot className="w-12 h-12 mb-4 opacity-20" />
               <h3 className="text-lg font-medium text-foreground mb-2">Tôi có thể giúp gì cho bạn hôm nay?</h3>
-              <div className="grid grid-cols-2 gap-2 mt-6 max-w-md w-full">
-                {["Tra cứu quy trình", "Tạo lịch hẹn mới", "Kiểm tra tồn kho", "Viết báo cáo"].map(label => (
-                  <button key={label} onClick={() => setInput(label)} className="p-3 text-xs border rounded-lg hover:bg-muted transition-colors text-left">
-                    {label}
-                  </button>
-                ))}
-              </div>
             </div>
           ) : (
             <div className="flex flex-col py-4 space-y-4">
@@ -294,11 +324,11 @@ export function ChatInterface() {
               ))}
               {isLoading && (
                 <div className="flex justify-start px-4">
-                    <div className="bg-muted/50 border border-border rounded-lg px-4 py-3 flex items-center gap-2">
-                        <Bot className="w-4 h-4 opacity-70" />
-                        <Loader2 className="w-3 h-3 animate-spin" />
-                        <span className="text-xs text-muted-foreground">Đang suy nghĩ...</span>
-                    </div>
+                  <div className="bg-muted/50 border border-border rounded-lg px-4 py-3 flex items-center gap-2">
+                    <Bot className="w-4 h-4 opacity-70" />
+                    <Loader2 className="w-3 h-3 animate-spin" />
+                    <span className="text-xs text-muted-foreground">Đang xử lý đa phương thức...</span>
+                  </div>
                 </div>
               )}
               <div ref={messagesEndRef} />
@@ -307,38 +337,82 @@ export function ChatInterface() {
         </div>
 
         <div className="border-t border-border p-6 bg-card">
-        <div className="flex gap-3">
-          <button className="p-2 hover:bg-muted rounded-lg transition-colors">
-            <Paperclip className="w-5 h-5 text-muted-foreground" />
-          </button>
-          <button className="p-2 hover:bg-muted rounded-lg transition-colors">
-            <Mic className="w-5 h-5 text-muted-foreground" />
-          </button>
-          <Input
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyPress={(e) => e.key === "Enter" && handleSendMessage()}
-            placeholder="Nhập câu hỏi của bạn..."
-            className="flex-1"
-            disabled={isLoading}
-          />
-          <Button
-            onClick={handleSendMessage}
-            disabled={isLoading || !input.trim()}
-            className="bg-primary hover:bg-primary/90"
-          >
-            <Send className="w-5 h-5" />
-          </Button>
+          {/* Media Previews */}
+          {(mediaBlob || selectedImage) && (
+            <div className="mb-4 p-3 bg-muted/30 border border-border rounded-lg flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                {mediaBlob && (
+                  <>
+                    <Mic className="w-5 h-5 text-red-500 animate-pulse" />
+                    <span className="text-sm font-medium">Đã ghi âm giọng nói ({(mediaBlob.size / 1024).toFixed(1)} KB)</span>
+                  </>
+                )}
+                {selectedImage && (
+                  <>
+                    <ImageIcon className="w-5 h-5 text-blue-500" />
+                    <span className="text-sm font-medium">Ảnh: {selectedImage.name}</span>
+                    {/* Optional: Image Preview Thumbnail */}
+                  </>
+                )}
+              </div>
+              <button onClick={clearMedia} className="p-1 hover:bg-muted rounded-full">
+                <X className="w-4 h-4 opacity-70" />
+              </button>
+            </div>
+          )}
+
+          <div className="flex gap-3">
+            {/* Image Upload Input (Hidden) */}
+            <input
+              type="file"
+              accept="image/*"
+              className="hidden"
+              ref={imageInputRef}
+              onChange={handleImageSelect}
+            />
+
+            <button
+              onClick={() => imageInputRef.current?.click()}
+              className={`p-2 rounded-lg transition-colors ${selectedImage ? "bg-blue-100 text-blue-600" : "hover:bg-muted text-muted-foreground"}`}
+              title="Tải ảnh lên"
+            >
+              <Paperclip className="w-5 h-5" />
+            </button>
+
+            {/* Voice Recorder Button */}
+            <button
+              onMouseDown={startRecording}
+              onMouseUp={stopRecording}
+              onMouseLeave={stopRecording} // Stop if dragged out
+              onTouchStart={startRecording} // Mobile support
+              onTouchEnd={stopRecording}
+              className={`p-2 rounded-lg transition-colors ${isRecording ? "bg-red-100 text-red-600 animate-pulse border border-red-200" : "hover:bg-muted text-muted-foreground"}`}
+              title="Giữ để ghi âm"
+            >
+              <Mic className={`w-5 h-5 ${isRecording ? "fill-current" : ""}`} />
+            </button>
+
+            <Input
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyPress={(e) => e.key === "Enter" && handleSendMessage()}
+              placeholder="Nhập tin nhắn..."
+              className="flex-1"
+              disabled={isLoading || isRecording}
+            />
+            <Button
+              onClick={handleSendMessage}
+              disabled={isLoading || (!input.trim() && !mediaBlob && !selectedImage)}
+              className="bg-primary hover:bg-primary/90"
+            >
+              <Send className="w-5 h-5" />
+            </Button>
+          </div>
+          <div className="text-xs text-muted-foreground/40 mt-2 text-center">
+            Giữ nút Microphone để ghi âm • Chọn Paperclip để gửi ảnh
+          </div>
         </div>
       </div>
-      </div>
-
-      {/* <ChatSidebar 
-        sessions={sessions} 
-        activeId={activeSessionId} 
-        onSelect={setActiveSessionId} 
-        onNew={handleNewSession}
-      /> */}
     </div>
   )
 }

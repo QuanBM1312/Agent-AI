@@ -62,22 +62,36 @@ export async function POST(request: Request) {
     });
 
     if (!response.ok) {
-        const errorText = await response.text();
-        console.error('Failed to call n8n agent:', errorText);
-        return NextResponse.json(
-          { message: 'Failed to call n8n agent' },
-          { status: response.status }
-        );
-      }
+      const errorText = await response.text();
+      console.error('Failed to call n8n agent:', errorText);
+      return NextResponse.json(
+        { message: 'Failed to call n8n agent' },
+        { status: response.status }
+      );
+    }
 
-    const result = await response.json();
+    // Get raw response text first to see what n8n returns
+    const responseText = await response.text();
+    console.log('n8n raw response:', responseText);
+
+    // Try to parse as JSON
+    let result;
+    try {
+      result = JSON.parse(responseText);
+    } catch (parseError) {
+      console.error('Failed to parse n8n response as JSON:', parseError);
+      return NextResponse.json(
+        { message: 'Invalid response format from n8n', rawResponse: responseText },
+        { status: 500 }
+      );
+    }
 
     return NextResponse.json(result);
 
   } catch (error) {
     console.error(error);
     if (error instanceof Error) {
-        return NextResponse.json({ message: error.message }, { status: 500 });
+      return NextResponse.json({ message: error.message }, { status: 500 });
     }
     return NextResponse.json({ message: 'An unknown error occurred' }, { status: 500 });
   }
