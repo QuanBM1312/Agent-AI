@@ -20,6 +20,8 @@ interface Message {
   content: string
   timestamp: Date
   citations?: string[]
+  fileUrl?: string
+  fileType?: "image" | "voice"
 }
 
 interface ChatSession {
@@ -129,6 +131,22 @@ function MessageItem({ message }: { message: Message }) {
         </div>
 
         <div className={`text-sm leading-relaxed overflow-hidden ${isAI ? "markdown-body" : ""}`}>
+          {message.fileUrl && message.fileType === "image" && (
+            <div className="mb-3">
+              <img
+                src={message.fileUrl}
+                alt="Uploaded content"
+                className="max-w-full rounded-lg border border-border/50 shadow-sm max-h-[300px] object-cover"
+              />
+            </div>
+          )}
+
+          {message.fileUrl && message.fileType === "voice" && (
+            <div className="mb-3">
+              <audio controls src={message.fileUrl} className="w-full max-w-[240px]" />
+            </div>
+          )}
+
           <ReactMarkdown
             remarkPlugins={[remarkGfm]}
             components={components}
@@ -234,16 +252,29 @@ export function ChatInterface() {
     }
 
     if (input.trim()) {
-      formData.append("text", input)
+      formData.append("chatInput", input)
       userDisplayContent += input
     }
 
     // Optimistic UI Update
+    let fileUrl = undefined
+    let fileType: "image" | "voice" | undefined = undefined
+
+    if (mediaBlob) {
+      fileUrl = URL.createObjectURL(mediaBlob)
+      fileType = "voice"
+    } else if (selectedImage) {
+      fileUrl = URL.createObjectURL(selectedImage)
+      fileType = "image"
+    }
+
     const userMessage: Message = {
       id: Date.now().toString(),
       role: "user",
       content: userDisplayContent,
       timestamp: new Date(),
+      fileUrl,
+      fileType
     }
     setMessages((prev) => [...prev, userMessage])
     setInput("")
@@ -267,7 +298,7 @@ export function ChatInterface() {
       const data = await response.json()
 
       // Handle response - assume standard output structure
-      const aiContent = data.output || data.text || data.message || JSON.stringify(data)
+      const aiContent = data.output || data.text || data.message || data.description || data.answer || JSON.stringify(data)
 
       const assistantMessage: Message = {
         id: (Date.now() + 1).toString(),
@@ -340,22 +371,35 @@ export function ChatInterface() {
           {/* Media Previews */}
           {(mediaBlob || selectedImage) && (
             <div className="mb-4 p-3 bg-muted/30 border border-border rounded-lg flex items-center justify-between">
-              <div className="flex items-center gap-3">
+              <div className="flex items-center gap-3 w-full overflow-hidden">
                 {mediaBlob && (
-                  <>
-                    <Mic className="w-5 h-5 text-red-500 animate-pulse" />
-                    <span className="text-sm font-medium">Đã ghi âm giọng nói ({(mediaBlob.size / 1024).toFixed(1)} KB)</span>
-                  </>
+                  <div className="flex items-center gap-3 w-full">
+                    <div className="relative">
+                      <Mic className="w-5 h-5 text-red-500 animate-pulse" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs font-medium mb-1">Ghi âm: {(mediaBlob.size / 1024).toFixed(1)} KB</p>
+                      <audio controls src={URL.createObjectURL(mediaBlob)} className="w-full h-8" />
+                    </div>
+                  </div>
                 )}
                 {selectedImage && (
-                  <>
-                    <ImageIcon className="w-5 h-5 text-blue-500" />
-                    <span className="text-sm font-medium">Ảnh: {selectedImage.name}</span>
-                    {/* Optional: Image Preview Thumbnail */}
-                  </>
+                  <div className="flex items-center gap-3">
+                    <div className="relative w-16 h-16 rounded overflow-hidden border border-border">
+                      <img
+                        src={URL.createObjectURL(selectedImage)}
+                        alt="Preview"
+                        className="w-full h-full object-cover"
+                      />
+                    </div>
+                    <div>
+                      <span className="text-sm font-medium block">{selectedImage.name}</span>
+                      <span className="text-xs text-muted-foreground">{(selectedImage.size / 1024).toFixed(1)} KB</span>
+                    </div>
+                  </div>
                 )}
               </div>
-              <button onClick={clearMedia} className="p-1 hover:bg-muted rounded-full">
+              <button onClick={clearMedia} className="p-2 hover:bg-muted rounded-full shrink-0 ml-2">
                 <X className="w-4 h-4 opacity-70" />
               </button>
             </div>
