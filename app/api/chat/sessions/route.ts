@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { PrismaClient } from "@prisma/client";
+import { v4 as uuidv4 } from 'uuid';
 
 const prisma = new PrismaClient();
 
@@ -45,7 +46,7 @@ export async function GET(request: Request) {
     const user_id = searchParams.get("user_id");
 
     if (!user_id) {
-        return NextResponse.json({ error: "user_id is required" }, { status: 400 });
+      return NextResponse.json({ error: "user_id is required" }, { status: 400 });
     }
 
     const sessions = await prisma.chat_sessions.findMany({
@@ -68,13 +69,14 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-    
+
     if (!body.user_id) {
-        return NextResponse.json({ error: "user_id is required" }, { status: 400 });
+      return NextResponse.json({ error: "user_id is required" }, { status: 400 });
     }
 
     const newSession = await prisma.chat_sessions.create({
       data: {
+        id: uuidv4(),
         user_id: body.user_id,
         summary: body.summary || "New Chat",
         created_at: new Date()
