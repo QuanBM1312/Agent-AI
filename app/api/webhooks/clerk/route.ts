@@ -44,45 +44,62 @@ export async function POST(req: Request) {
   const eventType = evt.type;
 
   if (eventType === 'user.created') {
-    const { id, email_addresses, image_url, first_name, last_name } = evt.data;
-    
+    const { id, email_addresses, image_url, first_name, last_name, public_metadata } = evt.data;
+
     const email = email_addresses[0]?.email_address;
     const fullName = `${first_name || ''} ${last_name || ''}`.trim();
 
+    // Read role and department from Clerk metadata (set by Admin)
+    const role = (public_metadata?.role as string) || 'Technician'; // Default to Technician if not set
+    const departmentId = public_metadata?.department_id as string | undefined;
+
     try {
-        await prisma.users.create({
-            data: {
-                id: id,
-                email: email,
-                full_name: fullName,
-                role: 'Technician', // Default role
-            }
-        })
-        console.log(`User ${id} created in DB`);
+      await prisma.users.create({
+        data: {
+          id: id,
+          email: email,
+          full_name: fullName,
+          role: role as any, // Cast to user_role_enum
+          department_id: departmentId || null,
+        }
+      })
+      console.log(`✅ User ${id} created in DB with role: ${role}`);
     } catch (e) {
-        console.error('Error creating user in DB:', e);
-        return new Response('Error creating user in DB', { status: 500 });
+      console.error('❌ Error creating user in DB:', e);
+      return new Response('Error creating user in DB', { status: 500 });
     }
   } else if (eventType === 'user.updated') {
-       const { id, email_addresses, first_name, last_name } = evt.data;
-       const email = email_addresses[0]?.email_address;
-       const fullName = `${first_name || ''} ${last_name || ''}`.trim();
+    const { id, email_addresses, first_name, last_name, public_metadata } = evt.data;
+    const email = email_addresses[0]?.email_address;
+    const fullName = `${first_name || ''} ${last_name || ''}`.trim();
 
-       try {
-           await prisma.users.update({
-               where: { id: id },
-               data: {
-                   email: email,
-                   full_name: fullName,
-               }
-           })
-           console.log(`User ${id} updated in DB`);
-       } catch (e) {
-           console.error(`Error updating user ${id}:`, e);
-       }
+    // Read updated role and department from metadata
+    const role = public_metadata?.role as string | undefined;
+    const departmentId = public_metadata?.department_id as string | undefined;
+
+    try {
+      const updateData: any = {
+        email: email,
+        full_name: fullName,
+      };
+
+      // Only update role/department if they exist in metadata
+      if (role) {
+        updateData.role = role;
+      }
+      if (departmentId !== undefined) {
+        updateData.department_id = departmentId || null;
+      }
+
+      await prisma.users.update({
+        where: { id: id },
+        data: updateData
+      })
+      console.log(`✅ User ${id} updated in DB`);
+    } catch (e) {
+      console.error(`❌ Error updating user ${id}:`, e);
+    }
   }
 
   return new Response('', { status: 200 })
 }
-
-

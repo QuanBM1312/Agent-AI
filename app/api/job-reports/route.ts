@@ -1,131 +1,26 @@
-import { NextResponse } from "next/server";
-import { PrismaClient } from "@prisma/client";
-import { triggerN8nWorkflow } from "@/lib/n8n";
-
-const prisma = new PrismaClient();
-
-/**
- * @swagger
- * /api/job-reports:
- *   get:
- *     summary: Retrieve job reports
- *     description: Fetches job reports. Can be filtered by job_id or created_by_user_id.
- *     tags: [Job Reports]
- *     parameters:
- *       - in: query
- *         name: job_id
- *         schema:
- *           type: string
- *           format: uuid
- *         description: Filter reports by Job ID
- *       - in: query
- *         name: created_by_user_id
- *         schema:
- *           type: string
- *           format: uuid
- *         description: Filter reports by Technician/User ID
- *     responses:
- *       200:
- *         description: List of job reports
- *         content:
- *           application/json:
- *             schema:
- *               type: array
- *               items:
- *                 type: object
- *                 properties:
- *                   id:
- *                     type: string
- *                     format: uuid
- *                   problem_summary:
- *                     type: string
- *                   actions_taken:
- *                     type: string
- *                   image_urls:
- *                     type: array
- *                     items:
- *                       type: string
- *                   voice_message_url:
- *                     type: string
- *                   timestamp:
- *                     type: string
- *                     format: date-time
- *                   jobs:
- *                     type: object
- *                     properties:
- *                       job_code:
- *                         type: string
- *                   users:
- *                     type: object
- *                     properties:
- *                       full_name:
- *                         type: string
- *       500:
- *         description: Server error
- */
-export async function GET(request: Request) {
-  try {
-    const { searchParams } = new URL(request.url);
-    const job_id = searchParams.get("job_id");
-    const created_by_user_id = searchParams.get("created_by_user_id");
-
-    const whereClause: any = {};
-    if (job_id) whereClause.job_id = job_id;
-    if (created_by_user_id) whereClause.created_by_user_id = created_by_user_id;
-
-    const reports = await prisma.job_reports.findMany({
-      where: whereClause,
-      include: {
-        jobs: {
-          select: {
-            job_code: true, // Lấy thêm mã công việc để hiển thị cho rõ
-          },
-        },
-        users: {
-          select: {
-            full_name: true, // Lấy tên người báo cáo
-          },
-        },
-      },
-      orderBy: {
-        timestamp: "desc", // Báo cáo mới nhất lên đầu
-      },
-    });
-
-    return NextResponse.json(reports);
-  } catch (error) {
-    console.error("Failed to fetch job reports:", error);
-    return NextResponse.json(
-      { error: "Unable to fetch job reports" },
-      { status: 500 }
-    );
-  }
-}
+import { NextRequest, NextResponse } from "next/server";
+import { db } from "@/lib/db";
+import { getCurrentUserWithRole, requireRole } from "@/lib/auth-utils";
 
 /**
  * @swagger
  * /api/job-reports:
  *   post:
- *     summary: Create a new job report
- *     tags: [Job Reports]
+ *     summary: Submit a job report
+ *     description: Technician submits report with mandatory image or voice. Job status changes to "Chờ duyệt".
+ *     tags:
+ *       - Job Reports
  *     requestBody:
+ *       required: true
  *       content:
  *         application/json:
  *           schema:
  *             type: object
  *             required:
- *               - created_by_user_id
+ *               - job_id
  *             properties:
  *               job_id:
  *                 type: string
- *                 format: uuid
- *                 nullable: true
- *               customer_ref:
- *                 type: string
- *                 description: "Tên khách hàng (nếu không có Job ID)"
- *               created_by_user_id:
- *                 type: string
- *                 format: uuid
  *               problem_summary:
  *                 type: string
  *               actions_taken:
@@ -136,58 +31,191 @@ export async function GET(request: Request) {
  *                   type: string
  *               voice_message_url:
  *                 type: string
+ *               customer_ref:
+ *                 type: string
+ *     responses:
+ *       201:
+ *         description: Report submitted successfully
+ *       400:
+ *         description: Validation error - Image or voice required
+ *       401:
+ *         description: Unauthorized
  */
-export async function POST(request: Request) {
+export async function POST(req: NextRequest) {
   try {
-    const body = await request.json();
-    const {
-      job_id,
-      customer_ref, // Trường mới
-      created_by_user_id,
-      problem_summary,
-      actions_taken,
-      image_urls,
-      voice_message_url,
-    } = body;
+    const currentUser = await getCurrentUserWithRole();
 
-    // Validation: Cần ít nhất Job ID HOẶC Tên khách hàng
-    if (!created_by_user_id) {
-        return NextResponse.json({ error: "created_by_user_id is required" }, { status: 400 });
+    if (!currentUser) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    if (!job_id && !customer_ref) {
+    const body = await req.json();
+    const {
+      job_id,
+      problem_summary,
+      actions_taken,
+      image_urls = [],
+      voice_message_url,
+      customer_ref,
+    } = body;
+
+    if (!job_id) {
       return NextResponse.json(
-        { error: "Either job_id OR customer_ref is required" },
+        { error: "job_id is required" },
         { status: 400 }
       );
     }
 
-    const newReport = await prisma.job_reports.create({
+    // VALIDATION: Mandatory Image OR Voice (Phương án A - Mục 7)
+    if (image_urls.length === 0 && !voice_message_url) {
+      return NextResponse.json(
+        {
+          error:
+            "Báo cáo phải có ít nhất 1 hình ảnh hoặc 1 đoạn voice. Vui lòng bổ sung.",
+        },
+        { status: 400 }
+      );
+    }
+
+    // Verify job exists and user has access
+    const job = await db.jobs.findUnique({
+      where: { id: job_id },
+    });
+
+    if (!job) {
+      return NextResponse.json({ error: "Job not found" }, { status: 404 });
+    }
+
+    // Technicians can only report on their assigned jobs
+    if (
+      currentUser.role === "Technician" &&
+      job.assigned_technician_id !== currentUser.id
+    ) {
+      return NextResponse.json(
+        { error: "Forbidden: You can only report on your assigned jobs" },
+        { status: 403 }
+      );
+    }
+
+    // Create the report
+    const report = await db.job_reports.create({
       data: {
-        job_id: job_id || null, // Chấp nhận null
-        customer_ref: customer_ref || null,
-        created_by_user_id,
+        job_id,
+        created_by_user_id: currentUser.id,
         problem_summary,
         actions_taken,
-        image_urls: image_urls || [],
+        image_urls,
         voice_message_url,
+        customer_ref,
+      },
+      include: {
+        users: {
+          select: {
+            id: true,
+            full_name: true,
+            email: true,
+          },
+        },
       },
     });
 
-    // Gọi n8n để xử lý tiếp (Gửi thông báo, phân tích AI...)
-    triggerN8nWorkflow("process-new-report", {
-      report_id: newReport.id,
-      technician_id: newReport.created_by_user_id,
-      summary: newReport.problem_summary,
-      timestamp: newReport.timestamp,
-      customer_ref: newReport.customer_ref
+    // QC WORKFLOW (Phương án A - Mục 4): Change job status to "Chờ duyệt"
+    await db.jobs.update({
+      where: { id: job_id },
+      data: {
+        status: "Ch_duy_t", // "Chờ duyệt" - Pending Approval
+      },
     });
 
-    return NextResponse.json(newReport, { status: 201 });
-  } catch (error) {
-    console.error("Failed to create job report:", error);
     return NextResponse.json(
-      { error: "Unable to create job report" },
+      {
+        success: true,
+        report,
+        message: "Báo cáo đã được gửi và đang chờ duyệt",
+      },
+      { status: 201 }
+    );
+  } catch (error: any) {
+    console.error("Error creating job report:", error);
+    return NextResponse.json(
+      { error: "Failed to create report" },
+      { status: 500 }
+    );
+  }
+}
+
+/**
+ * @swagger
+ * /api/job-reports:
+ *   get:
+ *     summary: Get job reports
+ *     description: Returns reports based on user role and permissions
+ *     tags:
+ *       - Job Reports
+ *     responses:
+ *       200:
+ *         description: List of reports
+ *       401:
+ *         description: Unauthorized
+ */
+export async function GET(req: NextRequest) {
+  try {
+    const currentUser = await getCurrentUserWithRole();
+
+    if (!currentUser) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    const { searchParams } = new URL(req.url);
+    const jobId = searchParams.get("job_id");
+
+    let whereClause: any = {};
+
+    // Filter by job_id if provided
+    if (jobId) {
+      whereClause.job_id = jobId;
+    }
+
+    // Technicians only see their own reports
+    if (currentUser.role === "Technician") {
+      whereClause.created_by_user_id = currentUser.id;
+    }
+
+    const reports = await db.job_reports.findMany({
+      where: whereClause,
+      include: {
+        users: {
+          select: {
+            id: true,
+            full_name: true,
+            email: true,
+          },
+        },
+        jobs: {
+          select: {
+            id: true,
+            job_code: true,
+            status: true,
+            customers: {
+              select: {
+                id: true,
+                company_name: true,
+                contact_person: true,
+              },
+            },
+          },
+        },
+      },
+      orderBy: {
+        timestamp: "desc",
+      },
+    });
+
+    return NextResponse.json({ reports });
+  } catch (error: any) {
+    console.error("Error fetching reports:", error);
+    return NextResponse.json(
+      { error: "Failed to fetch reports" },
       { status: 500 }
     );
   }

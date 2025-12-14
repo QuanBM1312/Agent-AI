@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import {PrismaClient} from "@prisma/client";
+import { PrismaClient } from "@prisma/client";
 
 const prisma = new PrismaClient();
 
@@ -7,47 +7,73 @@ const prisma = new PrismaClient();
  * @swagger
  * /api/customers:
  *   get:
- *     summary: Retrieve a list of customers
- *     description: Fetches a list of all customers.
+ *     summary: Get customers list
+ *     description: Admin and Manager can view full customer list. Sales CANNOT view customer list (per requirements).
  *     tags: [Customers]
  *     responses:
  *       200:
  *         description: A list of customers.
- *         content:
- *           application/json:
- *             schema:
- *               type: array
- *               items:
- *                 type: object
- *                 properties:
- *                   id:
- *                     type: string
- *                     format: uuid
- *                   company_name:
- *                     type: string
- *                   contact_person:
- *                     type: string
- *                   phone:
- *                     type: string
- *                   address:
- *                     type: string
- *                   customer_type:
- *                     type: string
+ *       403:
+ *         description: Forbidden - Sales cannot view customer list
  */
-export async function GET() {
+export async function GET(req: Request) {
   try {
+    const { getCurrentUserWithRole } = await import("@/lib/auth-utils");
+    const currentUser = await getCurrentUserWithRole();
+
+    if (!currentUser) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    // SALES RESTRICTION (Per requirements): Sales cannot view customer list
+    // "Sales xem được cả tồn kho, không xem được danh sách khách hàng của công ty"
+    if (currentUser.role === "Sales") {
+      return NextResponse.json(
+        {
+          error:
+            "Forbidden: Sales role does not have access to customer list",
+        },
+        { status: 403 }
+      );
+    }
+
+    // Technicians also cannot view customer list
+    if (currentUser.role === "Technician") {
+      return NextResponse.json(
+        {
+          error:
+            "Forbidden: Technicians do not have access to customer list",
+        },
+        { status: 403 }
+      );
+    }
+
+    const url = new URL(req.url);
+    const search = url.searchParams.get("search");
+
+    let whereClause: any = {};
+
+    if (search) {
+      whereClause.OR = [
+        { company_name: { contains: search, mode: "insensitive" } },
+        { contact_person: { contains: search, mode: "insensitive" } },
+        { phone: { contains: search, mode: "insensitive" } },
+      ];
+    }
+
     const customers = await prisma.customers.findMany({
+      where: whereClause,
       orderBy: {
         company_name: "asc",
       },
     });
-    return NextResponse.json(customers);
+
+    return NextResponse.json({ customers });
   } catch (error) {
     console.error("Failed to fetch customers:", error);
     return NextResponse.json(
       { error: "Unable to fetch customers" },
       { status: 500 }
-
     );
   }
 }

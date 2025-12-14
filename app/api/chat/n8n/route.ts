@@ -1,11 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
+import { prisma } from "@/lib/prisma";
+import { v4 as uuidv4 } from "uuid";
+import { handleApiError } from "@/lib/api-helper";
 
 /**
  * @swagger
  * /api/chat/n8n:
  *   post:
- *     summary: Proxy request to n8n webhook (Multi-modal)
- *     description: Forwards chat messages, voice recordings, or images to the configured n8n workflow.
+ *     summary: Proxy request to n8n webhook (Multi-modal) with persistence
+ *     description: Saves message to DB, forwards to n8n, and saves response.
  *     tags: [Chat]
  *     requestBody:
  *       required: true
@@ -16,18 +19,16 @@ import { NextRequest, NextResponse } from "next/server";
  *             properties:
  *               sessionId:
  *                 type: string
- *                 description: Unique session ID.
+ *               userId:
+ *                 type: string
  *               type:
  *                 type: string
  *                 enum: [chat, voice, image]
- *                 description: Type of message.
  *               chatInput:
  *                 type: string
- *                 description: Text message content (optional for voice/image).
  *               file:
  *                 type: string
  *                 format: binary
- *                 description: Audio file (for type='voice') or Image file (for type='image').
  *             required:
  *               - sessionId
  *               - type
@@ -35,16 +36,80 @@ import { NextRequest, NextResponse } from "next/server";
  *       200:
  *         description: Successful response from n8n.
  *       500:
- *         description: Server error or n8n configuration missing.
+ *         description: Server error.
  */
 export async function POST(req: NextRequest) {
   try {
+    // Get authenticated user (auto-creates if needed)
+    const { getCurrentUserWithRole } = await import("@/lib/auth-utils");
+    const currentUser = await getCurrentUserWithRole();
+
+    if (!currentUser) {
+      return NextResponse.json(
+        { error: "Unauthorized. Please log in." },
+        { status: 401 }
+      );
+    }
+
     const formData = await req.formData();
+    const sessionId = formData.get("sessionId") as string;
     const type = formData.get("type") as string;
+    const chatInput = formData.get("chatInput") as string;
 
-    // Choose Webhook URL based on type
-    let n8nUrl = process.env.N8N_HOST; // Default
+    // 1. Validate inputs
+    if (!sessionId || !type) {
+      return NextResponse.json(
+        { error: "Missing sessionId or type" },
+        { status: 400 }
+      );
+    }
 
+    // Use authenticated user's ID
+    const userId = currentUser.id;
+
+    // 3. Ensure Session Exists (Upsert)
+    // Chúng ta thử tìm session trước
+    let session = await prisma.chat_sessions.findUnique({
+      where: { id: sessionId },
+    });
+
+    if (!session) {
+      // Tạo mới session
+      try {
+        session = await prisma.chat_sessions.create({
+          data: {
+            id: sessionId,
+            user_id: userId,
+            summary: chatInput ? chatInput.substring(0, 50) : "New Conversation",
+            created_at: new Date(),
+          }
+        });
+      } catch (e) {
+        console.error("Failed to create session:", e);
+        // Nếu lỗi này do userId không tồn tại trong bảng users, ta cần báo lỗi rõ ràng
+        return NextResponse.json(
+          { error: "Failed to create session. Ensure userId is valid." },
+          { status: 500 }
+        );
+      }
+    }
+
+    // 4. Save User Message
+    let userContent = chatInput || "";
+    if (type === "voice") userContent = "[Voice Message]";
+    if (type === "image") userContent = "[Image Upload]";
+
+    await prisma.chat_messages.create({
+      data: {
+        session_id: sessionId,
+        role: "user",
+        content: userContent,
+        timestamp: new Date(),
+      },
+    });
+
+    // 5. Forward to n8n
+    let n8nUrl = process.env.N8N_HOST;
     if (type === "image" && process.env.N8N_WEBHOOK_IMAGE) {
       n8nUrl = process.env.N8N_WEBHOOK_IMAGE;
     } else {
@@ -52,56 +117,76 @@ export async function POST(req: NextRequest) {
     }
 
     if (!n8nUrl) {
-      return NextResponse.json(
-        { error: "N8N Webhook URL not configured for this type" },
-        { status: 500 }
-      );
+      // Development Fallback: Nếu không có n8n, trả về echo để test
+      if (process.env.NODE_ENV === 'development') {
+        const fakeResponse = {
+          text: `[DEV MODE] Received: ${userContent}. (Configure N8N_HOST in .env to use real AI)`
+        };
+
+        await prisma.chat_messages.create({
+          data: {
+            session_id: sessionId,
+            role: "assistant",
+            content: fakeResponse.text,
+            timestamp: new Date(),
+          }
+        });
+        return NextResponse.json(fakeResponse);
+      }
+
+      throw new Error("N8N Webhook URL not configured");
     }
 
-    // Forward to n8n
-    // Note: We need to reconstruct formData to send it downstream? 
-    // Or just pass the fields. fetch can accept formData directly in body.
-    // However, when reading from req.formData(), it consumes the stream.
-    // We can create a new FormData to send outgoing.
-
     const outgoingFormData = new FormData();
-    // Copy all entries
-    for (const [key, value] of Array.from(formData.entries())) {
-      outgoingFormData.append(key, value);
+    // Copy fields for n8n
+    outgoingFormData.append("sessionId", sessionId);
+    outgoingFormData.append("type", type);
+    if (chatInput) outgoingFormData.append("chatInput", chatInput);
+
+    // Nếu có file, cần append đúng cách
+    const file = formData.get("file");
+    if (file) {
+      outgoingFormData.append("file", file);
     }
 
     const n8nResponse = await fetch(n8nUrl, {
       method: "POST",
       body: outgoingFormData,
-      // headers: { ... } // fetch with FormData automatically sets Content-Type to multipart
     });
 
     if (!n8nResponse.ok) {
-      throw new Error(`n8n responded with ${n8nResponse.status}`);
+      // Log text lỗi từ n8n
+      const errText = await n8nResponse.text();
+      throw new Error(`n8n responded with ${n8nResponse.status}: ${errText}`);
     }
 
     const text = await n8nResponse.text();
-    console.log("n8n Raw Response:", text); // Debug logging
-
-    if (!text.trim()) {
-      return NextResponse.json({});
-    }
-
     let data;
     try {
       data = JSON.parse(text);
-    } catch (e) {
-      console.warn("Expected JSON from n8n but got plain text/html. Wrapping as text.");
+    } catch {
       data = { text: text };
     }
+
+    // 6. Save AI Response
+    const aiContent = data.output || data.text || data.message || JSON.stringify(data);
+    const citations = data.citations; // Optional
+
+    await prisma.chat_messages.create({
+      data: {
+        session_id: sessionId,
+        role: "assistant",
+        content: aiContent,
+        timestamp: new Date(),
+        retrieved_context: citations ? JSON.stringify(citations) : undefined
+      }
+    });
+
+    return NextResponse.json(data);
 
     return NextResponse.json(data);
 
   } catch (error: any) {
-    console.error("Error proxying to n8n:", error);
-    return NextResponse.json(
-      { error: error.message || "Internal Server Error" },
-      { status: 500 }
-    );
+    return handleApiError(error, "Chat API Error");
   }
 }

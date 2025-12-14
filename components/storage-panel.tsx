@@ -3,6 +3,7 @@
 import { useState } from "react"
 import { ImageIcon, MessageCircle, FileText, Plus, Trash2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
+import { MobileMenuButton } from "@/components/mobile-menu-button"
 
 interface StorageItem {
   id: string
@@ -66,18 +67,22 @@ export function StoragePanel() {
   return (
     <div className="flex flex-col h-full bg-background">
       {/* Header */}
-      <div className="border-b border-border p-6">
-        <div className="flex items-center justify-between">
-          <div>
-            <h2 className="text-2xl font-bold text-foreground">Lưu trữ Đa phương thức</h2>
-            <p className="text-sm text-muted-foreground mt-1">
-              Quản lý hình ảnh, tin nhắn thoại, và báo cáo theo ngữ cảnh
-            </p>
+      <div className="border-b border-border p-3 md:p-6">
+        <div className="flex items-start gap-3">
+          <MobileMenuButton className="-ml-1 mt-0.5" />
+
+          <div className="flex-1 min-w-0 flex items-center justify-between">
+            <div>
+              <h2 className="text-xl md:text-2xl font-bold text-foreground">Lưu trữ Đa phương thức</h2>
+              <p className="text-xs md:text-sm text-muted-foreground mt-1">
+                Quản lý hình ảnh, tin nhắn thoại, và báo cáo theo ngữ cảnh
+              </p>
+            </div>
+            <Button className="gap-2 shrink-0 ml-2">
+              <Plus className="w-4 h-4" />
+              <span className="hidden sm:inline">Thêm</span>
+            </Button>
           </div>
-          <Button className="gap-2">
-            <Plus className="w-4 h-4" />
-            Thêm
-          </Button>
         </div>
       </div>
 

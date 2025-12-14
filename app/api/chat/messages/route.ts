@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { PrismaClient } from "@prisma/client";
+import { handleApiError } from "@/lib/api-helper";
 
 const prisma = new PrismaClient();
 
@@ -50,7 +51,7 @@ export async function GET(request: Request) {
     const session_id = searchParams.get("session_id");
 
     if (!session_id) {
-        return NextResponse.json({ error: "session_id is required" }, { status: 400 });
+      return NextResponse.json({ error: "session_id is required" }, { status: 400 });
     }
 
     const messages = await prisma.chat_messages.findMany({
@@ -64,17 +65,16 @@ export async function GET(request: Request) {
 
     return NextResponse.json(messages);
   } catch (error) {
-    console.error("Failed to fetch messages:", error);
-    return NextResponse.json({ error: "Failed to fetch messages" }, { status: 500 });
+    return handleApiError(error, "Get Messages Error");
   }
 }
 
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-    
+
     if (!body.session_id || !body.role || !body.content) {
-        return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
+      return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
     }
 
     const newMessage = await prisma.chat_messages.create({
@@ -89,8 +89,7 @@ export async function POST(request: Request) {
 
     return NextResponse.json(newMessage, { status: 201 });
   } catch (error) {
-    console.error("Failed to create message:", error);
-    return NextResponse.json({ error: "Failed to create message" }, { status: 500 });
+    return handleApiError(error, "Create Message Error");
   }
 }
 

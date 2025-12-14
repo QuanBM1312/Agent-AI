@@ -1,9 +1,10 @@
 "use client"
 
-import { useState, useRef } from "react"
+import { useState, useRef, useEffect } from "react"
 import { Upload, File, FileText, Sheet as Sheet3, Trash2, Plus, Loader2, Globe, Link as LinkIcon, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { MobileMenuButton } from "@/components/mobile-menu-button"
 
 interface KnowledgeItem {
   id: string
@@ -23,38 +24,9 @@ interface SourceItem {
 export function KnowledgePortal() {
   const [isUploading, setIsUploading] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
-  const [items, setItems] = useState<KnowledgeItem[]>([
-    {
-      id: "1",
-      name: "Quy trình bảo dưỡng máy lạnh.pdf",
-      type: "pdf",
-      size: "2.4 MB",
-      uploadedAt: "2024-10-20",
-    },
-    {
-      id: "2",
-      name: "Bảng giá dịch vụ 2024.xlsx",
-      type: "excel",
-      size: "1.2 MB",
-      uploadedAt: "2024-10-19",
-    },
-    {
-      id: "3",
-      name: "Hướng dẫn sử dụng thiết bị.docx",
-      type: "word",
-      size: "3.1 MB",
-      uploadedAt: "2024-10-18",
-    },
-  ])
+  const [items, setItems] = useState<KnowledgeItem[]>([])
 
-  const [sources, setSources] = useState<SourceItem[]>([
-    {
-      id: "1",
-      name: "Google Sheets - Quản lý tồn kho",
-      type: "GOOGLE_SHEET",
-      status: "Cập nhật tự động hàng ngày"
-    }
-  ])
+  const [sources, setSources] = useState<SourceItem[]>([])
   const [isAddingSource, setIsAddingSource] = useState(false)
   const [newSourceUrl, setNewSourceUrl] = useState("")
   const [isAddingSourceLoading, setIsAddingSourceLoading] = useState(false)
@@ -65,6 +37,47 @@ export function KnowledgePortal() {
     if (['xls', 'xlsx', 'csv'].includes(ext || '')) return 'excel'
     if (['doc', 'docx'].includes(ext || '')) return 'word'
     return 'pdf' // Default fallback
+  }
+
+  useEffect(() => {
+    fetchData()
+  }, [])
+
+  const fetchData = async () => {
+    try {
+      const response = await fetch("/api/knowledge/sources")
+      if (response.ok) {
+        const data = await response.json()
+
+        const validSources: SourceItem[] = []
+        const validItems: KnowledgeItem[] = []
+
+        data.forEach((item: any) => {
+          // Identify type based on sheet_name or logic
+          // Current logic: if sheet_name is 'WEB_URL' -> Source. Else -> File.
+          if (item.sheet_name === 'WEB_URL' || item.sheet_name === 'GOOGLE_SHEET') {
+            validSources.push({
+              id: item.id,
+              name: item.drive_name || item.drive_file_id,
+              type: item.sheet_name === 'GOOGLE_SHEET' ? 'GOOGLE_SHEET' : 'WEB_URL',
+              status: "Đang đồng bộ"
+            })
+          } else {
+            validItems.push({
+              id: item.id,
+              name: item.drive_name || "Unknown File",
+              type: getFileType(item.drive_name || ""),
+              size: formatFileSize(Number(item.hash) || 0), // storing size in hash
+              uploadedAt: item.created_at ? new Date(item.created_at).toISOString().split('T')[0] : ""
+            })
+          }
+        })
+        setSources(validSources)
+        setItems(validItems)
+      }
+    } catch (error) {
+      console.error("Failed to fetch knowledge sources:", error)
+    }
   }
 
   const formatFileSize = (bytes: number) => {
@@ -81,29 +94,42 @@ export function KnowledgePortal() {
     formData.append("file", file)
 
     try {
-      const response = await fetch("/api/knowledge/upload-file", {
+      const response = await fetch("/api/knowledge/upload", {
         method: "POST",
         body: formData,
       })
 
       if (!response.ok) {
-        throw new Error("Upload failed")
+        const errorText = await response.text()
+        try {
+          const errorData = JSON.parse(errorText)
+          throw new Error(errorData.error || "Upload failed")
+        } catch (e: any) {
+          // If JSON parse failed, it's likely an HTML error page or empty
+          if (e.message !== "Upload failed" && !errorText.trim().startsWith("{")) {
+            throw new Error(`Server Error ${response.status}: ${errorText.slice(0, 50)}`)
+          }
+          throw e
+        }
       }
 
       const data = await response.json()
-      
+
       const newItem: KnowledgeItem = {
-        id: data.fileId || Date.now().toString(),
-        name: file.name,
+        id: data.fileId || Date.now().toString(), // Should ideally be DB UUID but using GDrive ID for now
+        name: data.fileName || file.name,
         type: getFileType(file.name),
-        size: formatFileSize(file.size),
+        size: formatFileSize(file.size), // Display size immediately
         uploadedAt: new Date().toISOString().split('T')[0],
       }
 
       setItems(prev => [newItem, ...prev])
-    } catch (error) {
+
+      // Optionally re-fetch to get the DB ID if needed
+      // await fetchData()
+    } catch (error: any) {
       console.error("Error uploading file:", error)
-      alert("Có lỗi xảy ra khi tải file lên. Vui lòng thử lại.")
+      alert(`Có lỗi xảy ra: ${error.message}`)
     } finally {
       setIsUploading(false)
       if (fileInputRef.current) {
@@ -157,7 +183,7 @@ export function KnowledgePortal() {
         const data = await response.json()
         setSources(prev => [...prev, {
           id: data.id || Date.now().toString(),
-          name: newSourceUrl,
+          name: data.drive_name || newSourceUrl,
           type: "WEB_URL",
           status: "Đang đồng bộ"
         }])
@@ -213,24 +239,30 @@ export function KnowledgePortal() {
   return (
     <div className="flex flex-col h-full bg-background">
       {/* Header */}
-      <div className="border-b border-border p-6">
-        <h2 className="text-2xl font-bold text-foreground">Cổng Nạp Tri thức</h2>
-        <p className="text-sm text-muted-foreground mt-1">Quản lý các tài liệu và nguồn dữ liệu của công ty</p>
+      <div className="border-b border-border p-3 md:p-6">
+        <div className="flex items-start gap-3">
+          <MobileMenuButton className="-ml-1 mt-0.5" />
+
+          <div className="flex-1 min-w-0">
+            <h2 className="text-xl md:text-2xl font-bold text-foreground">Cổng Nạp Tri thức</h2>
+            <p className="text-xs md:text-sm text-muted-foreground mt-1">Quản lý các tài liệu và nguồn dữ liệu của công ty</p>
+          </div>
+        </div>
       </div>
 
       {/* Content */}
       <div className="flex-1 overflow-y-auto p-6">
         {/* Upload Area */}
-        <div 
+        <div
           onClick={triggerFileInput}
           onDragOver={handleDragOver}
           onDrop={handleDrop}
           className={`mb-8 border-2 border-dashed border-border rounded-lg p-8 text-center hover:border-primary transition-colors cursor-pointer ${isUploading ? 'opacity-50 pointer-events-none' : ''}`}
         >
-          <input 
-            type="file" 
-            ref={fileInputRef} 
-            className="hidden" 
+          <input
+            type="file"
+            ref={fileInputRef}
+            className="hidden"
             onChange={handleFileSelect}
             accept=".pdf,.doc,.docx,.xls,.xlsx,.csv"
           />
@@ -264,8 +296,8 @@ export function KnowledgePortal() {
           {isAddingSource && (
             <div className="mb-4 p-4 bg-card border border-border rounded-lg animate-in fade-in slide-in-from-top-2">
               <div className="flex gap-2">
-                <Input 
-                  placeholder="Nhập URL trang web hoặc tài liệu..." 
+                <Input
+                  placeholder="Nhập URL trang web hoặc tài liệu..."
                   value={newSourceUrl}
                   onChange={(e) => setNewSourceUrl(e.target.value)}
                   className="flex-1"

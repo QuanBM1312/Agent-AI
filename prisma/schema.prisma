@@ -599,6 +599,7 @@ enum job_status_enum {
   M_i           @map("Mới")
   ph_n_c_ng     @map("Đã phân công")
   ang_th_c_hi_n @map("Đang thực hiện")
+  Ch_duy_t      @map("Chờ duyệt")
   Ho_n_th_nh    @map("Hoàn thành")
   Treo
 

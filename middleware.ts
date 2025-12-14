@@ -10,6 +10,7 @@ const isPublicRoute = createRouteMatcher([
   '/',
   '/api/chat/internal', // Often public or handled via API key
   '/api/chat/n8n',
+  '/api/knowledge/upload',
   // Add other public routes here
 ]);
 
@@ -31,16 +32,21 @@ export default clerkMiddleware(async (auth, req) => {
     // Only protect state-changing methods (POST, PUT, DELETE, PATCH)
     if (["POST", "PUT", "DELETE", "PATCH"].includes(req.method)) {
       const apiKey = req.headers.get("x-api-key");
-      const validApiKey = process.env.API_SECRET_KEY;
 
-      if (!validApiKey) {
-        console.warn("WARNING: API_SECRET_KEY is not set. API is unprotected.");
-      } else if (apiKey !== validApiKey) {
-        return NextResponse.json(
-          { error: "Unauthorized: Invalid API Key" },
-          { status: 401 }
-        );
+      // If API Key is provided, validate it (Machine-to-Machine)
+      if (apiKey) {
+        const validApiKey = process.env.CLERK_SECRET_KEY;
+        if (apiKey !== validApiKey) {
+          return NextResponse.json(
+            { error: "Unauthorized: Invalid API Key" },
+            { status: 401 }
+          );
+        }
+        // Valid API Key -> Allow access (skip Clerk auth below)
+        return NextResponse.next();
       }
+
+      // If NO API Key, fall through to standard Clerk authentication (Frontend)
     }
     // If API Key checks pass (or it's a GET request), allow access
     // We don't call auth.protect() here because these are machine-to-machine

@@ -3,13 +3,15 @@
 import { useState, useRef, useEffect } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { Plus, MessageSquare, MoreVertical, Send, Paperclip, Bot, User, Mic, Loader2, X, Image as ImageIcon } from "lucide-react"
+import { Plus, Send, Paperclip, Bot, User, Mic, Loader2, X, Image as ImageIcon } from "lucide-react"
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter'
 import { oneDark, oneLight } from 'react-syntax-highlighter/dist/esm/styles/prism'
-import { v4 as uuidv4 } from 'uuid'
 import { useMediaRecorder } from "@/hooks/use-media-recorder"
+import { MobileMenuButton } from "@/components/mobile-menu-button"
+import { useUser } from "@clerk/nextjs"
+import { ChatSession } from "@/lib/types"
 
 // --- 1. Types Definition ---
 type Role = "user" | "assistant"
@@ -24,57 +26,7 @@ interface Message {
   fileType?: "image" | "voice"
 }
 
-interface ChatSession {
-  id: string
-  title: string
-  updatedAt: Date
-  preview: string
-}
-
 // --- 2. Sub-components ---
-
-// Component: Sidebar hiển thị lịch sử
-function ChatSidebar({
-  sessions,
-  activeId,
-  onSelect,
-  onNew
-}: {
-  sessions: ChatSession[],
-  activeId: string,
-  onSelect: (id: string) => void,
-  onNew: () => void
-}) {
-  return (
-    <div className="hidden md:flex w-80 border-l border-border bg-muted/10 flex-col h-full">
-      <div className="p-4 border-b border-border">
-        <Button onClick={onNew} className="w-full justify-start gap-2" variant="outline">
-          <Plus className="w-4 h-4" /> Cuộc hội thoại mới
-        </Button>
-      </div>
-      <div className="flex-1 overflow-y-auto p-2 space-y-1">
-        {sessions.length === 0 ? (
-          <div className="text-center text-sm text-muted-foreground p-4">Chưa có lịch sử chat</div>
-        ) : (
-          sessions.map(session => (
-            <button
-              key={session.id}
-              onClick={() => onSelect(session.id)}
-              className={`w-full text-left p-3 rounded-lg text-sm transition-colors flex gap-3 items-start
-                ${activeId === session.id ? "bg-primary/10 text-primary" : "hover:bg-muted"}`}
-            >
-              <MessageSquare className="w-4 h-4 mt-1 shrink-0 opacity-70" />
-              <div className="overflow-hidden">
-                <div className="font-medium truncate">{session.title}</div>
-                <div className="text-xs text-muted-foreground truncate">{session.preview}</div>
-              </div>
-            </button>
-          ))
-        )}
-      </div>
-    </div>
-  )
-}
 
 // Component: Hiển thị một tin nhắn
 function MessageItem({ message }: { message: Message }) {
@@ -126,7 +78,7 @@ function MessageItem({ message }: { message: Message }) {
             {isAI ? "Trợ lý Sutra" : "Bạn"}
           </span>
           <span className={`text-[10px] ${isAI ? "opacity-50" : "opacity-70"}`}>
-            {message.timestamp.toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" })}
+            {new Date(message.timestamp).toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" })}
           </span>
         </div>
 
@@ -173,9 +125,13 @@ function MessageItem({ message }: { message: Message }) {
 }
 
 // --- 3. Main Component ---
-export function ChatInterface() {
-  const [sessions, setSessions] = useState<ChatSession[]>([])
-  const [activeSessionId, setActiveSessionId] = useState<string>(() => uuidv4())
+interface ChatInterfaceProps {
+  activeSessionId: string
+  onMessageSent: () => void
+}
+
+export function ChatInterface({ activeSessionId, onMessageSent }: ChatInterfaceProps) {
+  const { user } = useUser()
 
   // Media Recorder Hook
   const { isRecording, mediaBlob, startRecording, stopRecording, clearRecording } = useMediaRecorder()
@@ -185,14 +141,7 @@ export function ChatInterface() {
   const imageInputRef = useRef<HTMLInputElement>(null)
 
   // INIT MESSAGE
-  const [messages, setMessages] = useState<Message[]>([
-    {
-      id: "1",
-      role: "assistant",
-      content: "Xin chào! Tôi là Trợ lý AI Đa phương thức. Bạn có thể gửi tin nhắn Text, ghi âm Giọng nói hoặc tải lên Hình ảnh để tôi xử lý.",
-      timestamp: new Date(),
-    },
-  ])
+  const [messages, setMessages] = useState<Message[]>([])
 
   const [input, setInput] = useState("")
   const [isLoading, setIsLoading] = useState(false)
@@ -202,25 +151,48 @@ export function ChatInterface() {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" })
   }
 
+  // --- Data Fetching ---
+
+  // Fetch Messages for Active Session
+  useEffect(() => {
+    const loadMessages = async () => {
+      if (!activeSessionId) return
+
+      // Optimistically set loading but don't clear messages immediately to avoid flash if switching quickly
+      setIsLoading(true)
+      // Reset messages if switching sessions, or keep them? better reset or have loading state
+      // setMessages([]) // Optional: clear previous messages
+
+      try {
+        const res = await fetch(`/api/chat/messages?session_id=${activeSessionId}`)
+        if (res.ok) {
+          const data = await res.json()
+          // If no messages found, it might be truly empty or new.
+          if (Array.isArray(data) && data.length > 0) {
+            setMessages(data)
+          } else {
+            // Default welcome for empty/new
+            setMessages([{
+              id: "welcome",
+              role: "assistant",
+              content: "Xin chào! Tôi là Trợ lý AI. Bạn cần giúp gì?",
+              timestamp: new Date()
+            }])
+          }
+        }
+      } catch (e) {
+        console.error("Failed to fetch messages", e)
+      } finally {
+        setIsLoading(false)
+      }
+    }
+
+    loadMessages()
+  }, [activeSessionId])
+
   useEffect(() => {
     scrollToBottom()
   }, [messages])
-
-  // Cleanup blob URLs to avoid memory leaks if we were previewing them (optional optimization)
-
-  const handleNewSession = () => {
-    const newSessionId = uuidv4()
-    setActiveSessionId(newSessionId)
-    setMessages([
-      {
-        id: Date.now().toString(),
-        role: "assistant",
-        content: "Xin chào! Chúng ta bắt đầu cuộc hội thoại mới nhé. Bạn cần giúp gì?",
-        timestamp: new Date(),
-      }
-    ])
-    clearMedia()
-  }
 
   const clearMedia = () => {
     clearRecording()
@@ -236,24 +208,27 @@ export function ChatInterface() {
     // Build FormData for n8n/API
     const formData = new FormData()
     formData.append("sessionId", activeSessionId)
+    // Pass User ID if available, otherwise backend might fail or fallback
+    if (user?.id) formData.append("userId", user.id)
+    console.log("User ID:", user?.id)
 
     let userDisplayContent = ""
 
     if (mediaBlob) {
       formData.append("file", mediaBlob, "recording.webm")
       formData.append("type", "voice")
-      userDisplayContent += "🎤 [Ghi âm giọng nói] "
+      userDisplayContent += "🎤 [Ghi âm giọng nói]"
     } else if (selectedImage) {
       formData.append("file", selectedImage)
       formData.append("type", "image")
-      userDisplayContent += `🖼️ [Hình ảnh: ${selectedImage.name}] `
+      userDisplayContent += `🖼️ [Hình ảnh: ${selectedImage.name}]`
     } else {
       formData.append("type", "chat")
     }
 
     if (input.trim()) {
       formData.append("chatInput", input)
-      userDisplayContent += input
+      userDisplayContent += userDisplayContent ? `\n${input}` : input
     }
 
     // Optimistic UI Update
@@ -309,6 +284,10 @@ export function ChatInterface() {
       }
 
       setMessages((prev) => [...prev, assistantMessage])
+
+      // Notify parent to refresh session list (e.g. title might change)
+      if (onMessageSent) onMessageSent()
+
     } catch (error) {
       console.error("Chat error:", error)
       const errorMessage: Message = {
@@ -326,19 +305,28 @@ export function ChatInterface() {
   const handleImageSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
       setSelectedImage(e.target.files[0])
-      clearRecording() // Exclusive choice: Image or Audio (simplification)
+      clearRecording()
     }
   }
 
   return (
     <div className="flex h-full bg-background overflow-hidden">
-      <div className="flex-1 flex flex-col min-w-0 border-r border-border">
-        <div className="border-b border-border p-6">
-          <h2 className="text-2xl font-bold text-foreground">Trợ lý Đa phương thức</h2>
-          <p className="text-sm text-muted-foreground mt-1">Hỗ trợ Chat, Voice (Whisper) và Nhận diện ảnh (OCR)</p>
-          <div className="flex items-center gap-2 mt-1">
-            <span className="text-xs text-muted-foreground/50">Session ID: {activeSessionId}</span>
-            <div className={`w-2 h-2 rounded-full ${isLoading ? "bg-yellow-400 animate-pulse" : "bg-green-400"}`} />
+      {/* Sidebar was removed from here */}
+
+      <div className="flex-1 flex flex-col min-w-0">
+        <div className="border-b border-border p-3 md:p-6">
+          <div className="flex items-start gap-3">
+            {/* Mobile Menu Button - integrated with title */}
+            <MobileMenuButton className="-ml-1 mt-0.5" />
+
+            <div className="flex-1 min-w-0">
+              <h2 className="text-xl md:text-2xl font-bold text-foreground">Trợ lý Đa phương thức</h2>
+              <p className="text-xs md:text-sm text-muted-foreground mt-1">Hỗ trợ Chat, Voice (Whisper) và Nhận diện ảnh (OCR)</p>
+              <div className="flex items-center gap-2 mt-1">
+                <span className="text-[10px] md:text-xs text-muted-foreground/50 truncate max-w-[200px] md:max-w-none">Session ID: {activeSessionId}</span>
+                <div className={`w-2 h-2 rounded-full shrink-0 ${isLoading ? "bg-yellow-400 animate-pulse" : "bg-green-400"}`} />
+              </div>
+            </div>
           </div>
         </div>
 
@@ -367,7 +355,7 @@ export function ChatInterface() {
           )}
         </div>
 
-        <div className="border-t border-border p-6 bg-card">
+        <div className="border-t border-border p-3 md:p-6 bg-card">
           {/* Media Previews */}
           {(mediaBlob || selectedImage) && (
             <div className="mb-4 p-3 bg-muted/30 border border-border rounded-lg flex items-center justify-between">
@@ -405,7 +393,7 @@ export function ChatInterface() {
             </div>
           )}
 
-          <div className="flex gap-3">
+          <div className="flex gap-2 md:gap-3">
             {/* Image Upload Input (Hidden) */}
             <input
               type="file"
@@ -417,7 +405,7 @@ export function ChatInterface() {
 
             <button
               onClick={() => imageInputRef.current?.click()}
-              className={`p-2 rounded-lg transition-colors ${selectedImage ? "bg-blue-100 text-blue-600" : "hover:bg-muted text-muted-foreground"}`}
+              className={`p-3 md:p-2 rounded-lg transition-colors min-w-[44px] min-h-[44px] md:min-w-0 md:min-h-0 flex items-center justify-center ${selectedImage ? "bg-blue-100 text-blue-600" : "hover:bg-muted text-muted-foreground"}`}
               title="Tải ảnh lên"
             >
               <Paperclip className="w-5 h-5" />
@@ -430,7 +418,7 @@ export function ChatInterface() {
               onMouseLeave={stopRecording} // Stop if dragged out
               onTouchStart={startRecording} // Mobile support
               onTouchEnd={stopRecording}
-              className={`p-2 rounded-lg transition-colors ${isRecording ? "bg-red-100 text-red-600 animate-pulse border border-red-200" : "hover:bg-muted text-muted-foreground"}`}
+              className={`p-3 md:p-2 rounded-lg transition-colors min-w-[44px] min-h-[44px] md:min-w-0 md:min-h-0 flex items-center justify-center ${isRecording ? "bg-red-100 text-red-600 animate-pulse border border-red-200" : "hover:bg-muted text-muted-foreground"}`}
               title="Giữ để ghi âm"
             >
               <Mic className={`w-5 h-5 ${isRecording ? "fill-current" : ""}`} />
@@ -441,18 +429,18 @@ export function ChatInterface() {
               onChange={(e) => setInput(e.target.value)}
               onKeyPress={(e) => e.key === "Enter" && handleSendMessage()}
               placeholder="Nhập tin nhắn..."
-              className="flex-1"
+              className="flex-1 min-h-[44px]"
               disabled={isLoading || isRecording}
             />
             <Button
               onClick={handleSendMessage}
               disabled={isLoading || (!input.trim() && !mediaBlob && !selectedImage)}
-              className="bg-primary hover:bg-primary/90"
+              className="bg-primary hover:bg-primary/90 min-w-[44px] min-h-[44px] md:min-w-0 md:min-h-0 px-3 md:px-4"
             >
               <Send className="w-5 h-5" />
             </Button>
           </div>
-          <div className="text-xs text-muted-foreground/40 mt-2 text-center">
+          <div className="text-[10px] md:text-xs text-muted-foreground/40 mt-2 text-center">
             Giữ nút Microphone để ghi âm • Chọn Paperclip để gửi ảnh
           </div>
         </div>

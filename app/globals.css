@@ -173,3 +173,20 @@ body {
     @apply bg-background text-foreground;
   }
 }
+
+@layer utilities {
+  /* Touch-friendly minimum sizes for mobile */
+  .touch-target {
+    min-width: 44px;
+    min-height: 44px;
+  }
+  
+  /* Mobile text utilities */
+  .text-mobile-sm {
+    font-size: 0.75rem;
+  }
+  
+  .text-mobile-base {
+    font-size: 0.875rem;
+  }
+}

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { PrismaClient } from "@prisma/client";
 import { v4 as uuidv4 } from 'uuid';
+import { handleApiError } from "@/lib/api-helper";
 
 const prisma = new PrismaClient();
 
@@ -42,42 +43,60 @@ const prisma = new PrismaClient();
  */
 export async function GET(request: Request) {
   try {
-    const { searchParams } = new URL(request.url);
-    const user_id = searchParams.get("user_id");
+    // Import auth utils to get current user and auto-create if needed
+    const { getCurrentUserWithRole } = await import("@/lib/auth-utils");
+    const currentUser = await getCurrentUserWithRole();
 
-    if (!user_id) {
-      return NextResponse.json({ error: "user_id is required" }, { status: 400 });
+    if (!currentUser) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
     const sessions = await prisma.chat_sessions.findMany({
       where: {
-        user_id: user_id
+        user_id: currentUser.id
       },
       orderBy: {
         created_at: 'desc'
       },
-      take: 20 // Lấy 20 session gần nhất
+      include: {
+        chat_messages: {
+          take: 1,
+          orderBy: {
+            timestamp: 'desc'
+          }
+        }
+      }
     });
 
-    return NextResponse.json(sessions);
+    const formattedSessions = sessions.map(session => ({
+      id: session.id,
+      title: session.summary || "New Chat",
+      updatedAt: session.created_at, // Using created_at as we don't have updated_at yet
+      preview: session.chat_messages[0]?.content || "No messages yet"
+    }));
+
+    return NextResponse.json(formattedSessions);
   } catch (error) {
-    console.error("Failed to fetch sessions:", error);
-    return NextResponse.json({ error: "Failed to fetch sessions" }, { status: 500 });
+    return handleApiError(error, "Get Sessions Error");
   }
 }
 
 export async function POST(request: Request) {
   try {
-    const body = await request.json();
+    // Import auth utils to get current user and auto-create if needed
+    const { getCurrentUserWithRole } = await import("@/lib/auth-utils");
+    const currentUser = await getCurrentUserWithRole();
 
-    if (!body.user_id) {
-      return NextResponse.json({ error: "user_id is required" }, { status: 400 });
+    if (!currentUser) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
+
+    const body = await request.json();
 
     const newSession = await prisma.chat_sessions.create({
       data: {
         id: uuidv4(),
-        user_id: body.user_id,
+        user_id: currentUser.id,
         summary: body.summary || "New Chat",
         created_at: new Date()
       }
