@@ -39,6 +39,11 @@ import { handleApiError } from "@/lib/api-helper";
  *         description: Server error.
  */
 export async function POST(req: NextRequest) {
+  // Define variables outside try block for finally access
+  let sessionId: string | undefined;
+  let userContent: string | undefined;
+  let clientMessageId: string | undefined;
+
   try {
     // Get authenticated user (auto-creates if needed)
     const { getCurrentUserWithRole } = await import("@/lib/auth-utils");
@@ -52,7 +57,7 @@ export async function POST(req: NextRequest) {
     }
 
     const formData = await req.formData();
-    const sessionId = formData.get("sessionId") as string;
+    sessionId = formData.get("sessionId") as string;
     const type = formData.get("type") as string;
     const chatInput = formData.get("chatInput") as string;
 
@@ -94,19 +99,14 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // 4. Save User Message
-    let userContent = chatInput || "";
+    // 4. Save User Message - REMOVED (User requested N8N to handle saving)
+    // We only prepare the content variable for N8N forwarding if needed (it uses chatInput/formData directly)
+    userContent = chatInput || "";
     if (type === "voice") userContent = "[Voice Message]";
     if (type === "image") userContent = "[Image Upload]";
 
-    await prisma.chat_messages.create({
-      data: {
-        session_id: sessionId,
-        role: "user",
-        content: userContent,
-        timestamp: new Date(),
-      },
-    });
+    // OPTIONAL: If N8N fails to save the user message, there is a risk of data loss here.
+    // The user has explicitly accepted this risk to avoid duplication.
 
     // 5. Forward to n8n
     let n8nUrl = process.env.N8N_HOST;
@@ -122,6 +122,17 @@ export async function POST(req: NextRequest) {
         const fakeResponse = {
           text: `[DEV MODE] Received: ${userContent}. (Configure N8N_HOST in .env to use real AI)`
         };
+
+        // In dev mode without N8N, we MUST save it manually or it won't appear at all.
+        await prisma.chat_messages.create({
+          data: {
+            session_id: sessionId,
+            role: "user",
+            content: userContent,
+            timestamp: new Date(),
+            retrieved_context: { source: 'dev_mode' }
+          }
+        });
 
         await prisma.chat_messages.create({
           data: {
@@ -168,21 +179,35 @@ export async function POST(req: NextRequest) {
       data = { text: text };
     }
 
-    // 6. Save AI Response
+    // 6. Save AI Response (Keep this as fallback/check)
     const aiContent = data.output || data.text || data.message || JSON.stringify(data);
     const citations = data.citations; // Optional
 
-    await prisma.chat_messages.create({
-      data: {
+    // --- RESPONSE DEDUPLICATION ---
+    const connection = await prisma.chat_messages.findFirst({
+      where: {
         session_id: sessionId,
         role: "assistant",
-        content: aiContent,
-        timestamp: new Date(),
-        retrieved_context: citations ? JSON.stringify(citations) : undefined
+      },
+      orderBy: {
+        timestamp: 'desc'
       }
     });
 
-    return NextResponse.json(data);
+    if (connection && connection.content === aiContent && (new Date().getTime() - new Date(connection.timestamp).getTime() < 10000)) {
+      console.log(`[n8n API] Duplicate AI response detected (matched DB), skipping save.`);
+    } else {
+      await prisma.chat_messages.create({
+        data: {
+          session_id: sessionId,
+          role: "assistant",
+          content: aiContent,
+          timestamp: new Date(),
+          retrieved_context: citations ? JSON.stringify(citations) : undefined
+        }
+      });
+    }
+    // ----------------------------
 
     return NextResponse.json(data);
 

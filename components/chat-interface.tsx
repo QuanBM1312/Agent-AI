@@ -12,6 +12,7 @@ import { useMediaRecorder } from "@/hooks/use-media-recorder"
 import { MobileMenuButton } from "@/components/mobile-menu-button"
 import { useUser } from "@clerk/nextjs"
 import { ChatSession } from "@/lib/types"
+import { v4 as uuidv4 } from 'uuid'
 
 // --- 1. Types Definition ---
 type Role = "user" | "assistant"
@@ -205,12 +206,16 @@ export function ChatInterface({ activeSessionId, onMessageSent }: ChatInterfaceP
 
     setIsLoading(true)
 
+    const clientMessageId = uuidv4() // Generate unique ID for this specific message attempt
+
     // Build FormData for n8n/API
     const formData = new FormData()
     formData.append("sessionId", activeSessionId)
+    formData.append("clientMessageId", clientMessageId) // <--- Add Deduplication ID
     // Pass User ID if available, otherwise backend might fail or fallback
     if (user?.id) formData.append("userId", user.id)
     console.log("User ID:", user?.id)
+    console.log("Client Message ID:", clientMessageId)
 
     let userDisplayContent = ""
 

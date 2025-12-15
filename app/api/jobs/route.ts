@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { getCurrentUserWithRole, sanitizeJobForTechnician } from "@/lib/auth-utils";
+import { getCurrentUserWithRole, sanitizeJobForTechnician, canAssignToTechnician } from "@/lib/auth-utils";
 
 /**
  * @swagger
@@ -72,6 +72,7 @@ export async function POST(req: NextRequest) {
       scheduled_start_time,
       scheduled_end_time,
       notes,
+      assigned_technician_id, // Extract new field
     } = body;
 
     // Validate required fields
@@ -93,6 +94,17 @@ export async function POST(req: NextRequest) {
         },
         { status: 400 }
       );
+    }
+
+    // Validate technician assignment if provided
+    if (assigned_technician_id) {
+      const canAssign = await canAssignToTechnician(currentUser, assigned_technician_id);
+      if (!canAssign) {
+        return NextResponse.json(
+          { error: "Forbidden: You cannot assign jobs to this technician" },
+          { status: 403 }
+        );
+      }
     }
 
     // Map display string to Prisma Enum Key
@@ -129,6 +141,7 @@ export async function POST(req: NextRequest) {
         notes,
         created_by_user_id: currentUser.id,
         status: "M_i", // "Mới" - New job status
+        assigned_technician_id: assigned_technician_id || null, // Atomic assignment
       },
       include: {
         customers: true,

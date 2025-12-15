@@ -79,7 +79,7 @@ export function HomeContent({ userRole }: { userRole: string }) {
           />
         )}
         {activeTab === "knowledge" && <KnowledgePortal />}
-        {activeTab === "scheduling" && <SchedulingPanel />}
+        {activeTab === "scheduling" && <SchedulingPanel userRole={userRole} />}
         {activeTab === "reports" && <ReportsPanel userRole={userRole} />}
         {activeTab === "storage" && <StoragePanel />}
       </main>

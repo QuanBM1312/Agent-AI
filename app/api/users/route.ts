@@ -1,6 +1,6 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { PrismaClient } from "@prisma/client";
-import { checkRole } from "@/lib/auth";
+import { getCurrentUserWithRole } from "@/lib/auth-utils";
 
 const prisma = new PrismaClient();
 
@@ -38,24 +38,64 @@ const prisma = new PrismaClient();
  *                       name:
  *                         type: string
  */
-export async function GET() {
+export async function GET(req: NextRequest) {
   try {
-    if (!await checkRole(['Admin'])) {
-      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    const { searchParams } = new URL(req.url);
+    const roleFilter = searchParams.get('role');
+
+    // Use shared auth util that returns department_id
+    const currentUser = await getCurrentUserWithRole();
+
+    if (!currentUser) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    // RBAC: Only Admin and Manager can list users
+    if (!["Admin", "Manager"].includes(currentUser.role)) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
+
+    let whereClause: any = {};
+
+    // Filter by requested role (e.g., ?role=Technician)
+    if (roleFilter) {
+      whereClause.role = roleFilter;
+    }
+
+    // Manager Scope: Restrict to their own department
+    if (currentUser.role === "Manager") {
+      if (!currentUser.department_id) {
+        // Should not happen for valid managers, but safety check
+        return NextResponse.json({ users: [] });
+      }
+      whereClause.department_id = currentUser.department_id;
     }
 
     const users = await prisma.users.findMany({
+      where: whereClause,
+      select: {
+        id: true,
+        full_name: true,
+        email: true,
+        role: true,
+        department_id: true,
+        departments: {
+          select: {
+            name: true
+          }
+        }
+      },
       orderBy: {
         full_name: "asc",
       },
     });
-    return NextResponse.json(users);
+
+    return NextResponse.json(users); // Return array directly (or object {users} depending on convention, previous was array)
   } catch (error) {
     console.error("Failed to fetch users:", error);
     return NextResponse.json(
       { error: "Unable to fetch users" },
       { status: 500 }
-
     );
   }
 }
@@ -109,7 +149,10 @@ export async function GET() {
  */
 export async function POST(request: Request) {
   try {
-    if (!await checkRole(['Admin'])) {
+    // For POST /api/users, typically only Admin can create users directly here
+    // But check requirements: User Management says "Only Admin can view/create users"
+    const currentUser = await getCurrentUserWithRole();
+    if (!currentUser || currentUser.role !== 'Admin') {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 

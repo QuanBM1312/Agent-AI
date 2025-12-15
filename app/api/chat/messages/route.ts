@@ -77,13 +77,51 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
     }
 
+    const { searchParams } = new URL(request.url); // Extract params if needed
+
+    console.log(`[Messages API] POST received. Session: ${body.session_id}, Content: "${body.content.substring(0, 20)}..."`);
+
+    // --- DEDUPLICATION CHECK ---
+    // Fetch last 5 messages for this session to compare in memory
+    const recentMessages = await prisma.chat_messages.findMany({
+      where: {
+        session_id: body.session_id,
+        role: body.role, // Match role
+      },
+      orderBy: {
+        timestamp: 'desc'
+      },
+      take: 5
+    });
+
+    console.log(`[Messages API] Recent messages found: ${recentMessages.length}`);
+    recentMessages.forEach(m => {
+      console.log(` - ID: ${m.id}, Content: "${m.content.substring(0, 20)}...", TimeDiff: ${Date.now() - new Date(m.timestamp).getTime()}ms`);
+    });
+
+    const duplicateMessage = recentMessages.find(msg => {
+      const contentMatch = msg.content.trim() === body.content.trim();
+      const timeMatch = (new Date().getTime() - new Date(msg.timestamp).getTime() < 60000);
+      if (contentMatch && timeMatch) {
+        console.log(`   -> Match found! ID: ${msg.id}`);
+        return true;
+      }
+      return false;
+    });
+
+    if (duplicateMessage) {
+      console.log(`[Messages API] Duplicate detected (Memory Check), skipping creation. ID: ${duplicateMessage.id}`);
+      return NextResponse.json(duplicateMessage, { status: 200 });
+    }
+    // ---------------------------
+
     const newMessage = await prisma.chat_messages.create({
       data: {
         session_id: body.session_id,
         role: body.role, // 'user' hoặc 'assistant'
         content: body.content,
         timestamp: new Date(),
-        retrieved_context: body.retrieved_context || {} // Lưu thêm ngữ cảnh nếu có (cho debugging)
+        retrieved_context: { ...(body.retrieved_context || {}), source: 'messages_api' } // Tag source
       }
     });
 
