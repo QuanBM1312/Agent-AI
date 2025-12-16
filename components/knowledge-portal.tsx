@@ -252,21 +252,6 @@ export function KnowledgePortal() {
 
       {/* Content */}
       <div className="flex-1 overflow-y-auto p-6">
-        {/* Tutorial Video */}
-        <div className="mb-8">
-          <h3 className="font-semibold text-foreground mb-3">Video hướng dẫn</h3>
-          <div className="aspect-video w-full max-w-3xl mx-auto rounded-lg overflow-hidden shadow-sm border bg-black/5">
-            <iframe
-              width="100%"
-              height="100%"
-              src="https://short.icu/g4BCFwwXR"
-              frameBorder="0"
-              scrolling="0"
-              allowFullScreen
-              className="w-full h-full"
-            />
-          </div>
-        </div>
         {/* Upload Area */}
         <div
           onClick={triggerFileInput}
