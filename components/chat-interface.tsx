@@ -3,7 +3,7 @@
 import { useState, useRef, useEffect } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { Plus, Send, Paperclip, Bot, User, Mic, Loader2, X, Image as ImageIcon } from "lucide-react"
+import { Plus, Send, Paperclip, Bot, User, Mic, Square, Loader2, X, Image as ImageIcon } from "lucide-react"
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter'
@@ -148,6 +148,9 @@ export function ChatInterface({ activeSessionId, onMessageSent }: ChatInterfaceP
   const [isLoading, setIsLoading] = useState(false)
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
+  // Flag to trigger send after recording stops
+  const shouldSendAfterStop = useRef(false)
+
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" })
   }
@@ -202,6 +205,13 @@ export function ChatInterface({ activeSessionId, onMessageSent }: ChatInterfaceP
   }
 
   const handleSendMessage = async () => {
+    // If recording, stop it and flag to send immediately after
+    if (isRecording) {
+      shouldSendAfterStop.current = true
+      stopRecording()
+      return
+    }
+
     if ((!input.trim() && !mediaBlob && !selectedImage) || isLoading) return
 
     setIsLoading(true)
@@ -314,6 +324,14 @@ export function ChatInterface({ activeSessionId, onMessageSent }: ChatInterfaceP
     }
   }
 
+  // Effect to handle "Send to Stop" logic
+  useEffect(() => {
+    if (mediaBlob && shouldSendAfterStop.current) {
+      shouldSendAfterStop.current = false
+      handleSendMessage()
+    }
+  }, [mediaBlob])
+
   return (
     <div className="flex h-full bg-background overflow-hidden">
       {/* Sidebar was removed from here */}
@@ -417,16 +435,17 @@ export function ChatInterface({ activeSessionId, onMessageSent }: ChatInterfaceP
             </button>
 
             {/* Voice Recorder Button */}
+            {/* Voice Recorder Button */}
             <button
-              onMouseDown={startRecording}
-              onMouseUp={stopRecording}
-              onMouseLeave={stopRecording} // Stop if dragged out
-              onTouchStart={startRecording} // Mobile support
-              onTouchEnd={stopRecording}
+              onClick={isRecording ? stopRecording : startRecording}
               className={`p-3 md:p-2 rounded-lg transition-colors min-w-[44px] min-h-[44px] md:min-w-0 md:min-h-0 flex items-center justify-center ${isRecording ? "bg-red-100 text-red-600 animate-pulse border border-red-200" : "hover:bg-muted text-muted-foreground"}`}
-              title="Giữ để ghi âm"
+              title={isRecording ? "Dừng ghi âm" : "Nhấn để ghi âm"}
             >
-              <Mic className={`w-5 h-5 ${isRecording ? "fill-current" : ""}`} />
+              {isRecording ? (
+                <Square className="w-5 h-5 fill-current" />
+              ) : (
+                <Mic className="w-5 h-5" />
+              )}
             </button>
 
             <Input
@@ -439,14 +458,14 @@ export function ChatInterface({ activeSessionId, onMessageSent }: ChatInterfaceP
             />
             <Button
               onClick={handleSendMessage}
-              disabled={isLoading || (!input.trim() && !mediaBlob && !selectedImage)}
+              disabled={isLoading || (!input.trim() && !mediaBlob && !selectedImage && !isRecording)}
               className="bg-primary hover:bg-primary/90 min-w-[44px] min-h-[44px] md:min-w-0 md:min-h-0 px-3 md:px-4"
             >
               <Send className="w-5 h-5" />
             </Button>
           </div>
           <div className="text-[10px] md:text-xs text-muted-foreground/40 mt-2 text-center">
-            Giữ nút Microphone để ghi âm • Chọn Paperclip để gửi ảnh
+            Nhấn Microphone để bắt đầu/dừng ghi âm • Chọn Paperclip để gửi ảnh
           </div>
         </div>
       </div>
