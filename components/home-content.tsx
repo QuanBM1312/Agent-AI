@@ -7,6 +7,8 @@ import { KnowledgePortal } from "@/components/knowledge-portal"
 import { SchedulingPanel } from "@/components/scheduling-panel"
 import { StoragePanel } from "@/components/storage-panel"
 import { ReportsPanel } from "@/components/reports-panel"
+import { CustomersPanel } from "@/components/customers-panel"
+import { UsersPanel } from "@/components/users-panel"
 import { useMobileMenu } from "@/components/mobile-menu-context"
 import { useUser } from "@clerk/nextjs"
 import { v4 as uuidv4 } from 'uuid'
@@ -82,6 +84,8 @@ export function HomeContent({ userRole }: { userRole: string }) {
         {activeTab === "scheduling" && <SchedulingPanel userRole={userRole} />}
         {activeTab === "reports" && <ReportsPanel userRole={userRole} />}
         {activeTab === "storage" && <StoragePanel />}
+        {activeTab === "customers" && <CustomersPanel userRole={userRole} />}
+        {activeTab === "users" && <UsersPanel userRole={userRole} />}
       </main>
     </div>
   )

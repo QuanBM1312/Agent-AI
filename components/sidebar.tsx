@@ -1,6 +1,6 @@
 "use client"
 
-import { MessageSquare, BookOpen, Calendar, Archive, Settings, LogOut, X, ChevronDown, ChevronRight, Plus, Loader2, FileText } from "lucide-react"
+import { MessageSquare, BookOpen, Calendar, Archive, Settings, LogOut, X, ChevronDown, ChevronRight, Plus, Loader2, FileText, Users, UserCog } from "lucide-react"
 import { useMobileMenu } from "./mobile-menu-context"
 import { ChatSession } from "@/lib/types"
 import { useState } from "react"
@@ -60,8 +60,18 @@ export function Sidebar({
       icon: Archive,
       roles: ["Admin", "Manager", "Sales"] // Technician hidden
     },
-    // Future: Customers
-    // { id: "customers", label: "Khách hàng", icon: Users, roles: ["Admin", "Manager"] }
+    {
+      id: "customers",
+      label: "Khách hàng",
+      icon: Users,
+      roles: ["Admin", "Manager"]
+    },
+    {
+      id: "users",
+      label: "Nhân sự",
+      icon: UserCog,
+      roles: ["Admin"]
+    }
   ]
 
   // Filter items based on role

@@ -130,6 +130,9 @@ export async function GET(req: Request) {
  */
 export async function POST(request: Request) {
   try {
+    const { requireRole } = await import("@/lib/auth-utils");
+    await requireRole(["Admin", "Manager", "Sales"]);
+
     const body = await request.json();
     const { company_name, contact_person, phone, address, customer_type } =
       body;

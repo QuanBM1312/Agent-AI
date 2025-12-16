@@ -140,7 +140,7 @@ export async function POST(req: NextRequest) {
           : null,
         notes,
         created_by_user_id: currentUser.id,
-        status: "M_i", // "Mới" - New job status
+        status: "ph_n_c_ng",
         assigned_technician_id: assigned_technician_id || null, // Atomic assignment
       },
       include: {

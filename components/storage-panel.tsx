@@ -1,68 +1,53 @@
 "use client"
 
-import { useState } from "react"
-import { ImageIcon, MessageCircle, FileText, Plus, Trash2 } from "lucide-react"
-import { Button } from "@/components/ui/button"
+import { useState, useEffect } from "react"
+import { Search, Loader2, Package, Archive, AlertCircle } from "lucide-react"
+import { Input } from "@/components/ui/input"
 import { MobileMenuButton } from "@/components/mobile-menu-button"
 
-interface StorageItem {
+interface InventoryItem {
   id: string
-  type: "image" | "voice" | "text"
-  content: string
-  date: string
-  context: string
+  item_code: string
+  name: string
+  unit: string
+  quantity: number
+  details: {
+    opening: number
+    in: number
+    out: number
+  }
 }
 
 export function StoragePanel() {
-  const [items, setItems] = useState<StorageItem[]>([
-    {
-      id: "1",
-      type: "image",
-      content: "Hình ảnh máy lạnh bị hỏng",
-      date: "2024-10-24",
-      context: "Công việc #123 - Khách hàng ABC",
-    },
-    {
-      id: "2",
-      type: "voice",
-      content: "Báo cáo công việc hôm nay",
-      date: "2024-10-24",
-      context: "Kỹ thuật viên Minh",
-    },
-    {
-      id: "3",
-      type: "text",
-      content: "Hoàn thành bảo dưỡng định kỳ, thay dầu, kiểm tra...",
-      date: "2024-10-23",
-      context: "Công việc #122",
-    },
-  ])
+  const [items, setItems] = useState<InventoryItem[]>([])
+  const [isLoading, setIsLoading] = useState(true)
+  const [searchQuery, setSearchQuery] = useState("")
 
-  const getTypeIcon = (type: string) => {
-    switch (type) {
-      case "image":
-        return <ImageIcon className="w-5 h-5 text-blue-500" />
-      case "voice":
-        return <MessageCircle className="w-5 h-5 text-green-500" />
-      case "text":
-        return <FileText className="w-5 h-5 text-purple-500" />
-      default:
-        return null
+  const fetchInventory = async () => {
+    setIsLoading(true)
+    try {
+      const params = new URLSearchParams()
+      if (searchQuery) params.append("search", searchQuery)
+
+      const res = await fetch(`/api/inventory?${params.toString()}`)
+      if (res.ok) {
+        const data = await res.json()
+        setItems(data.items || [])
+      }
+    } catch (error) {
+      console.error("Failed to fetch inventory", error)
+    } finally {
+      setIsLoading(false)
     }
   }
 
-  const getTypeLabel = (type: string) => {
-    switch (type) {
-      case "image":
-        return "Hình ảnh"
-      case "voice":
-        return "Tin nhắn thoại"
-      case "text":
-        return "Văn bản"
-      default:
-        return type
-    }
-  }
+  useEffect(() => {
+    // Debounce search
+    const timer = setTimeout(() => {
+      fetchInventory()
+    }, 500)
+    return () => clearTimeout(timer)
+  }, [searchQuery])
 
   return (
     <div className="flex flex-col h-full bg-background">
@@ -71,47 +56,81 @@ export function StoragePanel() {
         <div className="flex items-start gap-3">
           <MobileMenuButton className="-ml-1 mt-0.5" />
 
-          <div className="flex-1 min-w-0 flex items-center justify-between">
-            <div>
-              <h2 className="text-xl md:text-2xl font-bold text-foreground">Lưu trữ Đa phương thức</h2>
-              <p className="text-xs md:text-sm text-muted-foreground mt-1">
-                Quản lý hình ảnh, tin nhắn thoại, và báo cáo theo ngữ cảnh
-              </p>
-            </div>
-            <Button className="gap-2 shrink-0 ml-2">
-              <Plus className="w-4 h-4" />
-              <span className="hidden sm:inline">Thêm</span>
-            </Button>
+          <div className="flex-1 min-w-0">
+            <h2 className="text-xl md:text-2xl font-bold text-foreground flex items-center gap-2">
+              <Package className="w-6 h-6 text-primary" />
+              Quản lý Tồn kho
+            </h2>
+            <p className="text-xs md:text-sm text-muted-foreground mt-1">
+              Theo dõi biến động tồn kho thực tế theo thời gian thực
+            </p>
           </div>
         </div>
       </div>
 
       {/* Content */}
-      <div className="flex-1 overflow-y-auto p-6">
-        <div className="space-y-3">
-          {items.map((item) => (
-            <div
-              key={item.id}
-              className="p-4 bg-card border border-border rounded-lg hover:border-primary transition-colors"
-            >
-              <div className="flex items-start justify-between mb-3">
-                <div className="flex items-center gap-3">
-                  {getTypeIcon(item.type)}
-                  <div>
-                    <p className="font-medium text-foreground">{item.content}</p>
-                    <p className="text-xs text-muted-foreground mt-1">{getTypeLabel(item.type)}</p>
-                  </div>
-                </div>
-                <button className="p-2 hover:bg-muted rounded transition-colors">
-                  <Trash2 className="w-4 h-4 text-muted-foreground" />
-                </button>
-              </div>
-              <div className="flex items-center justify-between text-xs text-muted-foreground">
-                <span>{item.context}</span>
-                <span>{item.date}</span>
-              </div>
-            </div>
-          ))}
+      <div className="flex-1 overflow-hidden flex flex-col p-4 md:p-6">
+        {/* Search */}
+        <div className="mb-4 relative max-w-md">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+          <Input
+            placeholder="Tìm kiếm theo mã, tên vật tư..."
+            className="pl-9"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+          />
+        </div>
+
+        {/* Table */}
+        <div className="flex-1 overflow-auto border rounded-md bg-card shadow-sm">
+          <table className="w-full text-sm text-left">
+            <thead className="bg-muted text-muted-foreground font-medium sticky top-0 z-10">
+              <tr>
+                <th className="p-3 w-32">Mã SP</th>
+                <th className="p-3">Tên sản phẩm / Model</th>
+                <th className="p-3 w-24 text-center">Đơn vị</th>
+                <th className="p-3 w-32 text-right">Tồn kho</th>
+                <th className="p-3 w-40 text-right hidden lg:table-cell text-muted-foreground/70 font-normal">Đầu kỳ</th>
+                <th className="p-3 w-40 text-right hidden lg:table-cell text-green-600/70 font-normal">Nhập</th>
+                <th className="p-3 w-40 text-right hidden lg:table-cell text-red-600/70 font-normal">Xuất</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-border">
+              {isLoading ? (
+                <tr>
+                  <td colSpan={7} className="p-10 text-center text-muted-foreground">
+                    <Loader2 className="w-8 h-8 animate-spin mx-auto mb-3 text-primary/50" />
+                    Đang tải dữ liệu tồn kho...
+                  </td>
+                </tr>
+              ) : items.length === 0 ? (
+                <tr>
+                  <td colSpan={7} className="p-10 text-center text-muted-foreground flex flex-col items-center">
+                    <Archive className="w-10 h-10 mb-2 opacity-20" />
+                    <p>Không tìm thấy sản phẩm nào trong kho.</p>
+                  </td>
+                </tr>
+              ) : (
+                items.map((item) => (
+                  <tr key={item.id} className="hover:bg-muted/50 transition-colors group">
+                    <td className="p-3 font-medium text-primary">{item.item_code}</td>
+                    <td className="p-3 font-medium">{item.name}</td>
+                    <td className="p-3 text-center text-muted-foreground">{item.unit}</td>
+                    <td className={`p-3 text-right font-bold ${item.quantity <= 5 ? 'text-red-500' : 'text-foreground'}`}>
+                      {item.quantity}
+                      {item.quantity <= 5 && (
+                        <AlertCircle className="w-3 h-3 inline-block ml-1 -mt-0.5 text-red-500" />
+                      )}
+                    </td>
+                    {/* Details columns for large screens */}
+                    <td className="p-3 text-right hidden lg:table-cell text-muted-foreground">{item.details.opening}</td>
+                    <td className="p-3 text-right hidden lg:table-cell text-green-600">+{item.details.in}</td>
+                    <td className="p-3 text-right hidden lg:table-cell text-red-600">-{item.details.out}</td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
         </div>
       </div>
     </div>

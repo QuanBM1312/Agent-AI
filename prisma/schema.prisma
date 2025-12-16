@@ -29,13 +29,13 @@ model calendar_events {
 }
 
 model chat_messages {
-  id                String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  session_id        String
-  role              chat_role_enum
-  content           String
+  id            String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  session_id    String
+  role          chat_role_enum
+  content       String
   retrieved_context Json?
-  timestamp         DateTime       @default(now()) @db.Timestamptz(6)
-  chat_sessions     chat_sessions  @relation(fields: [session_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  timestamp     DateTime      @default(now()) @db.Timestamptz(6)
+  chat_sessions chat_sessions @relation(fields: [session_id], references: [id], onDelete: Cascade)
 
   @@schema("public")
 }
@@ -45,8 +45,8 @@ model chat_sessions {
   user_id       String
   created_at    DateTime        @default(now()) @db.Timestamptz(6)
   summary       String?
-  chat_messages chat_messages[]
   users         users           @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  chat_messages chat_messages[]
 
   @@schema("public")
 }
@@ -106,12 +106,12 @@ model jobs {
   assigned_technician_id                   String?
   created_by_user_id                       String?
   job_type                                 job_type_enum?
-  status                                   job_status_enum   @default(M_i)
   scheduled_start_time                     DateTime?         @db.Timestamptz(6)
   scheduled_end_time                       DateTime?         @db.Timestamptz(6)
   actual_start_time                        DateTime?         @db.Timestamptz(6)
   actual_end_time                          DateTime?         @db.Timestamptz(6)
   notes                                    String?
+  status                                   job_status_enum?
   calendar_events                          calendar_events[]
   job_line_items                           job_line_items[]
   job_reports                              job_reports[]
@@ -122,6 +122,7 @@ model jobs {
   @@schema("public")
 }
 
+/// This model contains an expression index which requires additional setup for migrations. Visit https://pris.ly/d/expression-indexes for more info.
 model knowledge_chunks {
   id        String                   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   content   String?
@@ -567,11 +568,131 @@ model auth_users {
   one_time_tokens             one_time_tokens[]
   sessions                    sessions[]
 
-
   @@index([instance_id])
   @@index([is_anonymous])
   @@map("users")
   @@schema("auth")
+}
+
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model oauth_client_states {
+  id            String   @id @db.Uuid
+  provider_type String
+  code_verifier String?
+  created_at    DateTime @db.Timestamptz(6)
+
+  @@index([created_at], map: "idx_oauth_client_states_created_at")
+  @@schema("auth")
+}
+
+model dim_product {
+  product_id               BigInt                     @id @default(autoincrement())
+  product_code             String                     @unique @db.VarChar(50)
+  model_name               String                     @db.VarChar(255)
+  unit                     String                     @db.VarChar(50)
+  note                     String?
+  inventory_daily_movement inventory_daily_movement[]
+  inventory_month_opening  inventory_month_opening[]
+
+  @@index([model_name], map: "idx_product_model_name")
+  @@schema("public")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model inventory_daily_movement {
+  year        Int
+  month       Int
+  day         Int
+  product_id  BigInt
+  in_qty      Decimal     @default(0) @db.Decimal(18, 3)
+  out_qty     Decimal     @default(0) @db.Decimal(18, 3)
+  note        String?
+  created_at  DateTime    @default(now()) @db.Timestamptz(6)
+  updated_at  DateTime    @default(now()) @db.Timestamptz(6)
+  dim_product dim_product @relation(fields: [product_id], references: [product_id], onUpdate: NoAction)
+
+  @@id([year, month, day, product_id], map: "pk_inventory_daily_movement")
+  @@index([product_id, year, month, day], map: "idx_movement_product_ymd")
+  @@index([year, month, day], map: "idx_movement_ymd")
+  @@schema("public")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model inventory_month_opening {
+  year        Int
+  month       Int
+  product_id  BigInt
+  opening_qty Decimal     @default(0) @db.Decimal(18, 3)
+  note        String?
+  created_at  DateTime    @default(now()) @db.Timestamptz(6)
+  updated_at  DateTime    @default(now()) @db.Timestamptz(6)
+  dim_product dim_product @relation(fields: [product_id], references: [product_id], onUpdate: NoAction)
+
+  @@id([year, month, product_id], map: "pk_inventory_month_opening")
+  @@index([product_id, year, month], map: "idx_opening_product_ym")
+  @@schema("public")
+}
+
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+/// This model contains an expression index which requires additional setup for migrations. Visit https://pris.ly/d/expression-indexes for more info.
+model knowledge_chunks_2 {
+  id        String                   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  content   String?
+  metadata  Json?
+  fts       Unsupported("tsvector")? @default(dbgenerated("to_tsvector('simple'::regconfig, immutable_unaccent(COALESCE(content, ''::text)))"))
+  embedding Unsupported("vector")?
+
+  @@index([embedding])
+  @@index([fts], type: Gin)
+  @@schema("public")
+}
+
+model knowledge_files {
+  doc_id            String
+  file_name         String?
+  full_text         String?
+  summary_embedding Unsupported("vector")?
+  metadata          Json?
+  id                String                 @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  sheet             String?
+
+  @@schema("public")
+}
+
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model knowledge_sources_2 {
+  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  drive_file_id String?
+  drive_name    String?
+  created_at    DateTime @default(now()) @db.Timestamptz(6)
+  hash          String?
+  sheet_name    String?
+
+  @@schema("public")
+}
+
+model quote_items {
+  id               String                   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  quote_id         String?                  @db.Uuid
+  row_index        Int?
+  item_name        String?
+  model            String?
+  quantity         Int?
+  price            Decimal?                 @db.Decimal
+  full_text_search Unsupported("tsvector")?
+
+  @@schema("public")
+}
+
+model quotes {
+  id                    String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  quote_code            String?   @db.VarChar(50)
+  customer_name         String?
+  google_spreadsheet_id String
+  sheet_name            String?   @default("Sheet1")
+  created_at            DateTime? @default(now()) @db.Timestamptz(6)
+
+  @@schema("public")
 }
 
 enum chat_role_enum {
@@ -596,12 +717,9 @@ enum item_type_enum {
 }
 
 enum job_status_enum {
-  M_i           @map("Mới")
-  ph_n_c_ng     @map("Đã phân công")
-  ang_th_c_hi_n @map("Đang thực hiện")
-  Ch_duy_t      @map("Chờ duyệt")
-  Ho_n_th_nh    @map("Hoàn thành")
-  Treo
+  ph_n_c_ng  @map("Đã phân công")
+  Ch_duy_t   @map("Chờ duyệt")
+  Ho_n_th_nh @map("Hoàn thành")
 
   @@schema("public")
 }

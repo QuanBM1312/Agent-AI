@@ -303,13 +303,22 @@ export function SchedulingPanel({ userRole }: SchedulingPanelProps) {
                 >
                   <div className="flex items-start justify-between mb-3">
                     <h3 className="font-semibold text-foreground">
-                      [{job.job_code}] {job.job_type.replace(/_/g, ' ')}
+                      [{job.job_code}] {
+                        job.job_type === 'L_p___t_m_i' ? 'Lắp đặt mới' :
+                          job.job_type === 'B_o_h_nh' ? 'Bảo hành' :
+                            job.job_type === 'S_a_ch_a' ? 'Sửa chữa' :
+                              job.job_type.replace(/_/g, ' ')
+                      }
                     </h3>
                     <span className={`px-2 py-1 text-xs rounded font-medium ${job.status === 'M_i' ? 'bg-blue-100 text-blue-700' :
                       job.status === 'Ho_n_th_nh' ? 'bg-green-100 text-green-700' :
                         'bg-slate-100 text-slate-700'
                       }`}>
-                      {job.status === 'M_i' ? 'Mới' : job.status}
+                      {job.status === 'M_i' ? 'Mới' :
+                        job.status === 'ph_n_c_ng' ? 'Đã phân công' :
+                          job.status === 'Ch_duy_t' ? 'Chờ duyệt' :
+                            job.status === 'Ho_n_th_nh' ? 'Hoàn thành' :
+                              job.status}
                     </span>
                   </div>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">

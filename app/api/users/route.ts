@@ -193,3 +193,115 @@ export async function POST(request: Request) {
     );
   }
 }
+
+/**
+ * @swagger
+ * /api/users:
+ *   put:
+ *     summary: Update a user's role or department
+ *     description: Only Admin can update user details.
+ *     tags: [Users]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - id
+ *             properties:
+ *               id:
+ *                 type: string
+ *               role:
+ *                 type: string
+ *               department_id:
+ *                 type: string
+ *     responses:
+ *       200:
+ *         description: User updated successfully.
+ *       403:
+ *         description: Forbidden.
+ *       404:
+ *         description: User not found.
+ */
+export async function PUT(request: Request) {
+  try {
+    const currentUser = await getCurrentUserWithRole();
+    if (!currentUser || currentUser.role !== 'Admin') {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    }
+
+    const body = await request.json();
+    const { id, role, department_id } = body;
+
+    if (!id) {
+      return NextResponse.json({ error: "User ID is required" }, { status: 400 });
+    }
+
+    // Optional: Validate role enum if needed
+    // Optional: Validate department existence if needed
+
+    const updatedUser = await prisma.users.update({
+      where: { id },
+      data: {
+        role,
+        department_id,
+      },
+    });
+
+    return NextResponse.json(updatedUser);
+  } catch (error) {
+    console.error("Failed to update user:", error);
+    return NextResponse.json(
+      { error: "Unable to update user" },
+      { status: 500 }
+    );
+  }
+}
+
+/**
+ * @swagger
+ * /api/users:
+ *   delete:
+ *     summary: Delete a user
+ *     description: Only Admin can delete users.
+ *     tags: [Users]
+ *     parameters:
+ *       - in: query
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: User deleted successfully.
+ *       403:
+ *         description: Forbidden.
+ */
+export async function DELETE(request: Request) {
+  try {
+    const currentUser = await getCurrentUserWithRole();
+    if (!currentUser || currentUser.role !== 'Admin') {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    }
+
+    const { searchParams } = new URL(request.url);
+    const id = searchParams.get('id');
+
+    if (!id) {
+      return NextResponse.json({ error: "User ID is required" }, { status: 400 });
+    }
+
+    await prisma.users.delete({
+      where: { id },
+    });
+
+    return NextResponse.json({ success: true, message: "User deleted" });
+  } catch (error) {
+    console.error("Failed to delete user:", error);
+    return NextResponse.json(
+      { error: "Unable to delete user" },
+      { status: 500 }
+    );
+  }
+}
