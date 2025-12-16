@@ -56,7 +56,7 @@ export function Sidebar({
     },
     {
       id: "storage",
-      label: "Lưu trữ",
+      label: "Tồn kho",
       icon: Archive,
       roles: ["Admin", "Manager", "Sales"] // Technician hidden
     },
