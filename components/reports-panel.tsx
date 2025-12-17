@@ -1,9 +1,10 @@
 "use client"
 
-import { useState, useEffect, useCallback } from "react"
+import { useState, useEffect, useCallback, useRef } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { Loader2, CheckCircle2, AlertCircle, FileText, Mic, Image as ImageIcon, History, Send } from "lucide-react"
+import { Loader2, CheckCircle2, AlertCircle, FileText, Mic, Image as ImageIcon, History, Send, Paperclip, X, Square, Play } from "lucide-react"
+import { useMediaRecorder } from "@/hooks/use-media-recorder"
 
 interface ReportsPanelProps {
   userRole: string
@@ -46,12 +47,15 @@ export function ReportsPanel({ userRole }: ReportsPanelProps) {
   const [isLoading, setIsLoading] = useState(false)
   const [isSubmitting, setIsSubmitting] = useState(false)
 
+  // Media State
+  const { isRecording, mediaBlob, startRecording, stopRecording, clearRecording } = useMediaRecorder()
+  const [selectedImage, setSelectedImage] = useState<File | null>(null)
+  const imageInputRef = useRef<HTMLInputElement>(null)
+
   // Form State
   const [selectedJobId, setSelectedJobId] = useState("")
   const [problemSummary, setProblemSummary] = useState("")
   const [actionsTaken, setActionsTaken] = useState("")
-  const [imageUrl, setImageUrl] = useState("")
-  const [voiceUrl, setVoiceUrl] = useState("")
 
   // Check roles
   const isTechnician = userRole === "Technician"
@@ -69,8 +73,6 @@ export function ReportsPanel({ userRole }: ReportsPanelProps) {
       const res = await fetch("/api/jobs")
       if (res.ok) {
         const data = await res.json()
-        // Determine if data.jobs exists or data is array (based on API return structure)
-        // API previously showed `return NextResponse.json({ jobs })`
         setJobs(data.jobs || [])
       }
     } catch (error) {
@@ -99,13 +101,58 @@ export function ReportsPanel({ userRole }: ReportsPanelProps) {
     if (activeTab === "history" || activeTab === "review") fetchReports()
   }, [activeTab, fetchJobs, fetchReports])
 
+  const handleImageSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files[0]) {
+      setSelectedImage(e.target.files[0])
+    }
+  }
+
+  const clearImage = () => {
+    setSelectedImage(null)
+    if (imageInputRef.current) imageInputRef.current.value = ""
+  }
+
+  const uploadFile = async (file: File | Blob): Promise<string> => {
+    const formData = new FormData()
+    formData.append("file", file)
+
+    // If it's a blob (voice), give it a name
+    if (file instanceof Blob && !(file instanceof File)) {
+      formData.append("file", file, "voice_report.webm")
+    }
+
+    const res = await fetch("/api/upload", {
+      method: "POST",
+      body: formData
+    })
+
+    if (!res.ok) throw new Error("Upload failed")
+    const data = await res.json()
+    return data.url
+  }
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!selectedJobId) return alert("Vui lòng chọn công việc")
-    if (!imageUrl && !voiceUrl) return alert("Vui lòng nhập link ảnh hoặc voice")
+
+    // Check mandatory media requirement
+    if (!selectedImage && !mediaBlob) return alert("Vui lòng đính kèm hình ảnh hoặc ghi âm voice báo cáo")
 
     setIsSubmitting(true)
     try {
+      // 1. Upload Media
+      let imageUrl = ""
+      let voiceUrl = ""
+
+      if (selectedImage) {
+        imageUrl = await uploadFile(selectedImage)
+      }
+
+      if (mediaBlob) {
+        voiceUrl = await uploadFile(mediaBlob)
+      }
+
+      // 2. Submit Report
       const res = await fetch("/api/job-reports", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -123,8 +170,8 @@ export function ReportsPanel({ userRole }: ReportsPanelProps) {
         // Reset form
         setProblemSummary("")
         setActionsTaken("")
-        setImageUrl("")
-        setVoiceUrl("")
+        clearImage()
+        clearRecording()
         setSelectedJobId("")
         // Switch to history
         setActiveTab("history")
@@ -134,7 +181,7 @@ export function ReportsPanel({ userRole }: ReportsPanelProps) {
       }
     } catch (error) {
       console.error("Submit error", error)
-      alert("Lỗi khi gửi báo cáo")
+      alert("Lỗi khi gửi báo cáo: " + (error as Error).message)
     } finally {
       setIsSubmitting(false)
     }
@@ -169,7 +216,6 @@ export function ReportsPanel({ userRole }: ReportsPanelProps) {
           <FileText className="w-5 h-5 text-blue-600" />
           Quản lý Báo cáo
         </h2>
-        {/* Helper Badge */}
         <span className="text-xs px-2 py-1 bg-slate-100 rounded-full font-medium text-slate-500">
           Role: {userRole}
         </span>
@@ -262,28 +308,76 @@ export function ReportsPanel({ userRole }: ReportsPanelProps) {
                 />
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <label className="text-sm font-medium text-slate-700 flex items-center gap-2">
-                    <ImageIcon className="w-4 h-4" /> Link Ảnh minh chứng
-                  </label>
-                  <Input
-                    placeholder="https://example.com/image.jpg"
-                    value={imageUrl}
-                    onChange={(e) => setImageUrl(e.target.value)}
+              {/* Media Inputs Refactored */}
+              <div className="space-y-3">
+                <label className="text-sm font-medium text-slate-700">Đính kèm minh chứng (Bắt buộc cần Ảnh hoặc Voice)</label>
+
+                {/* Controls */}
+                <div className="flex gap-2">
+                  <input
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    ref={imageInputRef}
+                    onChange={handleImageSelect}
                   />
-                  <p className="text-[10px] text-slate-400">Nhập URL ảnh (tạm thời)</p>
+
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => imageInputRef.current?.click()}
+                    className="gap-2"
+                  >
+                    <ImageIcon className="w-4 h-4 text-blue-600" />
+                    Tải ảnh
+                  </Button>
+
+                  <Button
+                    type="button"
+                    variant={isRecording ? "destructive" : "outline"}
+                    onClick={isRecording ? stopRecording : startRecording}
+                    className={`gap-2 ${isRecording ? "animate-pulse" : ""}`}
+                  >
+                    {isRecording ? <Square className="w-4 h-4" /> : <Mic className="w-4 h-4 text-red-600" />}
+                    {isRecording ? "Dừng ghi âm" : "Ghi âm"}
+                  </Button>
                 </div>
 
+                {/* Previews */}
                 <div className="space-y-2">
-                  <label className="text-sm font-medium text-slate-700 flex items-center gap-2">
-                    <Mic className="w-4 h-4" /> Link Voice ghi âm
-                  </label>
-                  <Input
-                    placeholder="https://example.com/voice.mp3"
-                    value={voiceUrl}
-                    onChange={(e) => setVoiceUrl(e.target.value)}
-                  />
+                  {selectedImage && (
+                    <div className="flex items-center gap-3 p-3 bg-muted/30 border rounded-lg">
+                      <div className="relative w-16 h-16 rounded overflow-hidden border">
+                        <img
+                          src={URL.createObjectURL(selectedImage)}
+                          alt="Preview"
+                          className="w-full h-full object-cover"
+                        />
+                      </div>
+                      <div className="flex-1">
+                        <p className="text-sm font-medium truncate">{selectedImage.name}</p>
+                        <p className="text-xs text-muted-foreground">{(selectedImage.size / 1024).toFixed(1)} KB</p>
+                      </div>
+                      <Button type="button" variant="ghost" size="icon" onClick={clearImage}>
+                        <X className="w-4 h-4" />
+                      </Button>
+                    </div>
+                  )}
+
+                  {mediaBlob && (
+                    <div className="flex items-center gap-3 p-3 bg-muted/30 border rounded-lg">
+                      <div className="w-10 h-10 flex items-center justify-center bg-red-100 rounded-full text-red-600">
+                        <Mic className="w-5 h-5" />
+                      </div>
+                      <div className="flex-1">
+                        <p className="text-sm font-medium">Ghi âm sự cố</p>
+                        <audio controls src={URL.createObjectURL(mediaBlob)} className="w-full h-8 mt-1" />
+                      </div>
+                      <Button type="button" variant="ghost" size="icon" onClick={clearRecording}>
+                        <X className="w-4 h-4" />
+                      </Button>
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -354,15 +448,16 @@ export function ReportsPanel({ userRole }: ReportsPanelProps) {
 
                     {/* Attachments */}
                     {(report.image_urls.length > 0 || report.voice_message_url) && (
-                      <div className="flex gap-2 mb-4">
+                      <div className="flex gap-2 mb-4 flex-wrap">
                         {report.image_urls.map((img, idx) => (
-                          <div key={idx} className="flex items-center gap-1 text-xs bg-blue-50 text-blue-700 px-2 py-1 rounded border border-blue-100">
-                            <ImageIcon className="w-3 h-3" /> Ảnh {idx + 1}
-                          </div>
+                          <a key={idx} href={img} target="_blank" rel="noopener noreferrer" className="relative group block w-16 h-16 rounded border overflow-hidden">
+                            <img src={img} alt="Evidence" className="w-full h-full object-cover" />
+                          </a>
                         ))}
                         {report.voice_message_url && (
-                          <div className="flex items-center gap-1 text-xs bg-purple-50 text-purple-700 px-2 py-1 rounded border border-purple-100">
-                            <Mic className="w-3 h-3" /> Voice
+                          <div className="flex items-center gap-1 text-xs bg-purple-50 text-purple-700 px-2 py-1 rounded border border-purple-100 h-8 mt-auto">
+                            <Mic className="w-3 h-3" />
+                            <a href={report.voice_message_url} target="_blank" rel="noreferrer" className="hover:underline">Voice Memo</a>
                           </div>
                         )}
                       </div>
@@ -380,12 +475,6 @@ export function ReportsPanel({ userRole }: ReportsPanelProps) {
                         </Button>
                       </div>
                     )}
-
-                    {/* Fix handleApprove argument */}
-                    {/* report has `job_id` field? In typescript interface above I missed it.
-                        Back end `db.job_reports.findMany` usually returns all scalars.
-                        So `report.job_id` should exist.
-                    */}
                   </div>
                 ))}
               </div>

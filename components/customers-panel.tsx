@@ -31,7 +31,7 @@ export function CustomersPanel({ userRole }: CustomersPanelProps) {
         contact_person: '',
         phone: '',
         address: '',
-        customer_type: 'Cá nhân'
+        customer_type: 'C__nh_n'
     })
     const [isSubmitting, setIsSubmitting] = useState(false)
 
@@ -92,7 +92,7 @@ export function CustomersPanel({ userRole }: CustomersPanelProps) {
                 contact_person: '',
                 phone: '',
                 address: '',
-                customer_type: 'Cá nhân'
+                customer_type: 'C__nh_n'
             })
 
             // Refresh list if user can view it
@@ -167,8 +167,8 @@ export function CustomersPanel({ userRole }: CustomersPanelProps) {
                                         value={newItem.customer_type}
                                         onChange={(e) => setNewItem({ ...newItem, customer_type: e.target.value })}
                                     >
-                                        <option value="Cá nhân">Cá nhân</option>
-                                        <option value="Doanh nghiệp">Doanh nghiệp</option>
+                                        <option value="C__nh_n">Cá nhân</option>
+                                        <option value="Doanh_nghi_p">Doanh nghiệp</option>
                                     </select>
                                 </div>
                                 <Button className="w-full mt-2" onClick={handleCreate} disabled={isSubmitting}>
