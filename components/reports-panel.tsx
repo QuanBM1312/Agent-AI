@@ -1,9 +1,9 @@
 "use client"
 
 import { useState, useEffect, useCallback, useRef } from "react"
+import Image from "next/image"
 import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
-import { Loader2, CheckCircle2, AlertCircle, FileText, Mic, Image as ImageIcon, History, Send, Paperclip, X, Square, Play } from "lucide-react"
+import { Loader2, CheckCircle2, FileText, Mic, Image as ImageIcon, History, Send, X, Square, ChevronLeft, ChevronRight } from "lucide-react"
 import { useMediaRecorder } from "@/hooks/use-media-recorder"
 
 interface ReportsPanelProps {
@@ -47,6 +47,11 @@ export function ReportsPanel({ userRole }: ReportsPanelProps) {
   const [isLoading, setIsLoading] = useState(false)
   const [isSubmitting, setIsSubmitting] = useState(false)
 
+  // Pagination State
+  const [page, setPage] = useState(1)
+  const [totalPages, setTotalPages] = useState(1)
+  const limit = 10
+
   // Media State
   const { isRecording, mediaBlob, startRecording, stopRecording, clearRecording } = useMediaRecorder()
   const [selectedImage, setSelectedImage] = useState<File | null>(null)
@@ -73,33 +78,40 @@ export function ReportsPanel({ userRole }: ReportsPanelProps) {
       const res = await fetch("/api/jobs")
       if (res.ok) {
         const data = await res.json()
-        setJobs(data.jobs || [])
+        setJobs(data.data || [])
       }
     } catch (error) {
       console.error("Failed to fetch jobs", error)
     }
   }, [])
 
-  // Fetch Reports
+  // Fetch Reports (history/review)
   const fetchReports = useCallback(async () => {
     setIsLoading(true)
     try {
-      const res = await fetch("/api/job-reports")
+      const res = await fetch(`/api/job-reports?page=${page}&limit=${limit}`)
       if (res.ok) {
         const data = await res.json()
-        setReports(data.reports || [])
+        setReports(data.data || [])
+        if (data.pagination) {
+          setTotalPages(data.pagination.totalPages)
+        }
       }
     } catch (error) {
       console.error("Failed to fetch reports", error)
     } finally {
       setIsLoading(false)
     }
-  }, [])
+  }, [page])
+
+  useEffect(() => {
+    setPage(1)
+  }, [activeTab])
 
   useEffect(() => {
     if (activeTab === "create") fetchJobs()
     if (activeTab === "history" || activeTab === "review") fetchReports()
-  }, [activeTab, fetchJobs, fetchReports])
+  }, [activeTab, fetchJobs, fetchReports, page])
 
   const handleImageSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
@@ -187,7 +199,7 @@ export function ReportsPanel({ userRole }: ReportsPanelProps) {
     }
   }
 
-  const handleApprove = async (jobId: string, reportId: string) => {
+  const handleApprove = async (jobId: string) => {
     if (!confirm("Bạn có chắc chắn muốn duyệt báo cáo này và hoàn thành công việc?")) return
 
     try {
@@ -348,10 +360,11 @@ export function ReportsPanel({ userRole }: ReportsPanelProps) {
                   {selectedImage && (
                     <div className="flex items-center gap-3 p-3 bg-muted/30 border rounded-lg">
                       <div className="relative w-16 h-16 rounded overflow-hidden border">
-                        <img
+                        <Image
                           src={URL.createObjectURL(selectedImage)}
                           alt="Preview"
-                          className="w-full h-full object-cover"
+                          fill
+                          className="object-cover"
                         />
                       </div>
                       <div className="flex-1">
@@ -412,7 +425,9 @@ export function ReportsPanel({ userRole }: ReportsPanelProps) {
             ) : (
               <div className="grid gap-4">
                 {reports.map((report) => (
+                  // ... existing report card code ...
                   <div key={report.id} className="bg-white rounded-xl border shadow-sm p-4 hover:shadow-md transition-shadow">
+                    {/* ... report content ... */}
                     <div className="flex justify-between items-start mb-3">
                       <div>
                         <h4 className="font-bold text-slate-800 flex items-center gap-2">
@@ -451,7 +466,7 @@ export function ReportsPanel({ userRole }: ReportsPanelProps) {
                       <div className="flex gap-2 mb-4 flex-wrap">
                         {report.image_urls.map((img, idx) => (
                           <a key={idx} href={img} target="_blank" rel="noopener noreferrer" className="relative group block w-16 h-16 rounded border overflow-hidden">
-                            <img src={img} alt="Evidence" className="w-full h-full object-cover" />
+                            <Image src={img} alt="Evidence" width={64} height={64} className="w-full h-full object-cover" />
                           </a>
                         ))}
                         {report.voice_message_url && (
@@ -467,7 +482,7 @@ export function ReportsPanel({ userRole }: ReportsPanelProps) {
                     {activeTab === "review" && (report.jobs.status === "Ch_duy_t" || report.jobs.status === "Dang_thuc_hien") && (
                       <div className="flex justify-end pt-3 border-t">
                         <Button
-                          onClick={() => handleApprove(report.job_id, report.id)}
+                          onClick={() => handleApprove(report.job_id)}
                           className="bg-green-600 hover:bg-green-700 text-white gap-2"
                         >
                           <CheckCircle2 className="w-4 h-4" />
@@ -477,6 +492,35 @@ export function ReportsPanel({ userRole }: ReportsPanelProps) {
                     )}
                   </div>
                 ))}
+
+                {/* Pagination Controls */}
+                {totalPages > 1 && (
+                  <div className="flex items-center justify-between px-2 py-4 border-t mt-4">
+                    <p className="text-sm text-slate-500">
+                      Trang {page} / {totalPages}
+                    </p>
+                    <div className="flex gap-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setPage(p => Math.max(1, p - 1))}
+                        disabled={page === 1 || isLoading}
+                        className="h-8"
+                      >
+                        <ChevronLeft className="w-4 h-4 mr-1" /> Trước
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setPage(p => Math.min(totalPages, p + 1))}
+                        disabled={page === totalPages || isLoading}
+                        className="h-8"
+                      >
+                        Sau <ChevronRight className="w-4 h-4 ml-1" />
+                      </Button>
+                    </div>
+                  </div>
+                )}
               </div>
             )}
           </div>

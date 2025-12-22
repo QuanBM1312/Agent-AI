@@ -1,7 +1,7 @@
 "use client"
 
-import { useState, useEffect } from "react"
-import { Calendar as CalendarIcon, Clock, Plus, ChevronLeft, ChevronRight, X } from "lucide-react"
+import { useState, useEffect, useMemo, useCallback, useRef } from "react"
+import { Plus, ChevronLeft, ChevronRight, X, Search, Clock, Calendar, Briefcase, User, FileText, ClipboardList } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
@@ -18,20 +18,62 @@ interface Job {
   scheduled_start_time: string | null
   scheduled_end_time: string | null
   status: string
+  customer_id: string
+  assigned_technician_id?: string | null
+  notes?: string | null
   customers: {
     company_name: string
   }
   users_jobs_assigned_technician_idTousers?: {
     full_name: string
+    email: string
   }
+  job_line_items?: {
+    id: string
+    quantity: number
+    unit_price: number
+    materials_and_services: {
+      name: string
+      unit: string
+    }
+  }[]
+  job_technicians?: {
+    users: {
+      id: string
+      full_name: string
+    }
+  }[]
+  job_reports?: {
+    id: string
+    problem_summary: string
+    actions_taken: string
+    timestamp: string
+    users: {
+      full_name: string
+    }
+  }[]
 }
 
 export function SchedulingPanel({ userRole }: SchedulingPanelProps) {
   const [jobs, setJobs] = useState<Job[]>([])
   const [technicians, setTechnicians] = useState<{ id: string, full_name: string }[]>([])
   const [customers, setCustomers] = useState<{ id: string, company_name: string }[]>([])
-  const [isLoading, setIsLoading] = useState(true)
   const [showCreateModal, setShowCreateModal] = useState(false)
+  const [selectedJob, setSelectedJob] = useState<Job | null>(null)
+  const [showDetailModal, setShowDetailModal] = useState(false)
+  const [isLoadingDetails, setIsLoadingDetails] = useState(false)
+  const [isEditMode, setIsEditMode] = useState(false)
+  const [editItem, setEditItem] = useState({
+    job_code: '',
+    job_type: 'Lắp đặt mới',
+    start_date: '',
+    start_time: '',
+    end_time: '',
+    customer_id: '',
+    technician_ids: [] as string[],
+    notes: '',
+    status: ''
+  })
 
   // Calendar State
   const [currentDate, setCurrentDate] = useState(new Date())
@@ -43,48 +85,154 @@ export function SchedulingPanel({ userRole }: SchedulingPanelProps) {
     start_date: '',
     start_time: '',
     customer_id: '',
-    technician_id: '',
+    technician_ids: [] as string[], // Changed to array
     notes: ''
   })
   const [isSubmitting, setIsSubmitting] = useState(false)
+  const [technicianSearch, setTechnicianSearch] = useState('')
+  const [isTechListOpen, setIsTechListOpen] = useState(false)
+  const techListRef = useRef<HTMLDivElement>(null)
+
+  // Handle click outside to close technician list
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (techListRef.current && !techListRef.current.contains(event.target as Node)) {
+        setIsTechListOpen(false)
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside)
+    return () => document.removeEventListener("mousedown", handleClickOutside)
+  }, [])
 
   // Permissions
   const canCreateJob = ["Admin", "Manager"].includes(userRole)
 
-  const fetchJobs = async () => {
-    setIsLoading(true)
+  const fetchJobs = useCallback(async () => {
     try {
-      const res = await fetch("/api/jobs")
+      const year = currentDate.getFullYear()
+      const month = currentDate.getMonth()
+      const startOfMonth = new Date(year, month, 1).toISOString()
+      const endOfMonth = new Date(year, month + 1, 0, 23, 59, 59, 999).toISOString()
+
+      // Fetch jobs only for the current month view
+      const res = await fetch(`/api/jobs?startDate=${startOfMonth}&endDate=${endOfMonth}&limit=200`)
       if (res.ok) {
         const data = await res.json()
-        setJobs(data.jobs || [])
+        setJobs(data.data || [])
       }
     } catch (error) {
       console.error("Failed to fetch jobs", error)
+    }
+  }, [currentDate])
+
+  const handleJobClick = async (jobId: string) => {
+    setIsLoadingDetails(true)
+    setShowDetailModal(true)
+    try {
+      const res = await fetch(`/api/jobs/${jobId}`)
+      if (res.ok) {
+        const data = await res.json()
+        setSelectedJob(data.job)
+      } else {
+        alert("Không thể tải chi tiết công việc")
+        setShowDetailModal(false)
+      }
+    } catch (error) {
+      console.error("Error fetching job details:", error)
+      alert("Lỗi kết nối")
+      setShowDetailModal(false)
     } finally {
-      setIsLoading(false)
+      setIsLoadingDetails(false)
     }
   }
 
-  // Fetch Dropdown Data
+  const handleUpdate = async () => {
+    if (!selectedJob) return
+    setIsSubmitting(true)
+    try {
+      const startDateTime = new Date(`${editItem.start_date}T${editItem.start_time || '09:00'}:00`).toISOString()
+      const endDateTime = new Date(`${editItem.start_date}T${editItem.end_time || '11:00'}:00`).toISOString()
+
+      const payload = {
+        job_code: editItem.job_code,
+        customer_id: editItem.customer_id,
+        job_type: editItem.job_type,
+        scheduled_start_time: startDateTime,
+        scheduled_end_time: endDateTime,
+        notes: editItem.notes,
+        status: editItem.status,
+        assigned_technician_ids: editItem.technician_ids
+      }
+
+      const res = await fetch(`/api/jobs/${selectedJob.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      })
+
+      if (res.ok) {
+        alert("Cập nhật công việc thành công!")
+        setIsEditMode(false)
+        handleJobClick(selectedJob.id) // Refresh details
+        fetchJobs() // Refresh calendar
+      } else {
+        const err = await res.json()
+        throw new Error(err.error || "Failed to update")
+      }
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : "Đã xảy ra lỗi không xác định";
+      alert(`Lỗi: ${message}`)
+    } finally {
+      setIsSubmitting(false)
+    }
+  }
+
+  const startEditing = () => {
+    if (!selectedJob) return
+    const startDate = selectedJob.scheduled_start_time ? new Date(selectedJob.scheduled_start_time).toISOString().split('T')[0] : ''
+    const startTime = selectedJob.scheduled_start_time ? new Date(selectedJob.scheduled_start_time).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', hour12: false }) : '09:00'
+    const endTime = selectedJob.scheduled_end_time ? new Date(selectedJob.scheduled_end_time).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', hour12: false }) : '11:00'
+
+    const currentTechIds = selectedJob.job_technicians?.map(jt => jt.users.id) ||
+      (selectedJob.assigned_technician_id ? [selectedJob.assigned_technician_id] : [])
+
+    setEditItem({
+      job_code: selectedJob.job_code,
+      job_type: selectedJob.job_type === 'L_p___t_m_i' ? 'Lắp đặt mới' : selectedJob.job_type === 'B_o_h_nh' ? 'Bảo hành' : 'Sửa chữa',
+      start_date: startDate,
+      start_time: startTime,
+      end_time: endTime,
+      customer_id: selectedJob.customer_id,
+      technician_ids: currentTechIds,
+      notes: selectedJob.notes || '',
+      status: selectedJob.status === 'ph_n_c_ng' ? 'Mới' : selectedJob.status === 'Ho_n_th_nh' ? 'Hoàn thành' : 'Đang xử lý'
+    })
+    setIsEditMode(true)
+  }
+
+  // Initial load
   useEffect(() => {
     fetchJobs()
+  }, [fetchJobs])
+
+  // Fetch Dropdown Data
+  useEffect(() => {
     if (canCreateJob) {
       const fetchData = async () => {
         try {
           const [techRes, custRes] = await Promise.all([
-            fetch("/api/users?role=Technician"),
+            fetch("/api/users?role=Technician&limit=100"),
             fetch("/api/customers")
           ])
 
           if (techRes.ok) {
             const techData = await techRes.json()
-            if (Array.isArray(techData)) setTechnicians(techData)
+            if (techData.data && Array.isArray(techData.data)) setTechnicians(techData.data)
           }
 
           if (custRes.ok) {
             const custData = await custRes.json()
-            if (custData.customers && Array.isArray(custData.customers)) setCustomers(custData.customers)
+            if (custData.data && Array.isArray(custData.data)) setCustomers(custData.data)
           }
         } catch (error) {
           console.error("Failed to fetch dropdown data", error)
@@ -92,7 +240,7 @@ export function SchedulingPanel({ userRole }: SchedulingPanelProps) {
       }
       fetchData()
     }
-  }, [userRole, canCreateJob])
+  }, [canCreateJob])
 
   // --- Calendar Logic ---
 
@@ -135,7 +283,7 @@ export function SchedulingPanel({ userRole }: SchedulingPanelProps) {
   // --- Form Handlers ---
 
   const handleSubmit = async () => {
-    if (!newItem.job_code || !newItem.start_date || !newItem.technician_id || !newItem.customer_id) {
+    if (!newItem.job_code || !newItem.start_date || newItem.technician_ids.length === 0 || !newItem.customer_id) {
       alert("Vui lòng điền đầy đủ thông tin (Mã, Khách hàng, Ngày, Kỹ thuật viên)")
       return
     }
@@ -152,7 +300,7 @@ export function SchedulingPanel({ userRole }: SchedulingPanelProps) {
         scheduled_start_time: startDateTime,
         scheduled_end_time: endDateTime,
         notes: newItem.notes,
-        assigned_technician_id: newItem.technician_id || undefined
+        assigned_technician_ids: newItem.technician_ids // Send array
       }
 
       const res = await fetch("/api/jobs", {
@@ -174,13 +322,14 @@ export function SchedulingPanel({ userRole }: SchedulingPanelProps) {
         start_date: '',
         start_time: '',
         customer_id: '',
-        technician_id: '',
+        technician_ids: [],
         notes: ''
       })
       fetchJobs()
 
-    } catch (error: any) {
-      alert(`Lỗi: ${error.message}`)
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : "Đã xảy ra lỗi không xác định";
+      alert(`Lỗi: ${message}`)
     } finally {
       setIsSubmitting(false)
     }
@@ -193,15 +342,26 @@ export function SchedulingPanel({ userRole }: SchedulingPanelProps) {
   const monthNames = ["Tháng 1", "Tháng 2", "Tháng 3", "Tháng 4", "Tháng 5", "Tháng 6",
     "Tháng 7", "Tháng 8", "Tháng 9", "Tháng 10", "Tháng 11", "Tháng 12"]
 
+  // Memoize jobs grouped by day to optimize calendar rendering
+  const jobsByDay = useMemo(() => {
+    const map: Record<number, Job[]> = {}
+    jobs.forEach(job => {
+      if (job.scheduled_start_time) {
+        const jobDate = new Date(job.scheduled_start_time)
+        // Only map if it belongs to current month/year view
+        if (jobDate.getMonth() === currentDate.getMonth() && jobDate.getFullYear() === currentDate.getFullYear()) {
+          const d = jobDate.getDate()
+          if (!map[d]) map[d] = []
+          map[d].push(job)
+        }
+      }
+    })
+    return map
+  }, [jobs, currentDate])
+
   // Get jobs for a specific day
   const getJobsForDay = (day: number) => {
-    return jobs.filter(job => {
-      if (!job.scheduled_start_time) return false
-      const jobDate = new Date(job.scheduled_start_time)
-      return jobDate.getDate() === day &&
-        jobDate.getMonth() === currentDate.getMonth() &&
-        jobDate.getFullYear() === currentDate.getFullYear()
-    })
+    return jobsByDay[day] || []
   }
 
   return (
@@ -271,11 +431,15 @@ export function SchedulingPanel({ userRole }: SchedulingPanelProps) {
                   {dayJobs.map(job => (
                     <div
                       key={job.id}
-                      className={`text-[10px] md:text-xs p-1.5 rounded border truncate cursor-pointer ${job.status === 'Ho_n_th_nh' ? 'bg-green-50 border-green-200 text-green-800 dark:bg-green-900/20 dark:border-green-800 dark:text-green-300' :
-                          job.status === 'M_i' ? 'bg-blue-50 border-blue-200 text-blue-800 dark:bg-blue-900/20 dark:border-blue-800 dark:text-blue-300' :
-                            'bg-slate-50 border-slate-200 text-slate-800 dark:bg-slate-800/50 dark:border-slate-700 dark:text-slate-300'
+                      className={`text-[10px] md:text-xs p-1.5 rounded border truncate cursor-pointer transition-transform hover:scale-[1.02] active:scale-95 ${job.status === 'Ho_n_th_nh' ? 'bg-green-50 border-green-200 text-green-800 dark:bg-green-900/20 dark:border-green-800 dark:text-green-300' :
+                        job.status === 'M_i' ? 'bg-blue-50 border-blue-200 text-blue-800 dark:bg-blue-900/20 dark:border-blue-800 dark:text-blue-300' :
+                          'bg-slate-50 border-slate-200 text-slate-800 dark:bg-slate-800/50 dark:border-slate-700 dark:text-slate-300'
                         }`}
                       title={`${job.job_code} - ${job.customers?.company_name}`}
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        handleJobClick(job.id)
+                      }}
                     >
                       <div className="font-semibold truncate">{job.customers?.company_name}</div>
                       <div className="truncate opacity-75">{job.job_code}</div>
@@ -355,18 +519,101 @@ export function SchedulingPanel({ userRole }: SchedulingPanelProps) {
 
             <div className="space-y-2">
               <label className="text-sm font-medium">Phân công kỹ thuật</label>
-              <select
-                className="w-full h-10 px-3 rounded-md border border-input bg-background text-sm"
-                value={newItem.technician_id}
-                onChange={(e) => setNewItem({ ...newItem, technician_id: e.target.value })}
-              >
-                <option value="">-- Chọn kỹ thuật viên --</option>
-                {technicians.map(tech => (
-                  <option key={tech.id} value={tech.id}>
-                    {tech.full_name}
-                  </option>
-                ))}
-              </select>
+
+              <div className="relative" ref={techListRef}>
+                {/* Search Input & Toggle */}
+                <div
+                  className="relative cursor-pointer"
+                  onClick={() => setIsTechListOpen(!isTechListOpen)}
+                >
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                  <Input
+                    placeholder="Tìm kiếm kỹ thuật viên..."
+                    value={technicianSearch}
+                    onChange={(e) => {
+                      setTechnicianSearch(e.target.value)
+                      if (!isTechListOpen) setIsTechListOpen(true)
+                    }}
+                    onFocus={() => setIsTechListOpen(true)}
+                    className="pl-9 pr-10"
+                  />
+                  <div className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-1">
+                    <span className="text-[10px] bg-muted px-1.5 py-0.5 rounded text-muted-foreground font-medium">
+                      {newItem.technician_ids.length}
+                    </span>
+                    <ChevronRight className={`w-4 h-4 text-muted-foreground transition-transform ${isTechListOpen ? 'rotate-90' : ''}`} />
+                  </div>
+                </div>
+
+                {/* Dropdown List */}
+                {isTechListOpen && (
+                  <div className="absolute z-50 top-full left-0 right-0 mt-1 bg-popover border border-border rounded-md shadow-lg overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+                    <div className="max-h-60 overflow-y-auto p-1">
+                      {technicians.length === 0 ? (
+                        <p className="text-sm text-muted-foreground p-3 text-center">Không có kỹ thuật viên</p>
+                      ) : (
+                        technicians
+                          .filter(tech =>
+                            tech.full_name.toLowerCase().includes(technicianSearch.toLowerCase())
+                          )
+                          .map(tech => {
+                            const isSelected = newItem.technician_ids.includes(tech.id)
+                            return (
+                              <div
+                                key={tech.id}
+                                className={`flex items-center gap-3 px-3 py-2.5 rounded-sm cursor-pointer transition-colors ${isSelected ? 'bg-primary/10 text-primary' : 'hover:bg-muted'
+                                  }`}
+                                onClick={() => {
+                                  if (isSelected) {
+                                    setNewItem({ ...newItem, technician_ids: newItem.technician_ids.filter(id => id !== tech.id) })
+                                  } else {
+                                    setNewItem({ ...newItem, technician_ids: [...newItem.technician_ids, tech.id] })
+                                  }
+                                }}
+                              >
+                                <div className={`w-4 h-4 rounded-sm border flex items-center justify-center transition-colors ${isSelected ? 'bg-primary border-primary' : 'border-input bg-background'
+                                  }`}>
+                                  {isSelected && <div className="w-2 h-2 bg-primary-foreground rounded-full" />}
+                                </div>
+                                <div className="flex flex-col">
+                                  <span className="text-sm font-medium">{tech.full_name}</span>
+                                  <span className="text-[10px] opacity-70">Sẵn sàng</span>
+                                </div>
+                              </div>
+                            )
+                          })
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Selected Technicians Tags */}
+              {newItem.technician_ids.length > 0 && (
+                <div className="flex flex-wrap gap-1.5 mt-2">
+                  {newItem.technician_ids.map(techId => {
+                    const tech = technicians.find(t => t.id === techId)
+                    return tech ? (
+                      <div key={techId} className="group flex items-center gap-1.5 bg-secondary hover:bg-secondary/80 text-secondary-foreground pl-2.5 pr-1 py-1 rounded-full text-xs font-medium transition-colors border border-transparent hover:border-border">
+                        <span>{tech.full_name}</span>
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            setNewItem({
+                              ...newItem,
+                              technician_ids: newItem.technician_ids.filter(id => id !== techId)
+                            })
+                          }}
+                          className="hover:bg-destructive hover:text-destructive-foreground rounded-full p-0.5 transition-colors"
+                        >
+                          <X className="w-3 h-3" />
+                        </button>
+                      </div>
+                    ) : null
+                  })}
+                </div>
+              )}
             </div>
 
             <div className="space-y-2">
@@ -382,6 +629,347 @@ export function SchedulingPanel({ userRole }: SchedulingPanelProps) {
               {isSubmitting ? "Đang tạo..." : "Tạo công việc"}
             </Button>
           </div>
+        </DialogContent>
+      </Dialog>
+      {/* Job Details Modal */}
+      <Dialog open={showDetailModal} onOpenChange={setShowDetailModal}>
+        <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <ClipboardList className="w-5 h-5 text-primary" />
+              Chi tiết công việc
+            </DialogTitle>
+          </DialogHeader>
+
+          {isLoadingDetails ? (
+            <div className="flex flex-col items-center justify-center py-12 gap-3">
+              <div className="w-8 h-8 border-4 border-primary border-t-transparent rounded-full animate-spin" />
+              <p className="text-sm text-muted-foreground font-medium">Đang tải chi tiết...</p>
+            </div>
+          ) : selectedJob && (
+            <div className="space-y-6 py-4">
+              {isEditMode ? (
+                /* Edit Mode */
+                <div className="space-y-4">
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <label className="text-xs font-bold uppercase text-muted-foreground">Mã công việc</label>
+                      <Input
+                        value={editItem.job_code}
+                        onChange={(e) => setEditItem({ ...editItem, job_code: e.target.value })}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-xs font-bold uppercase text-muted-foreground">Trạng thái</label>
+                      <select
+                        className="w-full h-10 px-3 rounded-md border border-input bg-background text-sm"
+                        value={editItem.status}
+                        onChange={(e) => setEditItem({ ...editItem, status: e.target.value })}
+                      >
+                        <option value="Mới">Mới</option>
+                        <option value="Đang xử lý">Đang xử lý</option>
+                        <option value="Hoàn thành">Hoàn thành</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div className="space-y-2">
+                      <label className="text-xs font-bold uppercase text-muted-foreground">Ngày công việc</label>
+                      <Input
+                        type="date"
+                        value={editItem.start_date}
+                        onChange={(e) => setEditItem({ ...editItem, start_date: e.target.value })}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-xs font-bold uppercase text-muted-foreground">Giờ bắt đầu</label>
+                      <Input
+                        type="time"
+                        value={editItem.start_time}
+                        onChange={(e) => setEditItem({ ...editItem, start_time: e.target.value })}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-xs font-bold uppercase text-muted-foreground">Giờ kết thúc</label>
+                      <Input
+                        type="time"
+                        value={editItem.end_time}
+                        onChange={(e) => setEditItem({ ...editItem, end_time: e.target.value })}
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <label className="text-xs font-bold uppercase text-muted-foreground">Khách hàng</label>
+                      <select
+                        className="w-full h-10 px-3 rounded-md border border-input bg-background text-sm"
+                        value={editItem.customer_id}
+                        onChange={(e) => setEditItem({ ...editItem, customer_id: e.target.value })}
+                      >
+                        <option value="">-- Chọn khách hàng --</option>
+                        {customers.map(cust => (
+                          <option key={cust.id} value={cust.id}>
+                            {cust.company_name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-xs font-bold uppercase text-muted-foreground">Loại công việc</label>
+                      <select
+                        className="w-full h-10 px-3 rounded-md border border-input bg-background text-sm"
+                        value={editItem.job_type}
+                        onChange={(e) => setEditItem({ ...editItem, job_type: e.target.value })}
+                      >
+                        <option value="Lắp đặt mới">Lắp đặt mới</option>
+                        <option value="Bảo hành">Bảo hành</option>
+                        <option value="Sửa chữa">Sửa chữa</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <label className="text-xs font-bold uppercase text-muted-foreground">Phân công kỹ thuật</label>
+
+                    <div className="relative" ref={techListRef}>
+                      {/* Search Input & Toggle */}
+                      <div
+                        className="relative cursor-pointer"
+                        onClick={() => setIsTechListOpen(!isTechListOpen)}
+                      >
+                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                        <Input
+                          placeholder="Tìm kiếm kỹ thuật viên..."
+                          value={technicianSearch}
+                          onChange={(e) => {
+                            setTechnicianSearch(e.target.value)
+                            if (!isTechListOpen) setIsTechListOpen(true)
+                          }}
+                          onFocus={() => setIsTechListOpen(true)}
+                          className="pl-9 pr-10"
+                        />
+                        <div className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-1">
+                          <span className="text-[10px] bg-muted px-1.5 py-0.5 rounded text-muted-foreground font-medium">
+                            {editItem.technician_ids.length}
+                          </span>
+                          <ChevronRight className={`w-4 h-4 text-muted-foreground transition-transform ${isTechListOpen ? 'rotate-90' : ''}`} />
+                        </div>
+                      </div>
+
+                      {/* Dropdown List */}
+                      {isTechListOpen && (
+                        <div className="absolute z-50 top-full left-0 right-0 mt-1 bg-popover border border-border rounded-md shadow-lg overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+                          <div className="max-h-60 overflow-y-auto p-1">
+                            {technicians.length === 0 ? (
+                              <p className="text-sm text-muted-foreground p-3 text-center">Không có kỹ thuật viên</p>
+                            ) : (
+                              technicians
+                                .filter(tech => tech.full_name.toLowerCase().includes(technicianSearch.toLowerCase()))
+                                .map(tech => {
+                                  const isSelected = editItem.technician_ids.includes(tech.id)
+                                  return (
+                                    <div
+                                      key={tech.id}
+                                      className={`flex items-center gap-3 px-3 py-2.5 rounded-sm cursor-pointer transition-colors ${isSelected ? 'bg-primary/10 text-primary' : 'hover:bg-muted'
+                                        }`}
+                                      onClick={() => {
+                                        if (isSelected) {
+                                          setEditItem({ ...editItem, technician_ids: editItem.technician_ids.filter(id => id !== tech.id) })
+                                        } else {
+                                          setEditItem({ ...editItem, technician_ids: [...editItem.technician_ids, tech.id] })
+                                        }
+                                      }}
+                                    >
+                                      <div className={`w-4 h-4 rounded-sm border flex items-center justify-center transition-colors ${isSelected ? 'bg-primary border-primary' : 'border-input bg-background'
+                                        }`}>
+                                        {isSelected && <div className="w-2 h-2 bg-primary-foreground rounded-full" />}
+                                      </div>
+                                      <div className="flex flex-col">
+                                        <span className="text-sm font-medium">{tech.full_name}</span>
+                                        <span className="text-[10px] opacity-70">Sẵn sàng</span>
+                                      </div>
+                                    </div>
+                                  )
+                                })
+                            )}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Selected Technicians Tags */}
+                    {editItem.technician_ids.length > 0 && (
+                      <div className="flex flex-wrap gap-1.5 mt-2">
+                        {editItem.technician_ids.map(techId => {
+                          const tech = technicians.find(t => t.id === techId)
+                          return tech ? (
+                            <div key={techId} className="group flex items-center gap-1.5 bg-secondary hover:bg-secondary/80 text-secondary-foreground pl-2.5 pr-1 py-1 rounded-full text-xs font-medium transition-colors border border-transparent hover:border-border">
+                              <span>{tech.full_name}</span>
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  setEditItem({
+                                    ...editItem,
+                                    technician_ids: editItem.technician_ids.filter(id => id !== techId)
+                                  })
+                                }}
+                                className="hover:bg-destructive hover:text-destructive-foreground rounded-full p-0.5 transition-colors"
+                              >
+                                <X className="w-3 h-3" />
+                              </button>
+                            </div>
+                          ) : null
+                        })}
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="space-y-2">
+                    <label className="text-xs font-bold uppercase text-muted-foreground">Ghi chú</label>
+                    <Input
+                      value={editItem.notes}
+                      onChange={(e) => setEditItem({ ...editItem, notes: e.target.value })}
+                    />
+                  </div>
+
+                  <div className="flex gap-2 pt-4">
+                    <Button variant="outline" className="flex-1" onClick={() => setIsEditMode(false)}>Hủy</Button>
+                    <Button className="flex-1" onClick={handleUpdate} disabled={isSubmitting}>
+                      {isSubmitting ? "Đang lưu..." : "Lưu thay đổi"}
+                    </Button>
+                  </div>
+                </div>
+              ) : (
+                /* View Mode */
+                <>
+                  <div className="flex justify-end mb-2">
+                    {canCreateJob && (
+                      <Button variant="outline" size="sm" onClick={startEditing} className="gap-2">
+                        <Plus className="w-3.5 h-3.5" />
+                        Chỉnh sửa
+                      </Button>
+                    )}
+                  </div>
+                  {/* Top Summary */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6 bg-muted/30 p-4 rounded-xl border">
+                    <div className="space-y-4">
+                      <div className="flex items-start gap-3">
+                        <Briefcase className="w-5 h-5 text-muted-foreground mt-0.5" />
+                        <div>
+                          <p className="text-xs text-muted-foreground uppercase tracking-wider font-semibold">Mã công việc</p>
+                          <p className="text-lg font-bold text-primary">{selectedJob.job_code}</p>
+                          <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium mt-1 ${selectedJob.status === 'Ho_n_th_nh' ? 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400' :
+                            selectedJob.status === 'M_i' ? 'bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400' :
+                              'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400'
+                            }`}>
+                            {selectedJob.status === 'Ho_n_th_nh' ? 'Hoàn thành' : selectedJob.status === 'M_i' ? 'Mới' : 'Đang xử lý'}
+                          </span>
+                        </div>
+                      </div>
+                      <div className="flex items-start gap-3">
+                        <User className="w-5 h-5 text-muted-foreground mt-0.5" />
+                        <div>
+                          <p className="text-xs text-muted-foreground uppercase tracking-wider font-semibold">Khách hàng</p>
+                          <p className="font-bold">{selectedJob.customers?.company_name}</p>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="space-y-4">
+                      <div className="flex items-start gap-3">
+                        <Calendar className="w-5 h-5 text-muted-foreground mt-0.5" />
+                        <div>
+                          <p className="text-xs text-muted-foreground uppercase tracking-wider font-semibold">Thời gian</p>
+                          <p className="font-medium">
+                            {selectedJob.scheduled_start_time ? new Date(selectedJob.scheduled_start_time).toLocaleDateString('vi-VN') : 'N/A'}
+                          </p>
+                          <div className="flex items-center gap-2 mt-1 text-sm text-muted-foreground">
+                            <Clock className="w-3.5 h-3.5" />
+                            <span>
+                              {selectedJob.scheduled_start_time ? new Date(selectedJob.scheduled_start_time).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }) : '--'}
+                              {' - '}
+                              {selectedJob.scheduled_end_time ? new Date(selectedJob.scheduled_end_time).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }) : '--'}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                      <div className="flex items-start gap-3">
+                        <User className="w-5 h-5 text-muted-foreground mt-0.5" />
+                        <div>
+                          <p className="text-xs text-muted-foreground uppercase tracking-wider font-semibold">Kỹ thuật viên</p>
+                          <p className="font-medium">{selectedJob.users_jobs_assigned_technician_idTousers?.full_name || 'Chưa phân công'}</p>
+                          <p className="text-xs text-muted-foreground">{selectedJob.users_jobs_assigned_technician_idTousers?.email}</p>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Line Items */}
+                  {selectedJob.job_line_items && selectedJob.job_line_items.length > 0 && (
+                    <div className="space-y-3">
+                      <h3 className="font-bold flex items-center gap-2 text-sm uppercase tracking-wider text-muted-foreground">
+                        <ClipboardList className="w-4 h-4" />
+                        Vật tư & Dịch vụ
+                      </h3>
+                      <div className="border rounded-xl overflow-hidden">
+                        <table className="w-full text-sm">
+                          <thead className="bg-muted/50">
+                            <tr>
+                              <th className="text-left p-3 font-semibold">Tên</th>
+                              <th className="text-center p-3 font-semibold w-24">Số lượng</th>
+                              <th className="text-center p-3 font-semibold w-20">ĐVT</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y">
+                            {selectedJob.job_line_items.map((item) => (
+                              <tr key={item.id} className="hover:bg-muted/30 transition-colors">
+                                <td className="p-3 font-medium">{item.materials_and_services.name}</td>
+                                <td className="p-3 text-center">{item.quantity}</td>
+                                <td className="p-3 text-center text-muted-foreground">{item.materials_and_services.unit}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Reports */}
+                  {selectedJob.job_reports && selectedJob.job_reports.length > 0 && (
+                    <div className="space-y-4">
+                      <h3 className="font-bold flex items-center gap-2 text-sm uppercase tracking-wider text-muted-foreground">
+                        <FileText className="w-4 h-4" />
+                        Báo cáo thực hiện
+                      </h3>
+                      <div className="space-y-4">
+                        {selectedJob.job_reports.map((report) => (
+                          <div key={report.id} className="p-4 rounded-xl border bg-card hover:shadow-sm transition-shadow">
+                            <div className="flex justify-between items-start mb-2">
+                              <p className="font-bold text-sm">{report.users.full_name}</p>
+                              <p className="text-xs text-muted-foreground">{new Date(report.timestamp).toLocaleString('vi-VN')}</p>
+                            </div>
+                            <div className="space-y-2">
+                              <div>
+                                <p className="text-[10px] font-bold text-muted-foreground uppercase opacity-70">Vấn đề:</p>
+                                <p className="text-sm">{report.problem_summary}</p>
+                              </div>
+                              <div>
+                                <p className="text-[10px] font-bold text-muted-foreground uppercase opacity-70">Xử lý:</p>
+                                <p className="text-sm">{report.actions_taken}</p>
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+          )}
         </DialogContent>
       </Dialog>
     </div>

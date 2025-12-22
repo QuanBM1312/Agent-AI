@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
+import { db as prisma } from "@/lib/db";
+import { getCurrentUserWithRole } from "@/lib/auth-utils";
 import { v4 as uuidv4 } from "uuid";
 import { handleApiError } from "@/lib/api-helper";
 
@@ -46,7 +47,6 @@ export async function POST(req: NextRequest) {
 
   try {
     // Get authenticated user (auto-creates if needed)
-    const { getCurrentUserWithRole } = await import("@/lib/auth-utils");
     const currentUser = await getCurrentUserWithRole();
 
     if (!currentUser) {

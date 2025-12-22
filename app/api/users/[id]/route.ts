@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server";
 import { checkRole } from "@/lib/auth";
-import { PrismaClient } from "@prisma/client";
+import { db as prisma } from "@/lib/db";
 
-const prisma = new PrismaClient();
+// Singleton db used
 
 /**
  * @swagger

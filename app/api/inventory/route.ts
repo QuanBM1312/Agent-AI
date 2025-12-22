@@ -16,9 +16,10 @@ import { getCurrentUserWithRole } from "@/lib/auth-utils";
  *       403:
  *         description: Forbidden
  */
+import { getPaginationParams, formatPaginatedResponse } from "@/lib/pagination";
+
 export async function GET(req: NextRequest) {
   try {
-    const { getCurrentUserWithRole } = await import("@/lib/auth-utils");
     const currentUser = await getCurrentUserWithRole();
 
     if (!currentUser) {
@@ -37,74 +38,76 @@ export async function GET(req: NextRequest) {
 
     const { searchParams } = new URL(req.url);
     const search = searchParams.get("search");
-
-    let whereClause: any = {};
-
-    if (search) {
-      whereClause.OR = [
-        { model_name: { contains: search, mode: "insensitive" } },
-        { product_code: { contains: search, mode: "insensitive" } },
-      ];
-    }
-
-    // 1. Fetch Products
-    const products = await db.dim_product.findMany({
-      where: whereClause,
-      orderBy: {
-        model_name: "asc",
-      },
-    });
+    const paginationParams = getPaginationParams(req, 20);
 
     const currentYear = new Date().getFullYear();
     const currentMonth = new Date().getMonth() + 1;
 
-    // 2. Fetch Opening Stock (Current Month)
-    const openings = await db.inventory_month_opening.findMany({
-      where: {
-        year: currentYear,
-        month: currentMonth,
-        product_id: { in: products.map((p: any) => p.product_id) },
-      },
-    });
+    // 1. Fetch Products with optimized Raw SQL to aggregate stock in 1 query
+    const productsResult = search
+      ? await db.$queryRaw<any[]>`
+          SELECT 
+            p.product_id, 
+            p.product_code, 
+            p.model_name, 
+            p.unit,
+            COALESCE(CAST(o.opening_qty AS FLOAT), 0) as opening,
+            COALESCE(CAST(SUM(m.in_qty) AS FLOAT), 0) as total_in,
+            COALESCE(CAST(SUM(m.out_qty) AS FLOAT), 0) as total_out,
+            COUNT(*) OVER() as full_count
+          FROM public.dim_product p
+          LEFT JOIN public.inventory_month_opening o ON p.product_id = o.product_id 
+            AND o.year = ${currentYear} AND o.month = ${currentMonth}
+          LEFT JOIN public.inventory_daily_movement m ON p.product_id = m.product_id 
+            AND m.year = ${currentYear} AND m.month = ${currentMonth}
+          WHERE (p.model_name ILIKE ${`%${search}%`} OR p.product_code ILIKE ${`%${search}%`})
+          GROUP BY p.product_id, p.product_code, p.model_name, p.unit, o.opening_qty
+          ORDER BY p.model_name ASC
+          LIMIT ${paginationParams.limit} OFFSET ${paginationParams.skip}
+        `
+      : await db.$queryRaw<any[]>`
+          SELECT 
+            p.product_id, 
+            p.product_code, 
+            p.model_name, 
+            p.unit,
+            COALESCE(CAST(o.opening_qty AS FLOAT), 0) as opening,
+            COALESCE(CAST(SUM(m.in_qty) AS FLOAT), 0) as total_in,
+            COALESCE(CAST(SUM(m.out_qty) AS FLOAT), 0) as total_out,
+            COUNT(*) OVER() as full_count
+          FROM public.dim_product p
+          LEFT JOIN public.inventory_month_opening o ON p.product_id = o.product_id 
+            AND o.year = ${currentYear} AND o.month = ${currentMonth}
+          LEFT JOIN public.inventory_daily_movement m ON p.product_id = m.product_id 
+            AND m.year = ${currentYear} AND m.month = ${currentMonth}
+          GROUP BY p.product_id, p.product_code, p.model_name, p.unit, o.opening_qty
+          ORDER BY p.model_name ASC
+          LIMIT ${paginationParams.limit} OFFSET ${paginationParams.skip}
+        `;
 
-    // 3. Fetch Movements (Current Month)
-    const movements = await db.inventory_daily_movement.findMany({
-      where: {
-        year: currentYear,
-        month: currentMonth,
-        product_id: { in: products.map((p: any) => p.product_id) },
-      },
-    });
+    const totalCount = Number(productsResult[0]?.full_count || 0);
+    const products = productsResult;
 
-    // 4. Calculate Stock
+    // 2. Map Raw SQL result to expected response format
     const inventory = products.map((p: any) => {
-      // Find opening
-      const open = openings.find((o: any) => o.product_id === p.product_id);
-      const openingQty = open ? Number(open.opening_qty) : 0;
-
-      // Sum movements
-      const productMovements = movements.filter((m: any) => m.product_id === p.product_id);
-      const totalIn = productMovements.reduce((sum: number, m: any) => sum + Number(m.in_qty), 0);
-      const totalOut = productMovements.reduce((sum: number, m: any) => sum + Number(m.out_qty), 0);
-
-      const currentStock = openingQty + totalIn - totalOut;
+      const currentStock = p.opening + p.total_in - p.total_out;
 
       return {
-        id: p.product_code, // Use code as ID for frontend
+        id: p.product_code,
         item_code: p.product_code,
         name: p.model_name,
         unit: p.unit,
         quantity: currentStock,
         details: {
-          opening: openingQty,
-          in: totalIn,
-          out: totalOut
+          opening: p.opening,
+          in: p.total_in,
+          out: p.total_out
         }
       };
     });
 
-    return NextResponse.json({ items: inventory });
-  } catch (error: any) {
+    return NextResponse.json(formatPaginatedResponse(inventory, totalCount, paginationParams));
+  } catch (error: unknown) {
     console.error("Error fetching inventory:", error);
     return NextResponse.json(
       { error: "Failed to fetch inventory" },

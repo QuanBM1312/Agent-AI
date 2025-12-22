@@ -171,9 +171,10 @@ export function ChatInterface({ activeSessionId, onMessageSent }: ChatInterfaceP
         const res = await fetch(`/api/chat/messages?session_id=${activeSessionId}`)
         if (res.ok) {
           const data = await res.json()
+          const messagesData = data.data || []
           // If no messages found, it might be truly empty or new.
-          if (Array.isArray(data) && data.length > 0) {
-            setMessages(data)
+          if (Array.isArray(messagesData) && messagesData.length > 0) {
+            setMessages(messagesData)
           } else {
             // Default welcome for empty/new
             setMessages([{

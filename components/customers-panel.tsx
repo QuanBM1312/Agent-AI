@@ -1,9 +1,9 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useCallback } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { Search, Loader2, Plus, Building2, User } from "lucide-react"
+import { Search, Loader2, Plus, User, ChevronLeft, ChevronRight } from "lucide-react"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
 
 interface Customer {
@@ -25,6 +25,12 @@ export function CustomersPanel({ userRole }: CustomersPanelProps) {
     const [searchQuery, setSearchQuery] = useState("")
     const [showCreateModal, setShowCreateModal] = useState(false)
 
+    // Pagination & Search State
+    const [page, setPage] = useState(1)
+    const [totalPages, setTotalPages] = useState(1)
+    const [debouncedSearch, setDebouncedSearch] = useState("")
+    const limit = 20
+
     // Create Form State
     const [newItem, setNewItem] = useState({
         company_name: '',
@@ -39,20 +45,24 @@ export function CustomersPanel({ userRole }: CustomersPanelProps) {
     const canViewList = ["Admin", "Manager"].includes(userRole)
     const canCreate = ["Admin", "Manager", "Sales"].includes(userRole)
 
-    const fetchCustomers = async () => {
+    const fetchCustomers = useCallback(async () => {
         if (!canViewList) return
 
         setIsLoading(true)
         try {
             const params = new URLSearchParams()
-            if (searchQuery) params.append("search", searchQuery)
+            if (debouncedSearch) params.append("search", debouncedSearch)
+            params.append("page", page.toString())
+            params.append("limit", limit.toString())
 
             const res = await fetch(`/api/customers?${params.toString()}`)
             if (res.ok) {
                 const data = await res.json()
-                setCustomers(data.customers || [])
+                setCustomers(data.data || [])
+                if (data.pagination) {
+                    setTotalPages(data.pagination.totalPages)
+                }
             } else {
-                // Handle 403 or other errors gracefully
                 setCustomers([])
             }
         } catch (error) {
@@ -60,11 +70,20 @@ export function CustomersPanel({ userRole }: CustomersPanelProps) {
         } finally {
             setIsLoading(false)
         }
-    }
+    }, [canViewList, debouncedSearch, page, limit])
+
+    // Debounce search
+    useEffect(() => {
+        const timer = setTimeout(() => {
+            setDebouncedSearch(searchQuery)
+            setPage(1)
+        }, 500)
+        return () => clearTimeout(timer)
+    }, [searchQuery])
 
     useEffect(() => {
         fetchCustomers()
-    }, [searchQuery, userRole]) // Re-fetch when search or role changes
+    }, [fetchCustomers, userRole])
 
     const handleCreate = async () => {
         if (!newItem.company_name) {
@@ -100,8 +119,9 @@ export function CustomersPanel({ userRole }: CustomersPanelProps) {
                 fetchCustomers()
             }
 
-        } catch (error: any) {
-            alert(`Lỗi: ${error.message}`)
+        } catch (error: unknown) {
+            const message = error instanceof Error ? error.message : "Đã xảy ra lỗi không xác định";
+            alert(`Lỗi: ${message}`)
         } finally {
             setIsSubmitting(false)
         }
@@ -243,6 +263,32 @@ export function CustomersPanel({ userRole }: CustomersPanelProps) {
                             </tbody>
                         </table>
                     </div>
+                    {/* Pagination Controls */}
+                    {totalPages > 1 && (
+                        <div className="flex items-center justify-between px-2 py-4 border-t mt-auto">
+                            <p className="text-sm text-muted-foreground">
+                                Trang {page} / {totalPages}
+                            </p>
+                            <div className="flex gap-2">
+                                <Button
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={() => setPage(p => Math.max(1, p - 1))}
+                                    disabled={page === 1 || isLoading}
+                                >
+                                    <ChevronLeft className="w-4 h-4 mr-1" /> Trước
+                                </Button>
+                                <Button
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={() => setPage(p => Math.min(totalPages, p + 1))}
+                                    disabled={page === totalPages || isLoading}
+                                >
+                                    Sau <ChevronRight className="w-4 h-4 ml-1" />
+                                </Button>
+                            </div>
+                        </div>
+                    )}
                 </>
             </div>
         </div>

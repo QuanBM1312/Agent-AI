@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
-import { PrismaClient } from "@prisma/client";
-
-const prisma = new PrismaClient();
+import { db as prisma } from "@/lib/db";
+import { getCurrentUserWithRole, requireRole } from "@/lib/auth-utils";
 
 /**
  * @swagger
@@ -16,9 +15,10 @@ const prisma = new PrismaClient();
  *       403:
  *         description: Forbidden - Sales cannot view customer list
  */
+import { getPaginationParams, formatPaginatedResponse } from "@/lib/pagination";
+
 export async function GET(req: Request) {
   try {
-    const { getCurrentUserWithRole } = await import("@/lib/auth-utils");
     const currentUser = await getCurrentUserWithRole();
 
     if (!currentUser) {
@@ -26,7 +26,6 @@ export async function GET(req: Request) {
     }
 
     // SALES RESTRICTION (Per requirements): Sales cannot view customer list
-    // "Sales xem được cả tồn kho, không xem được danh sách khách hàng của công ty"
     if (currentUser.role === "Sales") {
       return NextResponse.json(
         {
@@ -48,27 +47,34 @@ export async function GET(req: Request) {
       );
     }
 
-    const url = new URL(req.url);
-    const search = url.searchParams.get("search");
+    const { searchParams } = new URL(req.url);
+    const search = searchParams.get("search");
+    const paginationParams = getPaginationParams(req, 20);
 
-    let whereClause: any = {};
+    const customersResult = search
+      ? await prisma.$queryRaw<any[]>`
+          SELECT
+            *,
+            COUNT(*) OVER() as full_count
+          FROM public.customers
+          WHERE (company_name ILIKE ${`%${search}%`} OR contact_person ILIKE ${`%${search}%`} OR phone ILIKE ${`%${search}%`})
+          ORDER BY company_name ASC
+          LIMIT ${paginationParams.limit} OFFSET ${paginationParams.skip}
+  `
+      : await prisma.$queryRaw<any[]>`
+  SELECT
+    *,
+    COUNT(*) OVER() as full_count
+          FROM public.customers
+          ORDER BY company_name ASC
+          LIMIT ${paginationParams.limit} OFFSET ${paginationParams.skip}
+  `;
 
-    if (search) {
-      whereClause.OR = [
-        { company_name: { contains: search, mode: "insensitive" } },
-        { contact_person: { contains: search, mode: "insensitive" } },
-        { phone: { contains: search, mode: "insensitive" } },
-      ];
-    }
+    const totalCount = Number(customersResult[0]?.full_count || 0);
+    // Remove full_count from each item to keep response clean
+    const customers = customersResult.map(({ full_count: _, ...rest }) => rest);
 
-    const customers = await prisma.customers.findMany({
-      where: whereClause,
-      orderBy: {
-        company_name: "asc",
-      },
-    });
-
-    return NextResponse.json({ customers });
+    return NextResponse.json(formatPaginatedResponse(customers, totalCount, paginationParams));
   } catch (error) {
     console.error("Failed to fetch customers:", error);
     return NextResponse.json(
@@ -130,7 +136,6 @@ export async function GET(req: Request) {
  */
 export async function POST(request: Request) {
   try {
-    const { requireRole } = await import("@/lib/auth-utils");
     await requireRole(["Admin", "Manager", "Sales"]);
 
     const body = await request.json();

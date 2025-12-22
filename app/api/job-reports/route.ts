@@ -135,7 +135,7 @@ export async function POST(req: NextRequest) {
       },
       { status: 201 }
     );
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error("Error creating job report:", error);
     return NextResponse.json(
       { error: "Failed to create report" },
@@ -158,6 +158,8 @@ export async function POST(req: NextRequest) {
  *       401:
  *         description: Unauthorized
  */
+import { getPaginationParams, formatPaginatedResponse } from "@/lib/pagination";
+
 export async function GET(req: NextRequest) {
   try {
     const currentUser = await getCurrentUserWithRole();
@@ -166,56 +168,71 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const { searchParams } = new URL(req.url);
-    const jobId = searchParams.get("job_id");
+    const paginationParams = getPaginationParams(req);
+    const url = new URL(req.url);
+    const jobId = url.searchParams.get("job_id");
+    const search = url.searchParams.get("search");
 
-    let whereClause: any = {};
-
-    // Filter by job_id if provided
-    if (jobId) {
-      whereClause.job_id = jobId;
-    }
-
-    // Technicians only see their own reports
+    // Build the dynamic WHERE clause
+    let filterSql = "WHERE 1=1";
+    if (jobId) filterSql += ` AND j_rep.job_id = '${jobId}'`;
     if (currentUser.role === "Technician") {
-      whereClause.created_by_user_id = currentUser.id;
+      filterSql += ` AND j_rep.created_by_user_id = '${currentUser.id}'`;
+    }
+    if (search) {
+      filterSql += ` AND (
+        j_rep.problem_summary ILIKE '%${search}%' OR 
+        j_rep.actions_taken ILIKE '%${search}%' OR
+        j.job_code ILIKE '%${search}%' OR
+        c.company_name ILIKE '%${search}%'
+      )`;
     }
 
-    const reports = await db.job_reports.findMany({
-      where: whereClause,
-      include: {
-        users: {
-          select: {
-            id: true,
-            full_name: true,
-            email: true,
-          },
-        },
-        jobs: {
-          select: {
-            id: true,
-            job_code: true,
-            status: true,
-            customers: {
-              select: {
-                id: true,
-                company_name: true,
-                contact_person: true,
-              },
-            },
-          },
-        },
-      },
-      orderBy: {
-        timestamp: "desc",
-      },
-    });
+    const reportsResult = await db.$queryRaw<any[]>`
+      SELECT 
+        j_rep.*,
+        COUNT(*) OVER() as full_count,
+        u.full_name as creator_full_name,
+        u.email as creator_email,
+        j.job_code,
+        j.status as job_status,
+        c.company_name as customer_company_name,
+        c.contact_person as customer_contact_person
+      FROM public.job_reports j_rep
+      LEFT JOIN public.users u ON j_rep.created_by_user_id = u.id
+      LEFT JOIN public.jobs j ON j_rep.job_id = j.id
+      LEFT JOIN public.customers c ON j.customer_id = c.id
+      ${db.$queryRawUnsafe(filterSql)}
+      ORDER BY j_rep.timestamp DESC
+      LIMIT ${paginationParams.limit} OFFSET ${paginationParams.skip}
+    `;
 
-    return NextResponse.json({ reports });
-  } catch (error: any) {
-    console.error("Error fetching reports:", error);
+    const totalCount = Number(reportsResult[0]?.full_count || 0);
+
+    const reports = reportsResult.map((r: any) => ({
+      ...r,
+      users: {
+        id: r.created_by_user_id,
+        full_name: r.creator_full_name,
+        email: r.creator_email,
+      },
+      jobs: {
+        id: r.job_id,
+        job_code: r.job_code,
+        status: r.job_status,
+        customers: {
+          id: r.customer_id,
+          company_name: r.customer_company_name,
+          contact_person: r.customer_contact_person,
+        },
+      },
+    }));
+
+    return NextResponse.json(formatPaginatedResponse(reports, totalCount, paginationParams));
+  } catch (error: unknown) {
+    console.error("Error fetching job reports:", error);
     return NextResponse.json(
-      { error: "Failed to fetch reports" },
+      { error: "Failed to fetch job reports" },
       { status: 500 }
     );
   }

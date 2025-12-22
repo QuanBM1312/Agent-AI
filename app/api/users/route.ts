@@ -1,8 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { PrismaClient } from "@prisma/client";
+import { db as prisma } from "@/lib/db";
 import { getCurrentUserWithRole } from "@/lib/auth-utils";
-
-const prisma = new PrismaClient();
 
 /**
  * @swagger
@@ -38,12 +36,14 @@ const prisma = new PrismaClient();
  *                       name:
  *                         type: string
  */
+import { getPaginationParams, formatPaginatedResponse } from "@/lib/pagination";
+
 export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
     const roleFilter = searchParams.get('role');
+    const search = searchParams.get('search');
 
-    // Use shared auth util that returns department_id
     const currentUser = await getCurrentUserWithRole();
 
     if (!currentUser) {
@@ -55,42 +55,73 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
-    let whereClause: any = {};
+    const whereClause: any = {};
+
+    // Search filter
+    if (search) {
+      whereClause.OR = [
+        { full_name: { contains: search, mode: 'insensitive' } },
+        { email: { contains: search, mode: 'insensitive' } },
+      ];
+    }
 
     // Filter by requested role (e.g., ?role=Technician)
     if (roleFilter) {
       whereClause.role = roleFilter;
     }
 
+    let departmentFilterId: string | null = null;
     // Manager Scope: Restrict to their own department
     if (currentUser.role === "Manager") {
       if (!currentUser.department_id) {
-        // Should not happen for valid managers, but safety check
         return NextResponse.json({ users: [] });
       }
-      whereClause.department_id = currentUser.department_id;
+      departmentFilterId = currentUser.department_id;
     }
 
-    const users = await prisma.users.findMany({
-      where: whereClause,
-      select: {
-        id: true,
-        full_name: true,
-        email: true,
-        role: true,
-        department_id: true,
-        departments: {
-          select: {
-            name: true
-          }
-        }
-      },
-      orderBy: {
-        full_name: "asc",
-      },
-    });
+    const paginationParams = getPaginationParams(req);
+    const currentRole = roleFilter;
+    const currentDepartmentId = departmentFilterId || searchParams.get("departmentId");
 
-    return NextResponse.json(users); // Return array directly (or object {users} depending on convention, previous was array)
+    const usersResult = search
+      ? await prisma.$queryRaw<any[]>`
+          SELECT
+            u.*,
+            COUNT(*) OVER() as full_count,
+            d.name as department_name
+          FROM public.users u
+          LEFT JOIN public.departments d ON u.department_id = d.id
+          WHERE (u.full_name ILIKE ${`%${search}%`} OR u.email ILIKE ${`%${search}%`})
+          ${currentRole ? prisma.$queryRawUnsafe(` AND u.role = '${currentRole}'`) : ""}
+          ${currentDepartmentId ? prisma.$queryRawUnsafe(` AND u.department_id = '${currentDepartmentId}'`) : ""}
+          ORDER BY u.full_name ASC
+          LIMIT ${paginationParams.limit} OFFSET ${paginationParams.skip}
+        `
+      : await prisma.$queryRaw<any[]>`
+          SELECT
+            u.*,
+            COUNT(*) OVER() as full_count,
+            d.name as department_name
+          FROM public.users u
+          LEFT JOIN public.departments d ON u.department_id = d.id
+          WHERE 1=1
+          ${currentRole ? prisma.$queryRawUnsafe(` AND u.role = '${currentRole}'`) : ""}
+          ${currentDepartmentId ? prisma.$queryRawUnsafe(` AND u.department_id = '${currentDepartmentId}'`) : ""}
+          ORDER BY u.full_name ASC
+          LIMIT ${paginationParams.limit} OFFSET ${paginationParams.skip}
+        `;
+
+    const totalCount = Number(usersResult[0]?.full_count || 0);
+
+    const users = usersResult.map(({ full_count: _, department_name, ...rest }) => ({
+      ...rest,
+      departments: rest.department_id ? {
+        id: rest.department_id,
+        name: department_name as string,
+      } : null,
+    }));
+
+    return NextResponse.json(formatPaginatedResponse(users, totalCount, paginationParams));
   } catch (error) {
     console.error("Failed to fetch users:", error);
     return NextResponse.json(

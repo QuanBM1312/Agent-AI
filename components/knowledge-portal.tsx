@@ -1,7 +1,7 @@
 "use client"
 
-import { useState, useRef, useEffect } from "react"
-import { Upload, File, FileText, Sheet as Sheet3, Trash2, Plus, Loader2, Globe, Link as LinkIcon, X } from "lucide-react"
+import { useState, useRef, useEffect, useCallback } from "react"
+import { Upload, File, FileText, Sheet as Sheet3, Trash2, Plus, Loader2, Globe, Link as LinkIcon, X, ChevronLeft, ChevronRight } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { MobileMenuButton } from "@/components/mobile-menu-button"
@@ -19,6 +19,7 @@ interface SourceItem {
   name: string
   type: "GOOGLE_SHEET" | "WEB_URL"
   status: string
+  url?: string // URL to the source (Google Drive/Sheet or Web URL)
 }
 
 export function KnowledgePortal() {
@@ -30,6 +31,12 @@ export function KnowledgePortal() {
   const [isAddingSource, setIsAddingSource] = useState(false)
   const [newSourceUrl, setNewSourceUrl] = useState("")
   const [isAddingSourceLoading, setIsAddingSourceLoading] = useState(false)
+  const [isLoading, setIsLoading] = useState(true)
+
+  // Pagination State
+  const [page, setPage] = useState(1)
+  const [totalPages, setTotalPages] = useState(1)
+  const limit = 10
 
   const getFileType = (fileName: string): KnowledgeItem['type'] => {
     const ext = fileName.split('.').pop()?.toLowerCase()
@@ -39,35 +46,53 @@ export function KnowledgePortal() {
     return 'pdf' // Default fallback
   }
 
-  useEffect(() => {
-    fetchData()
-  }, [])
 
-  const fetchData = async () => {
+  const fetchData = useCallback(async () => {
+    setIsLoading(true)
     try {
-      const response = await fetch("/api/knowledge/sources")
+      const response = await fetch(`/api/knowledge/sources?page=${page}&limit=${limit}`)
       if (response.ok) {
         const data = await response.json()
+        const rawItems = (data.data || []) as Array<{
+          id: string;
+          sheet_name?: string;
+          drive_file_id?: string;
+          drive_name?: string;
+          hash?: string;
+          created_at?: string;
+        }>
+
+        if (data.pagination) {
+          setTotalPages(data.pagination.totalPages)
+        }
 
         const validSources: SourceItem[] = []
         const validItems: KnowledgeItem[] = []
 
-        data.forEach((item: any) => {
+        rawItems.forEach((item) => {
           // Identify type based on sheet_name or logic
-          // Current logic: if sheet_name is 'WEB_URL' -> Source. Else -> File.
           if (item.sheet_name === 'WEB_URL' || item.sheet_name === 'GOOGLE_SHEET') {
+            // Construct Google Drive/Sheet URL
+            let url = item.drive_file_id
+            if (item.sheet_name === 'GOOGLE_SHEET' && item.drive_file_id && !item.drive_file_id.startsWith('http')) {
+              url = `https://docs.google.com/spreadsheets/d/${item.drive_file_id}/edit`
+            } else if (item.drive_file_id && !item.drive_file_id.startsWith('http')) {
+              url = `https://drive.google.com/file/d/${item.drive_file_id}/view`
+            }
+
             validSources.push({
               id: item.id,
-              name: item.drive_name || item.drive_file_id,
+              name: item.drive_name || item.drive_file_id || "",
               type: item.sheet_name === 'GOOGLE_SHEET' ? 'GOOGLE_SHEET' : 'WEB_URL',
-              status: "Đang đồng bộ"
+              status: "Đang đồng bộ",
+              url: url || ""
             })
           } else {
             validItems.push({
               id: item.id,
               name: item.drive_name || "Unknown File",
               type: getFileType(item.drive_name || ""),
-              size: formatFileSize(Number(item.hash) || 0), // storing size in hash
+              size: formatFileSize(Number(item.hash) || 0),
               uploadedAt: item.created_at ? new Date(item.created_at).toISOString().split('T')[0] : ""
             })
           }
@@ -77,8 +102,14 @@ export function KnowledgePortal() {
       }
     } catch (error) {
       console.error("Failed to fetch knowledge sources:", error)
+    } finally {
+      setIsLoading(false)
     }
-  }
+  }, [page, limit])
+
+  useEffect(() => {
+    fetchData()
+  }, [fetchData])
 
   const formatFileSize = (bytes: number) => {
     if (bytes === 0) return '0 Bytes'
@@ -102,11 +133,11 @@ export function KnowledgePortal() {
       if (!response.ok) {
         const errorText = await response.text()
         try {
-          const errorData = JSON.parse(errorText)
+          const errorData = JSON.parse(errorText) as { error?: string }
           throw new Error(errorData.error || "Upload failed")
-        } catch (e: any) {
+        } catch (e: unknown) {
           // If JSON parse failed, it's likely an HTML error page or empty
-          if (e.message !== "Upload failed" && !errorText.trim().startsWith("{")) {
+          if (e instanceof Error && e.message !== "Upload failed" && !errorText.trim().startsWith("{")) {
             throw new Error(`Server Error ${response.status}: ${errorText.slice(0, 50)}`)
           }
           throw e
@@ -127,9 +158,10 @@ export function KnowledgePortal() {
 
       // Optionally re-fetch to get the DB ID if needed
       // await fetchData()
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error("Error uploading file:", error)
-      alert(`Có lỗi xảy ra: ${error.message}`)
+      const message = error instanceof Error ? error.message : "An unknown error occurred"
+      alert(`Có lỗi xảy ra: ${message}`)
     } finally {
       setIsUploading(false)
       if (fileInputRef.current) {
@@ -314,21 +346,71 @@ export function KnowledgePortal() {
           )}
 
           <div className="space-y-3">
-            {sources.map((source) => (
-              <div key={source.id} className="flex items-center justify-between p-4 bg-card border border-border rounded-lg">
-                <div className="flex items-center gap-3 overflow-hidden">
-                  {getSourceIcon(source.type)}
-                  <div className="min-w-0">
-                    <p className="font-medium text-foreground truncate">{source.name}</p>
-                    <p className="text-xs text-muted-foreground">{source.status}</p>
+            {isLoading ? (
+              // Sources Skeleton
+              [...Array(3)].map((_, i) => (
+                <div key={i} className="flex items-center justify-between p-4 bg-card border border-border rounded-lg animate-pulse">
+                  <div className="flex items-center gap-3 flex-1">
+                    <div className="w-10 h-10 rounded bg-muted"></div>
+                    <div className="space-y-2 flex-1">
+                      <div className="h-4 bg-muted rounded w-1/3"></div>
+                      <div className="h-3 bg-muted rounded w-1/4"></div>
+                    </div>
                   </div>
+                  <div className="w-16 h-8 bg-muted rounded"></div>
                 </div>
-                <Button variant="outline" size="sm" className="shrink-0 ml-2">
-                  Cập nhật
+              ))
+            ) : sources.length === 0 ? (
+              <p className="text-sm text-muted-foreground text-center py-8">Chưa có nguồn dữ liệu nào được kết nối.</p>
+            ) : (
+              sources.map((source) => (
+                <div key={source.id} className="flex items-center justify-between p-4 bg-card border border-border rounded-lg hover:bg-accent/50 transition-colors group">
+                  <a
+                    href={source.url || '#'}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex items-center gap-3 overflow-hidden flex-1 min-w-0"
+                  >
+                    {getSourceIcon(source.type)}
+                    <div className="min-w-0">
+                      <p className="font-medium text-foreground truncate group-hover:text-primary">{source.name}</p>
+                      <p className="text-xs text-muted-foreground">{source.status}</p>
+                    </div>
+                  </a>
+                  <Button variant="outline" size="sm" className="shrink-0 ml-2">
+                    Cập nhật
+                  </Button>
+                </div>
+              ))
+            )}
+          </div>
+
+          {/* Pagination Controls */}
+          {totalPages > 1 && (
+            <div className="flex items-center justify-between px-2 py-4 border-t mt-4">
+              <p className="text-sm text-muted-foreground">
+                Trang {page} / {totalPages}
+              </p>
+              <div className="flex gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setPage(p => Math.max(1, p - 1))}
+                  disabled={page === 1}
+                >
+                  <ChevronLeft className="w-4 h-4 mr-1" /> Trước
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setPage(p => Math.min(totalPages, p + 1))}
+                  disabled={page === totalPages}
+                >
+                  Sau <ChevronRight className="w-4 h-4 ml-1" />
                 </Button>
               </div>
-            ))}
-          </div>
+            </div>
+          )}
         </div>
 
         {/* Uploaded Files */}
@@ -341,25 +423,43 @@ export function KnowledgePortal() {
             </Button>
           </div>
           <div className="space-y-2">
-            {items.map((item) => (
-              <div
-                key={item.id}
-                className="flex items-center justify-between p-4 bg-card border border-border rounded-lg hover:border-primary transition-colors"
-              >
-                <div className="flex items-center gap-3 flex-1">
-                  {getFileIcon(item.type)}
-                  <div className="flex-1">
-                    <p className="font-medium text-foreground text-sm">{item.name}</p>
-                    <p className="text-xs text-muted-foreground">
-                      {item.size} • Tải lên {item.uploadedAt}
-                    </p>
+            {isLoading ? (
+              // Files Skeleton
+              [...Array(5)].map((_, i) => (
+                <div key={i} className="flex items-center justify-between p-4 bg-card border border-border rounded-lg animate-pulse">
+                  <div className="flex items-center gap-3 flex-1">
+                    <div className="w-5 h-5 bg-muted rounded"></div>
+                    <div className="space-y-2 flex-1">
+                      <div className="h-4 bg-muted rounded w-1/2"></div>
+                      <div className="h-3 bg-muted rounded w-1/3"></div>
+                    </div>
                   </div>
+                  <div className="w-8 h-8 bg-muted rounded"></div>
                 </div>
-                <button className="p-2 hover:bg-muted rounded transition-colors">
-                  <Trash2 className="w-4 h-4 text-muted-foreground" />
-                </button>
-              </div>
-            ))}
+              ))
+            ) : items.length === 0 ? (
+              <p className="text-sm text-muted-foreground text-center py-8">Chưa có tài liệu nào được tải lên.</p>
+            ) : (
+              items.map((item) => (
+                <div
+                  key={item.id}
+                  className="flex items-center justify-between p-4 bg-card border border-border rounded-lg hover:border-primary transition-colors"
+                >
+                  <div className="flex items-center gap-3 flex-1">
+                    {getFileIcon(item.type)}
+                    <div className="flex-1">
+                      <p className="font-medium text-foreground text-sm">{item.name}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {item.size} • Tải lên {item.uploadedAt}
+                      </p>
+                    </div>
+                  </div>
+                  <button className="p-2 hover:bg-muted rounded transition-colors">
+                    <Trash2 className="w-4 h-4 text-muted-foreground" />
+                  </button>
+                </div>
+              ))
+            )}
           </div>
         </div>
       </div>

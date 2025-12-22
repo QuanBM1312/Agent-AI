@@ -1,7 +1,5 @@
 import { NextResponse } from "next/server";
-import {PrismaClient} from "@prisma/client";
-
-const prisma = new PrismaClient();
+import { db as prisma } from "@/lib/db";
 
 /**
  * @swagger
@@ -26,20 +24,30 @@ const prisma = new PrismaClient();
  *                   name:
  *                     type: string
  */
-export async function GET() {
+import { getPaginationParams, formatPaginatedResponse } from "@/lib/pagination";
+
+export async function GET(req: Request) {
   try {
-    const departments = await prisma.departments.findMany({
-      orderBy: {
-        name: "asc",
-      },
-    });
-    return NextResponse.json(departments);
+    const paginationParams = getPaginationParams(req, 20);
+
+    const departmentsResult = await prisma.$queryRaw<any[]>`
+      SELECT 
+        *,
+        COUNT(*) OVER() as full_count
+      FROM public.departments
+      ORDER BY name ASC
+      LIMIT ${paginationParams.limit} OFFSET ${paginationParams.skip}
+    `;
+
+    const totalCount = Number(departmentsResult[0]?.full_count || 0);
+    const departments = departmentsResult.map(({ full_count: _, ...rest }) => rest);
+
+    return NextResponse.json(formatPaginatedResponse(departments, totalCount, paginationParams));
   } catch (error) {
     console.error("Failed to fetch departments:", error);
     return NextResponse.json(
       { error: "Unable to fetch departments" },
       { status: 500 }
-
     );
   }
 }

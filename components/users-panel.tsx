@@ -1,9 +1,9 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useCallback } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { Search, Loader2, UserCog, Pencil, Trash2, Building2, Shield } from "lucide-react"
+import { Search, Loader2, UserCog, Pencil, Trash2, ChevronLeft, ChevronRight } from "lucide-react"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog"
 
 interface User {
@@ -28,37 +28,39 @@ export function UsersPanel({ userRole }: { userRole: string }) {
     const [isLoading, setIsLoading] = useState(false)
     const [searchQuery, setSearchQuery] = useState("")
 
+    // Pagination & Search State
+    const [page, setPage] = useState(1)
+    const [totalPages, setTotalPages] = useState(1)
+    const [debouncedSearch, setDebouncedSearch] = useState("")
+    const limit = 20
+
     // Edit State
     const [editingUser, setEditingUser] = useState<User | null>(null)
     const [isSaving, setIsSaving] = useState(false)
 
     // Permission Check
-    if (userRole !== 'Admin') {
-        return (
-            <div className="flex h-full items-center justify-center text-muted-foreground">
-                Bạn không có quyền truy cập trang này.
-            </div>
-        )
-    }
+    const isAdmin = userRole === 'Admin'
 
-    const fetchData = async () => {
+    const fetchData = useCallback(async () => {
+        if (!isAdmin) return
         setIsLoading(true)
         try {
-            // Fetch Users
-            const usersRes = await fetch(`/api/users?role=${searchQuery}`) // Simple search hook if needed, or filter client side
-            // Actually my API supports ?role=... but maybe not name search yet. 
-            // Let's fetch all and filter client side for now, or just passing param if supported.
-            // Given the API implementation: `if (roleFilter) whereClause.role = roleFilter;`
-            // It doesn't look like it supports name search yet. I'll just fetch all.
+            const params = new URLSearchParams()
+            if (debouncedSearch) params.append("search", debouncedSearch)
+            params.append("page", page.toString())
+            params.append("limit", limit.toString())
 
             const [uRes, dRes] = await Promise.all([
-                fetch('/api/users'),
+                fetch(`/api/users?${params.toString()}`),
                 fetch('/api/departments')
             ])
 
             if (uRes.ok) {
                 const uData = await uRes.json()
-                setUsers(uData)
+                setUsers(uData.data || [])
+                if (uData.pagination) {
+                    setTotalPages(uData.pagination.totalPages)
+                }
             }
             if (dRes.ok) {
                 const dData = await dRes.json()
@@ -70,16 +72,23 @@ export function UsersPanel({ userRole }: { userRole: string }) {
         } finally {
             setIsLoading(false)
         }
-    }
+    }, [isAdmin, debouncedSearch, page, limit])
+
+    // Debounce search
+    useEffect(() => {
+        const timer = setTimeout(() => {
+            setDebouncedSearch(searchQuery)
+            setPage(1)
+        }, 500)
+        return () => clearTimeout(timer)
+    }, [searchQuery])
 
     useEffect(() => {
         fetchData()
-    }, []) // Initial load
+    }, [fetchData]) // Initial load and on change
 
-    const filteredUsers = users.filter(u =>
-        u.full_name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        u.email?.toLowerCase().includes(searchQuery.toLowerCase())
-    )
+    // Filter logic moved to server-side, but keep the variable for compatibility if needed elsewhere
+    const filteredUsers = users
 
     const handleUpdateUser = async () => {
         if (!editingUser) return
@@ -107,7 +116,7 @@ export function UsersPanel({ userRole }: { userRole: string }) {
 
             setEditingUser(null)
             alert("Cập nhật thành công")
-        } catch (error) {
+        } catch {
             alert("Lỗi khi cập nhật")
         } finally {
             setIsSaving(false)
@@ -124,9 +133,17 @@ export function UsersPanel({ userRole }: { userRole: string }) {
             } else {
                 alert("Không thể xóa user")
             }
-        } catch (e) {
+        } catch {
             alert("Lỗi khi xóa")
         }
+    }
+
+    if (!isAdmin) {
+        return (
+            <div className="flex h-full items-center justify-center text-muted-foreground">
+                Bạn không có quyền truy cập trang này.
+            </div>
+        )
     }
 
     return (
@@ -176,9 +193,9 @@ export function UsersPanel({ userRole }: { userRole: string }) {
                                     <td className="p-3 text-muted-foreground">{u.email}</td>
                                     <td className="p-3">
                                         <span className={`inline-flex items-center px-2 py-1 rounded-md text-xs font-medium border ${u.role === 'Admin' ? 'bg-red-100 text-red-800 border-red-200' :
-                                                u.role === 'Manager' ? 'bg-purple-100 text-purple-800 border-purple-200' :
-                                                    u.role === 'Sales' ? 'bg-blue-100 text-blue-800 border-blue-200' :
-                                                        'bg-slate-100 text-slate-800 border-slate-200'
+                                            u.role === 'Manager' ? 'bg-purple-100 text-purple-800 border-purple-200' :
+                                                u.role === 'Sales' ? 'bg-blue-100 text-blue-800 border-blue-200' :
+                                                    'bg-slate-100 text-slate-800 border-slate-200'
                                             }`}>
                                             {u.role}
                                         </span>
@@ -201,6 +218,33 @@ export function UsersPanel({ userRole }: { userRole: string }) {
                         </tbody>
                     </table>
                 </div>
+
+                {/* Pagination Controls */}
+                {totalPages > 1 && (
+                    <div className="flex items-center justify-between px-2 py-4 border-t mt-auto">
+                        <p className="text-sm text-muted-foreground">
+                            Trang {page} / {totalPages}
+                        </p>
+                        <div className="flex gap-2">
+                            <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => setPage(p => Math.max(1, p - 1))}
+                                disabled={page === 1 || isLoading}
+                            >
+                                <ChevronLeft className="w-4 h-4 mr-1" /> Trước
+                            </Button>
+                            <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => setPage(p => Math.min(totalPages, p + 1))}
+                                disabled={page === totalPages || isLoading}
+                            >
+                                Sau <ChevronRight className="w-4 h-4 ml-1" />
+                            </Button>
+                        </div>
+                    </div>
+                )}
             </div>
 
             {/* Edit Dialog */}

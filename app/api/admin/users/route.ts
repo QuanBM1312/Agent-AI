@@ -60,7 +60,7 @@ export async function POST(req: NextRequest) {
     const validRoles = ["Admin", "Manager", "Sales", "Technician"];
     if (!validRoles.includes(role)) {
       return NextResponse.json(
-        { error: `Invalid role. Must be one of: ${validRoles.join(", ")}` },
+        { error: `Invalid role.Must be one of: ${validRoles.join(", ")} ` },
         { status: 400 }
       );
     }
@@ -155,24 +155,40 @@ export async function POST(req: NextRequest) {
  *       403:
  *         description: Forbidden
  */
+import { getPaginationParams, formatPaginatedResponse } from "@/lib/pagination";
+
 export async function GET(req: NextRequest) {
   try {
     await requireRole(["Admin"]);
 
-    const users = await db.users.findMany({
-      include: {
-        departments: true,
-      },
-      orderBy: {
-        email: "asc",
-      },
-    });
+    const paginationParams = getPaginationParams(req);
 
-    return NextResponse.json({ users });
-  } catch (error: any) {
+    const usersResult = await db.$queryRaw<any[]>`
+      SELECT 
+        u.*,
+        COUNT(*) OVER() as full_count,
+        d.name as department_name
+      FROM public.users u
+      LEFT JOIN public.departments d ON u.department_id = d.id
+      ORDER BY u.email ASC
+      LIMIT ${paginationParams.limit} OFFSET ${paginationParams.skip}
+    `;
+
+    const totalCount = Number(usersResult[0]?.full_count || 0);
+
+    const users = usersResult.map(({ full_count: _, department_name, ...rest }) => ({
+      ...rest,
+      departments: rest.department_id ? {
+        id: rest.department_id,
+        name: department_name,
+      } : null,
+    }));
+
+    return NextResponse.json(formatPaginatedResponse(users, totalCount, paginationParams));
+  } catch (error: unknown) {
     console.error("Error fetching users:", error);
 
-    if (error.message?.includes("Forbidden") || error.message?.includes("Unauthorized")) {
+    if (error instanceof Error && (error.message?.includes("Forbidden") || error.message?.includes("Unauthorized"))) {
       return NextResponse.json(
         { error: "Only Admin can view all users" },
         { status: 403 }

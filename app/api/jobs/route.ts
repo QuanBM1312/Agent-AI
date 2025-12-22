@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { job_type_enum } from "@prisma/client";
 import { db } from "@/lib/db";
 import { getCurrentUserWithRole, sanitizeJobForTechnician, canAssignToTechnician } from "@/lib/auth-utils";
 
@@ -72,7 +73,8 @@ export async function POST(req: NextRequest) {
       scheduled_start_time,
       scheduled_end_time,
       notes,
-      assigned_technician_id, // Extract new field
+      assigned_technician_id, // Legacy single technician (deprecated)
+      assigned_technician_ids, // New: array of technician IDs
     } = body;
 
     // Validate required fields
@@ -96,14 +98,18 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Validate technician assignment if provided
-    if (assigned_technician_id) {
-      const canAssign = await canAssignToTechnician(currentUser, assigned_technician_id);
-      if (!canAssign) {
-        return NextResponse.json(
-          { error: "Forbidden: You cannot assign jobs to this technician" },
-          { status: 403 }
-        );
+    // Validate technician assignments if provided
+    const technicianIds = assigned_technician_ids || (assigned_technician_id ? [assigned_technician_id] : []);
+
+    if (technicianIds.length > 0) {
+      for (const techId of technicianIds) {
+        const canAssign = await canAssignToTechnician(currentUser, techId);
+        if (!canAssign) {
+          return NextResponse.json(
+            { error: `Forbidden: You cannot assign jobs to technician ${techId}` },
+            { status: 403 }
+          );
+        }
       }
     }
 
@@ -131,7 +137,7 @@ export async function POST(req: NextRequest) {
       data: {
         job_code,
         customer_id,
-        job_type: jobTypeMap[job_type] as any, // Map to Prisma Enum Key
+        job_type: jobTypeMap[job_type] as job_type_enum, // Map to Prisma Enum
         scheduled_start_time: scheduled_start_time
           ? new Date(scheduled_start_time)
           : null,
@@ -141,7 +147,7 @@ export async function POST(req: NextRequest) {
         notes,
         created_by_user_id: currentUser.id,
         status: "ph_n_c_ng",
-        assigned_technician_id: assigned_technician_id || null, // Atomic assignment
+        assigned_technician_id: technicianIds[0] || null, // Keep first technician for backward compatibility
       },
       include: {
         customers: true,
@@ -155,6 +161,17 @@ export async function POST(req: NextRequest) {
       },
     });
 
+    // Create job_technicians entries for all assigned technicians
+    if (technicianIds.length > 0) {
+      await db.job_technicians.createMany({
+        data: technicianIds.map((techId: string) => ({
+          job_id: newJob.id,
+          technician_id: techId,
+        })),
+        skipDuplicates: true,
+      });
+    }
+
     return NextResponse.json(
       {
         success: true,
@@ -163,11 +180,11 @@ export async function POST(req: NextRequest) {
       },
       { status: 201 }
     );
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error("Error creating job:", error);
 
-    // Handle unique constraint violation (duplicate job_code)
-    if (error.code === "P2002") {
+    const prismaError = error as { code?: string };
+    if (prismaError.code === "P2002") {
       return NextResponse.json(
         { error: "Job code already exists" },
         { status: 409 }
@@ -195,6 +212,8 @@ export async function POST(req: NextRequest) {
  *       401:
  *         description: Unauthorized
  */
+import { getPaginationParams, formatPaginatedResponse } from "@/lib/pagination";
+
 export async function GET(req: NextRequest) {
   try {
     const currentUser = await getCurrentUserWithRole();
@@ -203,97 +222,131 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    let jobs;
+    const paginationParams = getPaginationParams(req);
+    const url = new URL(req.url);
+    const search = url.searchParams.get("search");
+    const status = url.searchParams.get("status");
+    const startDate = url.searchParams.get("startDate");
+    const endDate = url.searchParams.get("endDate");
 
-    // Technicians only see their assigned jobs
+    // Role-based filter
+    let roleFilterSql = "";
     if (currentUser.role === "Technician") {
-      jobs = await db.jobs.findMany({
-        where: {
-          assigned_technician_id: currentUser.id,
-        },
-        include: {
-          customers: true,
-          job_line_items: {
-            include: {
-              materials_and_services: true,
-            },
-          },
-          users_jobs_assigned_technician_idTousers: {
-            select: {
-              id: true,
-              full_name: true,
-              email: true,
-            },
-          },
-        },
-        orderBy: {
-          scheduled_start_time: "desc",
-        },
-      });
-
-      // Sanitize financial data for technicians
-      jobs = jobs.map((job: any) => sanitizeJobForTechnician(job));
-    }
-    // Sales: Can see jobs but with limited customer info (based on requirements)
-    else if (currentUser.role === "Sales") {
-      jobs = await db.jobs.findMany({
-        include: {
-          customers: {
-            select: {
-              id: true,
-              company_name: true,
-              // Hide contact details from Sales
-            },
-          },
-          job_line_items: {
-            include: {
-              materials_and_services: true,
-            },
-          },
-        },
-        orderBy: {
-          scheduled_start_time: "desc",
-        },
-      });
-    }
-    // Admin and Manager see everything
-    else {
-      // Manager only sees jobs in their department
-      const whereClause =
-        currentUser.role === "Manager" && currentUser.department_id
-          ? {
-            users_jobs_assigned_technician_idTousers: {
-              department_id: currentUser.department_id,
-            },
-          }
-          : {};
-
-      jobs = await db.jobs.findMany({
-        where: whereClause,
-        include: {
-          customers: true,
-          job_line_items: {
-            include: {
-              materials_and_services: true,
-            },
-          },
-          users_jobs_assigned_technician_idTousers: {
-            select: {
-              id: true,
-              full_name: true,
-              email: true,
-              departments: true,
-            },
-          },
-        },
-        orderBy: {
-          scheduled_start_time: "desc",
-        },
-      });
+      roleFilterSql = ` AND assigned_technician_id = '${currentUser.id}'`;
+    } else if (currentUser.role === "Manager" && currentUser.department_id) {
+      roleFilterSql = ` AND EXISTS (
+        SELECT 1 FROM public.users u 
+        WHERE u.id = jobs.assigned_technician_id 
+        AND u.department_id = '${currentUser.department_id}'
+      )`;
     }
 
-    return NextResponse.json({ jobs });
-  } catch (error: any) {
+    // Build the dynamic WHERE clause
+    let filterSql = "WHERE 1=1" + (roleFilterSql || "");
+    if (status) filterSql += ` AND status = '${status}'`;
+    if (startDate) filterSql += ` AND scheduled_start_time >= '${startDate}'`;
+    if (endDate) filterSql += ` AND scheduled_start_time <= '${endDate}'`;
+    if (search) {
+      filterSql += ` AND (
+        job_code ILIKE '%${search}%' OR 
+        notes ILIKE '%${search}%' OR
+        EXISTS (
+          SELECT 1 FROM public.customers c 
+          WHERE c.id = j.customer_id 
+          AND (c.company_name ILIKE '%${search}%' OR c.contact_person ILIKE '%${search}%' OR c.phone ILIKE '%${search}%')
+        )
+      )`;
+    }
+
+    // Main Query using Raw SQL
+    const jobsResult = await db.$queryRaw<any[]>`
+      WITH filtered_jobs AS (
+        SELECT 
+          j.*,
+          COUNT(*) OVER() as full_count
+        FROM public.jobs j
+        ${db.$queryRawUnsafe(filterSql)}
+        ORDER BY j.scheduled_start_time DESC
+        LIMIT ${paginationParams.limit} OFFSET ${paginationParams.skip}
+      )
+      SELECT 
+        j.*,
+        c.company_name as customer_company_name,
+        c.contact_person as customer_contact_person,
+        c.phone as customer_phone,
+        c.address as customer_address,
+        u_tech.full_name as tech_full_name,
+        u_tech.email as tech_email,
+        (
+          SELECT jsonb_agg(jsonb_build_object(
+            'id', li.id,
+            'quantity', li.quantity,
+            'materials_and_services', jsonb_build_object(
+              'id', ms.id,
+              'name', ms.name,
+              'unit', ms.unit
+            )
+          ))
+          FROM public.job_line_items li
+          JOIN public.materials_and_services ms ON li.material_service_id = ms.id
+          WHERE li.job_id = j.id
+        ) as line_items,
+        (
+          SELECT jsonb_agg(jsonb_build_object(
+            'users', jsonb_build_object(
+              'id', u.id,
+              'full_name', u.full_name
+            )
+          ))
+          FROM public.job_technicians jt
+          JOIN public.users u ON jt.technician_id = u.id
+          WHERE jt.job_id = j.id
+        ) as technicians
+      FROM filtered_jobs j
+      LEFT JOIN public.customers c ON j.customer_id = c.id
+      LEFT JOIN public.users u_tech ON j.assigned_technician_id = u_tech.id
+    `;
+
+    const totalCount = Number(jobsResult[0]?.full_count || 0);
+
+    // Map Raw SQL result to expected response format (sanitize if needed)
+    const jobs = jobsResult.map((j: any) => {
+      const mappedJob = {
+        ...j,
+        customers: {
+          id: j.customer_id,
+          company_name: j.customer_company_name,
+          contact_person: j.customer_contact_person,
+          phone: j.customer_phone,
+          address: j.customer_address,
+        },
+        users_jobs_assigned_technician_idTousers: j.tech_full_name ? {
+          id: j.assigned_technician_id,
+          full_name: j.tech_full_name,
+          email: j.tech_email,
+        } : null,
+        job_line_items: j.line_items || [],
+        job_technicians: j.technicians || [],
+      };
+
+      // Sales restriction
+      if (currentUser.role === "Sales") {
+        mappedJob.customers = {
+          id: j.customer_id,
+          company_name: j.customer_company_name,
+        };
+      }
+
+      // Technician restriction
+      if (currentUser.role === "Technician") {
+        return sanitizeJobForTechnician(mappedJob);
+      }
+
+      return mappedJob;
+    });
+
+    return NextResponse.json(formatPaginatedResponse(jobs, totalCount, paginationParams));
+  } catch (error: unknown) {
     console.error("Error fetching jobs:", error);
     return NextResponse.json(
       { error: "Failed to fetch jobs" },

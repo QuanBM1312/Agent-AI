@@ -50,7 +50,7 @@ export async function POST(req: Request) {
     const fullName = `${first_name || ''} ${last_name || ''}`.trim();
 
     // Read role and department from Clerk metadata (set by Admin)
-    const role = (public_metadata?.role as string) || 'Technician'; // Default to Technician if not set
+    const role = (public_metadata?.role as string) || 'NOT_ASSIGN'; // Default to NOT_ASSIGN if not set
     const departmentId = public_metadata?.department_id as string | undefined;
 
     try {

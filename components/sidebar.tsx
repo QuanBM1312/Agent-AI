@@ -1,10 +1,10 @@
 "use client"
 
-import { MessageSquare, BookOpen, Calendar, Archive, Settings, LogOut, X, ChevronDown, ChevronRight, Plus, Loader2, FileText, Users, UserCog } from "lucide-react"
+import { MessageSquare, BookOpen, Calendar, Archive, LogOut, X, ChevronDown, ChevronRight, Plus, Loader2, FileText, Users, UserCog } from "lucide-react"
 import { useMobileMenu } from "./mobile-menu-context"
 import { ChatSession } from "@/lib/types"
 import { useState } from "react"
-import { Button } from "@/components/ui/button"
+import { SignedIn, SignedOut, SignInButton, UserButton, useUser } from "@clerk/nextjs"
 
 interface SidebarProps {
   activeTab: string
@@ -24,10 +24,11 @@ export function Sidebar({
   activeSessionId,
   onSessionSelect,
   onNewChat,
-  userRole = "Technician" // Default safe role
+  userRole = "NOT_ASSIGN" // Default safe role
 }: SidebarProps & { userRole?: string }) {
   const { isOpen, setIsOpen } = useMobileMenu()
   const [isChatExpanded, setIsChatExpanded] = useState(true)
+  const { user } = useUser()
 
   const menuItems = [
     {
@@ -40,7 +41,7 @@ export function Sidebar({
       id: "knowledge",
       label: "Nạp Tri thức",
       icon: BookOpen,
-      roles: ["Admin", "Manager", "Sales", "Technician"]
+      roles: ["Admin", "Manager"] // Only Admin and Manager can upload knowledge
     },
     {
       id: "scheduling",
@@ -217,15 +218,35 @@ export function Sidebar({
         </nav>
 
         {/* Footer */}
-        <div className="p-4 border-t border-sidebar-border space-y-2">
-          <button className="w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sidebar-foreground hover:bg-sidebar-accent transition-colors">
-            <Settings className="w-5 h-5" />
-            <span className="text-sm font-medium">Cài đặt</span>
-          </button>
-          <button className="w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sidebar-foreground hover:bg-sidebar-accent transition-colors">
-            <LogOut className="w-5 h-5" />
-            <span className="text-sm font-medium">Đăng xuất</span>
-          </button>
+        <div className="p-4 border-t border-sidebar-border">
+          <SignedIn>
+            <div className="flex items-center gap-3 px-2 py-2 rounded-lg hover:bg-sidebar-accent transition-colors">
+              <UserButton
+                afterSignOutUrl="/"
+                appearance={{
+                  elements: {
+                    avatarBox: "w-9 h-9"
+                  }
+                }}
+              />
+              <div className="flex flex-col overflow-hidden text-left">
+                <span className="text-sm font-medium truncate text-sidebar-foreground">
+                  {user?.fullName || user?.firstName || "Người dùng"}
+                </span>
+                <span className="text-xs truncate text-sidebar-foreground/60 leading-none mt-1">
+                  {user?.primaryEmailAddress?.emailAddress}
+                </span>
+              </div>
+            </div>
+          </SignedIn>
+          <SignedOut>
+            <SignInButton mode="modal">
+              <button className="w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sidebar-foreground hover:bg-sidebar-accent transition-colors">
+                <LogOut className="w-5 h-5" />
+                <span className="text-sm font-medium">Đăng nhập</span>
+              </button>
+            </SignInButton>
+          </SignedOut>
         </div>
       </aside>
     </>

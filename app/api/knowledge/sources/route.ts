@@ -1,7 +1,5 @@
 import { NextResponse } from "next/server";
-import { PrismaClient } from "@prisma/client";
-
-const prisma = new PrismaClient();
+import { db as prisma } from "@/lib/db";
 
 /**
  * @swagger
@@ -33,13 +31,27 @@ const prisma = new PrismaClient();
  *       201:
  *         description: Source added
  */
-export async function GET() {
+import { getPaginationParams, formatPaginatedResponse } from "@/lib/pagination";
+
+export async function GET(req: Request) {
   try {
-    const sources = await prisma.knowledge_sources.findMany({
-      orderBy: { created_at: 'desc' }
-    });
-    return NextResponse.json(sources);
+    const paginationParams = getPaginationParams(req);
+
+    const sourcesResult = await prisma.$queryRaw<any[]>`
+      SELECT 
+        *,
+        COUNT(*) OVER() as full_count
+      FROM public.knowledge_sources
+      ORDER BY created_at DESC
+      LIMIT ${paginationParams.limit} OFFSET ${paginationParams.skip}
+    `;
+
+    const totalCount = Number(sourcesResult[0]?.full_count || 0);
+    const sources = sourcesResult.map(({ full_count: _, ...rest }) => rest);
+
+    return NextResponse.json(formatPaginatedResponse(sources, totalCount, paginationParams));
   } catch (error) {
+    console.error("Failed to fetch sources:", error);
     return NextResponse.json({ error: "Failed to fetch sources" }, { status: 500 });
   }
 }
@@ -47,8 +59,13 @@ export async function GET() {
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-    
-    let data: any = {};
+
+    let data: {
+      drive_file_id: string;
+      drive_name: string;
+      sheet_name?: string;
+      hash?: string;
+    };
 
     // Nếu là Web URL (từ chức năng "Thêm nguồn")
     if (body.source_url) {
@@ -57,8 +74,8 @@ export async function POST(request: Request) {
 
       try {
         // Fetch URL để lấy metadata (title)
-        const res = await fetch(url, { 
-          headers: { 'User-Agent': 'Mozilla/5.0 (compatible; KnowledgeBot/1.0)' } 
+        const res = await fetch(url, {
+          headers: { 'User-Agent': 'Mozilla/5.0 (compatible; KnowledgeBot/1.0)' }
         });
         if (res.ok) {
           const html = await res.text();

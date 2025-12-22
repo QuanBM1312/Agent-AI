@@ -1,8 +1,7 @@
 import { NextResponse } from "next/server";
+import { db as prisma } from "@/lib/db";
 
-import { PrismaClient } from "@prisma/client";
-
-const prisma = new PrismaClient();
+// Singleton db used
 
 /**
  * @swagger
@@ -52,8 +51,8 @@ export async function GET(
     const customer = await prisma.customers.findUnique({
       where: {
         id: id as string,
-        },
-      }
+      },
+    }
     );
     if (!customer) {
       return NextResponse.json({ error: "Customer not found" }, { status: 404 });

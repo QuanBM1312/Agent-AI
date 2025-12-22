@@ -1,9 +1,8 @@
 import { NextResponse } from "next/server";
-import { PrismaClient } from "@prisma/client";
 import { v4 as uuidv4 } from 'uuid';
 import { handleApiError } from "@/lib/api-helper";
-
-const prisma = new PrismaClient();
+import { db as prisma } from "@/lib/db";
+import { getCurrentUserWithRole } from "@/lib/auth-utils";
 
 /**
  * @swagger
@@ -41,41 +40,46 @@ const prisma = new PrismaClient();
  *       201:
  *         description: Session created
  */
+import { getPaginationParams, formatPaginatedResponse } from "@/lib/pagination";
+
 export async function GET(request: Request) {
   try {
-    // Import auth utils to get current user and auto-create if needed
-    const { getCurrentUserWithRole } = await import("@/lib/auth-utils");
     const currentUser = await getCurrentUserWithRole();
 
     if (!currentUser) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const sessions = await prisma.chat_sessions.findMany({
-      where: {
-        user_id: currentUser.id
-      },
-      orderBy: {
-        created_at: 'desc'
-      },
-      include: {
-        chat_messages: {
-          take: 1,
-          orderBy: {
-            timestamp: 'desc'
-          }
-        }
-      }
-    });
+    const paginationParams = getPaginationParams(request);
 
-    const formattedSessions = sessions.map(session => ({
+    // Fetch sessions with latest message in 1 query
+    const sessionsResult = await prisma.$queryRaw<any[]>`
+      SELECT 
+        s.*,
+        COUNT(*) OVER() as full_count,
+        (
+          SELECT content 
+          FROM public.chat_messages m 
+          WHERE m.session_id = s.id 
+          ORDER BY m.timestamp DESC 
+          LIMIT 1
+        ) as preview
+      FROM public.chat_sessions s
+      WHERE s.user_id = ${currentUser.id}
+      ORDER BY s.created_at DESC
+      LIMIT ${paginationParams.limit} OFFSET ${paginationParams.skip}
+    `;
+
+    const totalCount = Number(sessionsResult[0]?.full_count || 0);
+
+    const formattedSessions = sessionsResult.map(session => ({
       id: session.id,
       title: session.summary || "New Chat",
-      updatedAt: session.created_at, // Using created_at as we don't have updated_at yet
-      preview: session.chat_messages[0]?.content || "No messages yet"
+      updatedAt: session.created_at,
+      preview: session.preview || "No messages yet"
     }));
 
-    return NextResponse.json(formattedSessions);
+    return NextResponse.json(formatPaginatedResponse(formattedSessions, totalCount, paginationParams));
   } catch (error) {
     return handleApiError(error, "Get Sessions Error");
   }
@@ -83,8 +87,6 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
-    // Import auth utils to get current user and auto-create if needed
-    const { getCurrentUserWithRole } = await import("@/lib/auth-utils");
     const currentUser = await getCurrentUserWithRole();
 
     if (!currentUser) {

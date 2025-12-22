@@ -32,7 +32,7 @@ export function StoragePanel() {
       const res = await fetch(`/api/inventory?${params.toString()}`)
       if (res.ok) {
         const data = await res.json()
-        setItems(data.items || [])
+        setItems(data.data || [])
       }
     } catch (error) {
       console.error("Failed to fetch inventory", error)
