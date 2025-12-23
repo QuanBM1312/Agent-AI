@@ -15,33 +15,22 @@ export const getCurrentUserWithRole = cache(async () => {
   }
 
   // Use session claims if available to avoid DB query
-  // Note: These must be configured in Clerk Dashboard -> Sessions -> Edit Session Claims
   const role = (sessionClaims?.publicMetadata as Record<string, unknown>)?.role as user_role_enum;
   const departmentId = (sessionClaims?.publicMetadata as Record<string, unknown>)?.department_id as string | undefined;
 
   // Optimization: If info is in claims, we can return early to avoid a DB trip
-  // For now, let's only skip if we HAVE role and department info (or if it's null).
-  // We'll still fetch from DB if we need full_name/email, but many APIs don't.
-  // Actually, to be safe and compatible with existing code expecting a full object:
-  /* if (role) {
-    return { id: userId, role, department_id: departmentId, ... };
-  } */
-
-  // If we have role and departmentId from claims, and we also have email and full_name from claims,
-  // we can construct a user object and return early.
-  // This avoids a DB query for common use cases where only these fields are needed.
   if (role && sessionClaims?.email && sessionClaims?.fullName) {
     return {
       id: userId,
-      email: sessionClaims.email,
-      full_name: sessionClaims.fullName,
+      email: sessionClaims.email as string,
+      full_name: sessionClaims.fullName as string,
       role: role,
       department_id: departmentId || null,
-      // Note: The 'departments' object (with id and name) is not available from claims.
-      // If that's needed, the DB query is still required.
       departments: departmentId ? { id: departmentId, name: "Unknown Department (from claims)" } : null,
     };
   }
+
+  console.log(`🔍 [Auth] Fetching user ${userId} from DB (Role/Email not in claims)`);
 
   // Try to find user in database
   let user = await db.users.findUnique({
