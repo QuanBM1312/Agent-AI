@@ -85,12 +85,12 @@ export async function GET(req: NextRequest) {
           LIMIT ${paginationParams.limit} OFFSET ${paginationParams.skip}
         `;
 
-    const totalCount = Number(productsResult[0]?.full_count || 0);
+    const totalCount = productsResult.length > 0 ? Number(productsResult[0].full_count) : 0;
     const products = productsResult;
 
     // 2. Map Raw SQL result to expected response format
-    const inventory = products.map((p: any) => {
-      const currentStock = p.opening + p.total_in - p.total_out;
+    const inventory = products.map(({ full_count: _, ...p }) => {
+      const currentStock = Number(p.opening) + Number(p.total_in) - Number(p.total_out);
 
       return {
         id: p.product_code,
@@ -99,9 +99,9 @@ export async function GET(req: NextRequest) {
         unit: p.unit,
         quantity: currentStock,
         details: {
-          opening: p.opening,
-          in: p.total_in,
-          out: p.total_out
+          opening: Number(p.opening),
+          in: Number(p.total_in),
+          out: Number(p.total_out)
         }
       };
     });

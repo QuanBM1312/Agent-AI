@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
 import { getCurrentUserWithRole, requireRole } from "@/lib/auth-utils";
 
@@ -173,20 +174,23 @@ export async function GET(req: NextRequest) {
     const jobId = url.searchParams.get("job_id");
     const search = url.searchParams.get("search");
 
-    // Build the dynamic WHERE clause
-    let filterSql = "WHERE 1=1";
-    if (jobId) filterSql += ` AND j_rep.job_id = '${jobId}'`;
+    // Build the dynamic WHERE clause fragments
+    const fragments: Prisma.Sql[] = [];
+    if (jobId) fragments.push(Prisma.sql` AND j_rep.job_id = ${jobId}::uuid`);
     if (currentUser.role === "Technician") {
-      filterSql += ` AND j_rep.created_by_user_id = '${currentUser.id}'`;
+      fragments.push(Prisma.sql` AND j_rep.created_by_user_id = ${currentUser.id}`);
     }
     if (search) {
-      filterSql += ` AND (
-        j_rep.problem_summary ILIKE '%${search}%' OR 
-        j_rep.actions_taken ILIKE '%${search}%' OR
-        j.job_code ILIKE '%${search}%' OR
-        c.company_name ILIKE '%${search}%'
-      )`;
+      const searchPattern = `%${search}%`;
+      fragments.push(Prisma.sql` AND (
+        j_rep.problem_summary ILIKE ${searchPattern} OR 
+        j_rep.actions_taken ILIKE ${searchPattern} OR
+        j.job_code ILIKE ${searchPattern} OR
+        c.company_name ILIKE ${searchPattern}
+      )`);
     }
+
+    const filterFragment = fragments.length > 0 ? Prisma.join(fragments, "") : Prisma.empty;
 
     const reportsResult = await db.$queryRaw<any[]>`
       SELECT 
@@ -202,14 +206,14 @@ export async function GET(req: NextRequest) {
       LEFT JOIN public.users u ON j_rep.created_by_user_id = u.id
       LEFT JOIN public.jobs j ON j_rep.job_id = j.id
       LEFT JOIN public.customers c ON j.customer_id = c.id
-      ${db.$queryRawUnsafe(filterSql)}
+      WHERE 1=1${filterFragment}
       ORDER BY j_rep.timestamp DESC
       LIMIT ${paginationParams.limit} OFFSET ${paginationParams.skip}
     `;
 
-    const totalCount = Number(reportsResult[0]?.full_count || 0);
+    const totalCount = reportsResult.length > 0 ? Number(reportsResult[0].full_count) : 0;
 
-    const reports = reportsResult.map((r: any) => ({
+    const reports = reportsResult.map(({ full_count: _, ...r }) => ({
       ...r,
       users: {
         id: r.created_by_user_id,

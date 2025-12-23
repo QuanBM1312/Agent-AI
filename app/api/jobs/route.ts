@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { job_type_enum } from "@prisma/client";
+import { job_type_enum, Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
 import { getCurrentUserWithRole, sanitizeJobForTechnician, canAssignToTechnician } from "@/lib/auth-utils";
 
@@ -229,34 +229,36 @@ export async function GET(req: NextRequest) {
     const startDate = url.searchParams.get("startDate");
     const endDate = url.searchParams.get("endDate");
 
-    // Role-based filter
-    let roleFilterSql = "";
+    // Build the dynamic WHERE clause fragments
+    const fragments: Prisma.Sql[] = [];
+
     if (currentUser.role === "Technician") {
-      roleFilterSql = ` AND assigned_technician_id = '${currentUser.id}'`;
+      fragments.push(Prisma.sql` AND assigned_technician_id = ${currentUser.id}`);
     } else if (currentUser.role === "Manager" && currentUser.department_id) {
-      roleFilterSql = ` AND EXISTS (
-        SELECT 1 FROM public.users u 
-        WHERE u.id = jobs.assigned_technician_id 
-        AND u.department_id = '${currentUser.department_id}'
-      )`;
+      fragments.push(Prisma.sql` AND EXISTS (
+        SELECT 1 FROM public.users u
+        WHERE u.id = j.assigned_technician_id
+        AND u.department_id = ${currentUser.department_id}::uuid
+      )`);
     }
 
-    // Build the dynamic WHERE clause
-    let filterSql = "WHERE 1=1" + (roleFilterSql || "");
-    if (status) filterSql += ` AND status = '${status}'`;
-    if (startDate) filterSql += ` AND scheduled_start_time >= '${startDate}'`;
-    if (endDate) filterSql += ` AND scheduled_start_time <= '${endDate}'`;
+    if (status) fragments.push(Prisma.sql` AND status = ${status}::job_status_enum`);
+    if (startDate) fragments.push(Prisma.sql` AND scheduled_start_time >= ${new Date(startDate)}`);
+    if (endDate) fragments.push(Prisma.sql` AND scheduled_start_time <= ${new Date(endDate)}`);
     if (search) {
-      filterSql += ` AND (
-        job_code ILIKE '%${search}%' OR 
-        notes ILIKE '%${search}%' OR
+      const searchPattern = `%${search}%`;
+      fragments.push(Prisma.sql` AND (
+        job_code ILIKE ${searchPattern} OR
+        notes ILIKE ${searchPattern} OR
         EXISTS (
           SELECT 1 FROM public.customers c 
           WHERE c.id = j.customer_id 
-          AND (c.company_name ILIKE '%${search}%' OR c.contact_person ILIKE '%${search}%' OR c.phone ILIKE '%${search}%')
+          AND (c.company_name ILIKE ${searchPattern} OR c.contact_person ILIKE ${searchPattern} OR c.phone ILIKE ${searchPattern})
         )
-      )`;
+      )`);
     }
+
+    const filterFragment = fragments.length > 0 ? Prisma.join(fragments, "") : Prisma.empty;
 
     // Main Query using Raw SQL
     const jobsResult = await db.$queryRaw<any[]>`
@@ -265,7 +267,7 @@ export async function GET(req: NextRequest) {
           j.*,
           COUNT(*) OVER() as full_count
         FROM public.jobs j
-        ${db.$queryRawUnsafe(filterSql)}
+        WHERE 1=1${filterFragment}
         ORDER BY j.scheduled_start_time DESC
         LIMIT ${paginationParams.limit} OFFSET ${paginationParams.skip}
       )
@@ -288,7 +290,7 @@ export async function GET(req: NextRequest) {
             )
           ))
           FROM public.job_line_items li
-          JOIN public.materials_and_services ms ON li.material_service_id = ms.id
+          JOIN public.materials_and_services ms ON li.item_id = ms.id
           WHERE li.job_id = j.id
         ) as line_items,
         (
@@ -307,10 +309,10 @@ export async function GET(req: NextRequest) {
       LEFT JOIN public.users u_tech ON j.assigned_technician_id = u_tech.id
     `;
 
-    const totalCount = Number(jobsResult[0]?.full_count || 0);
+    const totalCount = jobsResult.length > 0 ? Number(jobsResult[0].full_count) : 0;
 
     // Map Raw SQL result to expected response format (sanitize if needed)
-    const jobs = jobsResult.map((j: any) => {
+    const jobs = jobsResult.map(({ full_count: _, ...j }) => {
       const mappedJob = {
         ...j,
         customers: {

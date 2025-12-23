@@ -70,7 +70,7 @@ export async function GET(req: Request) {
           LIMIT ${paginationParams.limit} OFFSET ${paginationParams.skip}
   `;
 
-    const totalCount = Number(customersResult[0]?.full_count || 0);
+    const totalCount = customersResult.length > 0 ? Number(customersResult[0].full_count) : 0;
     // Remove full_count from each item to keep response clean
     const customers = customersResult.map(({ full_count: _, ...rest }) => rest);
 

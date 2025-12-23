@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { Prisma } from "@prisma/client";
 import { db as prisma } from "@/lib/db";
 import { getCurrentUserWithRole } from "@/lib/auth-utils";
 
@@ -92,8 +93,8 @@ export async function GET(req: NextRequest) {
           FROM public.users u
           LEFT JOIN public.departments d ON u.department_id = d.id
           WHERE (u.full_name ILIKE ${`%${search}%`} OR u.email ILIKE ${`%${search}%`})
-          ${currentRole ? prisma.$queryRawUnsafe(` AND u.role = '${currentRole}'`) : ""}
-          ${currentDepartmentId ? prisma.$queryRawUnsafe(` AND u.department_id = '${currentDepartmentId}'`) : ""}
+          ${currentRole ? Prisma.sql` AND u.role = ${currentRole}::user_role_enum` : Prisma.empty}
+          ${currentDepartmentId ? Prisma.sql` AND u.department_id = ${currentDepartmentId}::uuid` : Prisma.empty}
           ORDER BY u.full_name ASC
           LIMIT ${paginationParams.limit} OFFSET ${paginationParams.skip}
         `
@@ -105,8 +106,8 @@ export async function GET(req: NextRequest) {
           FROM public.users u
           LEFT JOIN public.departments d ON u.department_id = d.id
           WHERE 1=1
-          ${currentRole ? prisma.$queryRawUnsafe(` AND u.role = '${currentRole}'`) : ""}
-          ${currentDepartmentId ? prisma.$queryRawUnsafe(` AND u.department_id = '${currentDepartmentId}'`) : ""}
+          ${currentRole ? Prisma.sql` AND u.role = ${currentRole}::user_role_enum` : Prisma.empty}
+          ${currentDepartmentId ? Prisma.sql` AND u.department_id = ${currentDepartmentId}::uuid` : Prisma.empty}
           ORDER BY u.full_name ASC
           LIMIT ${paginationParams.limit} OFFSET ${paginationParams.skip}
         `;

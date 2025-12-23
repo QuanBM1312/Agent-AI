@@ -39,7 +39,7 @@ export async function GET(req: Request) {
       LIMIT ${paginationParams.limit} OFFSET ${paginationParams.skip}
     `;
 
-    const totalCount = Number(departmentsResult[0]?.full_count || 0);
+    const totalCount = departmentsResult.length > 0 ? Number(departmentsResult[0].full_count) : 0;
     const departments = departmentsResult.map(({ full_count: _, ...rest }) => rest);
 
     return NextResponse.json(formatPaginatedResponse(departments, totalCount, paginationParams));
