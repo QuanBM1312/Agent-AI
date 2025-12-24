@@ -49,10 +49,18 @@ export async function POST(req: NextRequest) {
         const originalName = file.name.replace(/[^a-zA-Z0-9.-]/g, "_"); // Sanitize
         const filename = `${timestamp}-${originalName}`;
 
+        const bucket = process.env.SUPABASE_STORAGE_BUCKET || 'uploads';
+
+        // Ensure bucket exists (Self-healing)
+        const { data: buckets } = await supabaseAdmin.storage.listBuckets();
+        if (!buckets?.find(b => b.name === bucket)) {
+            await supabaseAdmin.storage.createBucket(bucket, { public: true });
+        }
+
         // Upload to Supabase Storage (Bucket: 'uploads')
         const { data: uploadData, error: uploadError } = await supabaseAdmin
             .storage
-            .from('uploads')
+            .from(bucket)
             .upload(filename, buffer, {
                 contentType: file.type,
                 upsert: true
@@ -66,7 +74,7 @@ export async function POST(req: NextRequest) {
         // Get Public URL
         const { data: { publicUrl } } = supabaseAdmin
             .storage
-            .from('uploads')
+            .from(bucket)
             .getPublicUrl(filename);
 
         return NextResponse.json({ url: publicUrl });
