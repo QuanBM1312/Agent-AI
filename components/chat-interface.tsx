@@ -84,19 +84,19 @@ function MessageItem({ message }: { message: Message }) {
         </div>
 
         <div className={`text-sm leading-relaxed overflow-hidden ${isAI ? "markdown-body" : ""}`}>
-          {message.fileUrl && message.fileType === "image" && (
+          {(message.fileUrl || (message as any).file_url) && (message.fileType === "image" || (message as any).file_type === "image") && (
             <div className="mb-3">
               <img
-                src={message.fileUrl}
+                src={message.fileUrl || (message as any).file_url}
                 alt="Uploaded content"
                 className="max-w-full rounded-lg border border-border/50 shadow-sm max-h-[300px] object-cover"
               />
             </div>
           )}
 
-          {message.fileUrl && message.fileType === "voice" && (
+          {(message.fileUrl || (message as any).file_url) && (message.fileType === "voice" || (message as any).file_type === "voice") && (
             <div className="mb-3">
-              <audio controls src={message.fileUrl} className="w-full max-w-[240px]" />
+              <audio controls src={message.fileUrl || (message as any).file_url} className="w-full max-w-[240px]" />
             </div>
           )}
 

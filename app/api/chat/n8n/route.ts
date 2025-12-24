@@ -3,6 +3,7 @@ import { db as prisma } from "@/lib/db";
 import { getCurrentUserWithRole } from "@/lib/auth-utils";
 import { v4 as uuidv4 } from "uuid";
 import { handleApiError } from "@/lib/api-helper";
+import { supabaseAdmin } from "@/lib/supabase";
 
 /**
  * @swagger
@@ -99,14 +100,50 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // 4. Save User Message - REMOVED (User requested N8N to handle saving)
-    // We only prepare the content variable for N8N forwarding if needed (it uses chatInput/formData directly)
-    userContent = chatInput || "";
-    if (type === "voice") userContent = "[Voice Message]";
-    if (type === "image") userContent = "[Image Upload]";
+    // 4. Save User Message
+    // First, handle file upload if present
+    let fileUrl = null;
+    const file = formData.get("file") as File | null;
+    if (file) {
+      try {
+        const bytes = await file.arrayBuffer();
+        const buffer = Buffer.from(bytes);
+        const timestamp = Date.now();
+        const filename = `${timestamp}-${file.name.replace(/[^a-zA-Z0-9.-]/g, "_")}`;
 
-    // OPTIONAL: If N8N fails to save the user message, there is a risk of data loss here.
-    // The user has explicitly accepted this risk to avoid duplication.
+        const { error: uploadError } = await supabaseAdmin
+          .storage
+          .from('uploads')
+          .upload(filename, buffer, { contentType: file.type });
+
+        if (!uploadError) {
+          const { data: { publicUrl } } = supabaseAdmin
+            .storage
+            .from('uploads')
+            .getPublicUrl(filename);
+          fileUrl = publicUrl;
+        }
+      } catch (e) {
+        console.error("Chat File Upload Error:", e);
+      }
+    }
+
+    userContent = chatInput || "";
+    if (type === "voice") userContent = userContent || "[Voice Message]";
+    if (type === "image") userContent = userContent || "[Image Upload]";
+
+    // Save current user message to DB
+    // @ts-ignore - Ignore lint error until db push is fully resolved
+    const userMessage = await prisma.chat_messages.create({
+      data: {
+        session_id: sessionId,
+        role: "user",
+        content: userContent,
+        file_url: fileUrl,
+        file_type: type, // 'image' or 'voice'
+        timestamp: new Date(),
+      }
+    });
 
     // 5. Forward to n8n
     let n8nUrl = process.env.N8N_HOST;
@@ -117,22 +154,11 @@ export async function POST(req: NextRequest) {
     }
 
     if (!n8nUrl) {
-      // Development Fallback: Nếu không có n8n, trả về echo để test
+      // Development Fallback
       if (process.env.NODE_ENV === 'development') {
         const fakeResponse = {
           text: `[DEV MODE] Received: ${userContent}. (Configure N8N_HOST in .env to use real AI)`
         };
-
-        // In dev mode without N8N, we MUST save it manually or it won't appear at all.
-        await prisma.chat_messages.create({
-          data: {
-            session_id: sessionId,
-            role: "user",
-            content: userContent,
-            timestamp: new Date(),
-            retrieved_context: { source: 'dev_mode' }
-          }
-        });
 
         await prisma.chat_messages.create({
           data: {
@@ -149,16 +175,11 @@ export async function POST(req: NextRequest) {
     }
 
     const outgoingFormData = new FormData();
-    // Copy fields for n8n
     outgoingFormData.append("sessionId", sessionId);
     outgoingFormData.append("type", type);
     if (chatInput) outgoingFormData.append("chatInput", chatInput);
-
-    // Nếu có file, cần append đúng cách
-    const file = formData.get("file");
-    if (file) {
-      outgoingFormData.append("file", file);
-    }
+    if (file) outgoingFormData.append("file", file);
+    if (fileUrl) outgoingFormData.append("fileUrl", fileUrl); // Provide URL to n8n as well
 
     const n8nResponse = await fetch(n8nUrl, {
       method: "POST",
@@ -166,7 +187,6 @@ export async function POST(req: NextRequest) {
     });
 
     if (!n8nResponse.ok) {
-      // Log text lỗi từ n8n
       const errText = await n8nResponse.text();
       throw new Error(`n8n responded with ${n8nResponse.status}: ${errText}`);
     }
@@ -179,35 +199,19 @@ export async function POST(req: NextRequest) {
       data = { text: text };
     }
 
-    // 6. Save AI Response (Keep this as fallback/check)
+    // 6. Save AI Response
     const aiContent = data.output || data.text || data.message || JSON.stringify(data);
-    const citations = data.citations; // Optional
+    const citations = data.citations;
 
-    // --- RESPONSE DEDUPLICATION ---
-    const connection = await prisma.chat_messages.findFirst({
-      where: {
+    await prisma.chat_messages.create({
+      data: {
         session_id: sessionId,
         role: "assistant",
-      },
-      orderBy: {
-        timestamp: 'desc'
+        content: aiContent,
+        timestamp: new Date(),
+        retrieved_context: citations ? JSON.stringify(citations) : undefined
       }
     });
-
-    if (connection && connection.content === aiContent && (new Date().getTime() - new Date(connection.timestamp).getTime() < 10000)) {
-      console.log(`[n8n API] Duplicate AI response detected (matched DB), skipping save.`);
-    } else {
-      await prisma.chat_messages.create({
-        data: {
-          session_id: sessionId,
-          role: "assistant",
-          content: aiContent,
-          timestamp: new Date(),
-          retrieved_context: citations ? JSON.stringify(citations) : undefined
-        }
-      });
-    }
-    // ----------------------------
 
     return NextResponse.json(data);
 
