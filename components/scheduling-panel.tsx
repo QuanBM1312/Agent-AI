@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useEffect, useMemo, useCallback, useRef } from "react"
-import { Plus, ChevronLeft, ChevronRight, X, Search, Clock, Calendar, Briefcase, User, FileText, ClipboardList } from "lucide-react"
+import { Plus, ChevronLeft, ChevronRight, X, Search, Clock, Calendar, Briefcase, User, FileText, ClipboardList, CheckCircle2, AlertCircle } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
@@ -364,23 +364,95 @@ export function SchedulingPanel({ userRole }: SchedulingPanelProps) {
     return jobsByDay[day] || []
   }
 
+  // Get status color based on job status with enhanced visibility
+  const getStatusColor = (status: string) => {
+    // Handle null/undefined
+    if (!status) {
+      return 'bg-slate-100 border-l-4 border-l-slate-400 border-y border-r border-slate-300 text-slate-900 dark:bg-slate-800/50 dark:border-l-slate-500 dark:border-y dark:border-r dark:border-slate-600 dark:text-slate-200'
+    }
+
+    // Normalize status to handle both Vietnamese text and enum values
+    const normalizedStatus = status.trim()
+
+    // Check for completed status (both formats)
+    if (normalizedStatus === 'Ho_n_th_nh' || normalizedStatus === 'Hoàn thành') {
+      return 'bg-green-100 border-l-4 border-l-green-500 border-y border-r border-green-400 text-green-900 dark:bg-green-900/30 dark:border-l-green-500 dark:border-y dark:border-r dark:border-green-600 dark:text-green-200'
+    }
+
+    // Check for pending approval (both formats)
+    if (normalizedStatus === 'Ch_duy_t' || normalizedStatus === 'Chờ duyệt') {
+      return 'bg-amber-100 border-l-4 border-l-amber-500 border-y border-r border-amber-400 text-amber-900 dark:bg-amber-900/30 dark:border-l-amber-500 dark:border-y dark:border-r dark:border-amber-600 dark:text-amber-200'
+    }
+
+    // Check for assigned (both formats)
+    if (normalizedStatus === 'ph_n_c_ng' || normalizedStatus === 'Đã phân công') {
+      return 'bg-blue-100 border-l-4 border-l-blue-500 border-y border-r border-blue-400 text-blue-900 dark:bg-blue-900/30 dark:border-l-blue-500 dark:border-y dark:border-r dark:border-blue-600 dark:text-blue-200'
+    }
+
+    // Default for unknown status
+    console.warn('⚠️ Unknown status value:', status)
+    return 'bg-slate-100 border-l-4 border-l-slate-400 border-y border-r border-slate-300 text-slate-900 dark:bg-slate-800/50 dark:border-l-slate-500 dark:border-y dark:border-r dark:border-slate-600 dark:text-slate-200'
+  }
+
+  // Get status icon for visual indicator
+  const getStatusIcon = (status: string) => {
+    if (!status) return null
+
+    const normalizedStatus = status.trim()
+
+    // Completed
+    if (normalizedStatus === 'Ho_n_th_nh' || normalizedStatus === 'Hoàn thành') {
+      return <CheckCircle2 className="w-3 h-3 text-green-600 dark:text-green-400 flex-shrink-0" />
+    }
+
+    // Pending approval
+    if (normalizedStatus === 'Ch_duy_t' || normalizedStatus === 'Chờ duyệt') {
+      return <Clock className="w-3 h-3 text-amber-600 dark:text-amber-400 flex-shrink-0" />
+    }
+
+    // Assigned
+    if (normalizedStatus === 'ph_n_c_ng' || normalizedStatus === 'Đã phân công') {
+      return <AlertCircle className="w-3 h-3 text-blue-600 dark:text-blue-400 flex-shrink-0" />
+    }
+
+    return null
+  }
+
+
   return (
     <div className="flex flex-col h-full bg-background">
       {/* Header */}
       <div className="border-b border-border p-3 md:p-4 flex items-center justify-between bg-card">
-        <div className="flex items-center gap-2 md:gap-4">
-          <MobileMenuButton />
-          <div className="flex items-center gap-2">
-            <h2 className="text-lg md:text-xl font-bold">
-              {monthNames[currentDate.getMonth()]} {currentDate.getFullYear()}
-            </h2>
-            <div className="flex items-center rounded-md border border-input h-8">
-              <button onClick={prevMonth} className="px-2 h-full hover:bg-muted border-r border-input">
-                <ChevronLeft className="w-4 h-4" />
-              </button>
-              <button onClick={nextMonth} className="px-2 h-full hover:bg-muted">
-                <ChevronRight className="w-4 h-4" />
-              </button>
+        <div className="flex flex-col gap-2">
+          <div className="flex items-center gap-2 md:gap-4">
+            <MobileMenuButton />
+            <div className="flex items-center gap-2">
+              <h2 className="text-lg md:text-xl font-bold">
+                {monthNames[currentDate.getMonth()]} {currentDate.getFullYear()}
+              </h2>
+              <div className="flex items-center rounded-md border border-input h-8">
+                <button onClick={prevMonth} className="px-2 h-full hover:bg-muted border-r border-input">
+                  <ChevronLeft className="w-4 h-4" />
+                </button>
+                <button onClick={nextMonth} className="px-2 h-full hover:bg-muted">
+                  <ChevronRight className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+          </div>
+          {/* Legend */}
+          <div className="flex items-center gap-3 text-xs ml-8 md:ml-0">
+            <div className="flex items-center gap-1.5">
+              <div className="w-3 h-3 rounded-full bg-blue-400 border-2 border-blue-600 dark:bg-blue-500 dark:border-blue-400"></div>
+              <span>Đã phân công</span>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <div className="w-3 h-3 rounded-full bg-amber-400 border-2 border-amber-600 dark:bg-amber-500 dark:border-amber-400"></div>
+              <span>Chờ duyệt</span>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <div className="w-3 h-3 rounded-full bg-green-400 border-2 border-green-600 dark:bg-green-500 dark:border-green-400"></div>
+              <span>Hoàn thành</span>
             </div>
           </div>
         </div>
@@ -431,18 +503,18 @@ export function SchedulingPanel({ userRole }: SchedulingPanelProps) {
                   {dayJobs.map(job => (
                     <div
                       key={job.id}
-                      className={`text-[10px] md:text-xs p-1.5 rounded border truncate cursor-pointer transition-transform hover:scale-[1.02] active:scale-95 ${job.status === 'Ho_n_th_nh' ? 'bg-green-50 border-green-200 text-green-800 dark:bg-green-900/20 dark:border-green-800 dark:text-green-300' :
-                        job.status === 'M_i' ? 'bg-blue-50 border-blue-200 text-blue-800 dark:bg-blue-900/20 dark:border-blue-800 dark:text-blue-300' :
-                          'bg-slate-50 border-slate-200 text-slate-800 dark:bg-slate-800/50 dark:border-slate-700 dark:text-slate-300'
-                        }`}
-                      title={`${job.job_code} - ${job.customers?.company_name}`}
+                      className={`text-[10px] md:text-xs p-1.5 rounded cursor-pointer transition-transform hover:scale-[1.02] active:scale-95 ${getStatusColor(job.status)}`}
+                      title={`${job.job_code} - ${job.customers?.company_name} (${job.status})`}
                       onClick={(e) => {
                         e.stopPropagation()
                         handleJobClick(job.id)
                       }}
                     >
-                      <div className="font-semibold truncate">{job.customers?.company_name}</div>
-                      <div className="truncate opacity-75">{job.job_code}</div>
+                      <div className="flex items-center gap-1 mb-0.5">
+                        {getStatusIcon(job.status)}
+                        <div className="font-semibold truncate">{job.customers?.company_name}</div>
+                      </div>
+                      <div className="truncate opacity-75 text-[9px] md:text-[10px]">{job.job_code}</div>
                     </div>
                   ))}
                 </div>

@@ -50,13 +50,27 @@ export async function POST(
     }
 
     // Manager can only approve jobs in their department
-    if (currentUser.role === "Manager" && currentUser.department_id) {
+    if (currentUser.role === "Manager") {
+      if (!currentUser.department_id) {
+        return NextResponse.json(
+          { error: "Manager must be assigned to a department to approve jobs" },
+          { status: 403 }
+        );
+      }
+
       const techDeptId = job.users_jobs_assigned_technician_idTousers?.department_id;
+
+      if (!techDeptId) {
+        return NextResponse.json(
+          { error: "Cannot approve: Technician is not assigned to any department" },
+          { status: 403 }
+        );
+      }
+
       if (techDeptId !== currentUser.department_id) {
         return NextResponse.json(
           {
-            error:
-              "Forbidden: You can only approve jobs in your department",
+            error: "Forbidden: You can only approve jobs in your department",
           },
           { status: 403 }
         );

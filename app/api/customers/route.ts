@@ -51,28 +51,33 @@ export async function GET(req: Request) {
     const search = searchParams.get("search");
     const paginationParams = getPaginationParams(req, 20);
 
-    const customersResult = search
-      ? await prisma.$queryRaw<any[]>`
-          SELECT
-            *,
-            COUNT(*) OVER() as full_count
-          FROM public.customers
-          WHERE (company_name ILIKE ${`%${search}%`} OR contact_person ILIKE ${`%${search}%`} OR phone ILIKE ${`%${search}%`})
-          ORDER BY company_name ASC
-          LIMIT ${paginationParams.limit} OFFSET ${paginationParams.skip}
-  `
-      : await prisma.$queryRaw<any[]>`
-  SELECT
-    *,
-    COUNT(*) OVER() as full_count
-          FROM public.customers
-          ORDER BY company_name ASC
-          LIMIT ${paginationParams.limit} OFFSET ${paginationParams.skip}
-  `;
+    const where = search
+      ? {
+        OR: [
+          { company_name: { contains: search, mode: "insensitive" as const } },
+          { contact_person: { contains: search, mode: "insensitive" as const } },
+          { phone: { contains: search, mode: "insensitive" as const } },
+        ],
+      }
+      : {};
 
-    const totalCount = customersResult.length > 0 ? Number(customersResult[0].full_count) : 0;
-    // Remove full_count from each item to keep response clean
-    const customers = customersResult.map(({ full_count: _, ...rest }) => rest);
+    const [customers, totalCount] = await Promise.all([
+      prisma.customers.findMany({
+        where,
+        include: {
+          contacts: {
+            orderBy: [
+              { is_primary: "desc" },
+              { created_at: "asc" }
+            ]
+          }
+        },
+        orderBy: { company_name: "asc" },
+        skip: paginationParams.skip,
+        take: paginationParams.limit,
+      }),
+      prisma.customers.count({ where }),
+    ]);
 
     return NextResponse.json(formatPaginatedResponse(customers, totalCount, paginationParams));
   } catch (error) {
@@ -83,6 +88,7 @@ export async function GET(req: Request) {
     );
   }
 }
+
 
 /**
  * @swagger
@@ -156,7 +162,18 @@ export async function POST(request: Request) {
         phone,
         address,
         customer_type,
+        contacts: contact_person ? {
+          create: {
+            name: contact_person,
+            phone: phone,
+            title: body.contact_title, // Optional title from request
+            is_primary: true
+          }
+        } : undefined
       },
+      include: {
+        contacts: true
+      }
     });
 
     return NextResponse.json(newCustomer, { status: 201 });

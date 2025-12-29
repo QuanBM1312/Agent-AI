@@ -432,13 +432,13 @@ export function ReportsPanel({ userRole }: ReportsPanelProps) {
                       <div>
                         <h4 className="font-bold text-slate-800 flex items-center gap-2">
                           Job: {report.jobs.job_code}
-                          <span className={`text-xs px-2 py-0.5 rounded-full ${report.jobs.status === 'Ho_n_th_nh'
+                          <span className={`text-xs px-2 py-0.5 rounded-full ${(report.jobs.status === 'Ho_n_th_nh' || report.jobs.status === 'Hoàn thành')
                             ? 'bg-green-100 text-green-700'
-                            : report.jobs.status === 'Ch_duy_t'
-                              ? 'bg-yellow-100 text-yellow-700'
+                            : (report.jobs.status === 'Ch_duy_t' || report.jobs.status === 'Chờ duyệt')
+                              ? 'bg-amber-100 text-amber-700'
                               : 'bg-slate-100 text-slate-600'
                             }`}>
-                            {report.jobs.status === 'Ho_n_th_nh' ? 'Đã hoàn thành' :
+                            {report.jobs.status === 'Ho_n_th_nh' ? 'Hoàn thành' :
                               report.jobs.status === 'Ch_duy_t' ? 'Chờ duyệt' : report.jobs.status}
                           </span>
                         </h4>
@@ -479,7 +479,7 @@ export function ReportsPanel({ userRole }: ReportsPanelProps) {
                     )}
 
                     {/* Actions (Only for Review Tab and Pending Jobs) */}
-                    {activeTab === "review" && (report.jobs.status === "Ch_duy_t" || report.jobs.status === "Dang_thuc_hien") && (
+                    {activeTab === "review" && (report.jobs.status === "Ch_duy_t" || report.jobs.status === "Chờ duyệt") && (
                       <div className="flex justify-end pt-3 border-t">
                         <Button
                           onClick={() => handleApprove(report.job_id)}

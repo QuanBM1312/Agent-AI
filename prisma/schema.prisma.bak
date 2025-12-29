@@ -34,21 +34,21 @@ model chat_messages {
   role              chat_role_enum
   content           String
   retrieved_context Json?
-  timestamp         DateTime       @default(now()) @db.Timestamptz(6)
-  file_type         String?
   file_url          String?
+  file_type         String?
+  timestamp         DateTime       @default(now()) @db.Timestamptz(6)
   chat_sessions     chat_sessions  @relation(fields: [session_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
 
   @@schema("public")
 }
 
 model chat_sessions {
-  id            String          @id
-  user_id       String
-  created_at    DateTime        @default(now()) @db.Timestamptz(6)
-  summary       String?
-  chat_messages chat_messages[]
+  id         String   @id
+  user_id    String
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+  summary    String?
   users         users           @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  chat_messages chat_messages[]
 
   @@schema("public")
 }
@@ -80,6 +80,7 @@ model customers {
 
   @@schema("public")
 }
+
 
 model departments {
   id    String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
@@ -151,21 +152,18 @@ model knowledge_chunks {
   fts       Unsupported("tsvector")? @default(dbgenerated("to_tsvector('simple'::regconfig, immutable_unaccent(COALESCE(content, ''::text)))"))
   embedding Unsupported("vector")?
 
-  @@index([embedding], map: "knowledge_chunks_2_embedding_idx")
-  @@index([fts], map: "knowledge_chunks_2_fts_idx", type: Gin)
-  @@index([embedding], map: "knowledge_chunks_embedding_hnsw_idx_2")
-  @@index([fts], map: "knowledge_chunks_fts_gin_idx_2", type: Gin)
+  @@index([embedding], map: "knowledge_chunks_embedding_hnsw_idx")
+  @@index([fts], map: "knowledge_chunks_fts_gin_idx", type: Gin)
   @@schema("public")
 }
 
 model knowledge_sources {
-  id               String   @id(map: "knowledge_sources_2_pkey") @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  drive_file_id    String?
-  drive_name       String?
-  created_at       DateTime @default(now()) @db.Timestamptz(6)
-  hash             String?
-  sheet_name       String?
-  file_search_name String?
+  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  drive_file_id String?
+  drive_name    String?
+  created_at    DateTime @default(now()) @db.Timestamptz(6)
+  hash          String?
+  sheet_name    String?
 
   @@schema("public")
 }
@@ -668,83 +666,103 @@ model inventory_month_opening {
   @@schema("public")
 }
 
-model dim_product_2 {
-  product_id   BigInt  @id @default(autoincrement())
-  product_code String? @db.VarChar(50)
-  model_name   String  @db.VarChar(255)
-  unit         String  @db.VarChar(50)
-  note         String?
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+/// This model contains an expression index which requires additional setup for migrations. Visit https://pris.ly/d/expression-indexes for more info.
+model knowledge_chunks_2 {
+  id        String                   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  content   String?
+  metadata  Json?
+  fts       Unsupported("tsvector")? @default(dbgenerated("to_tsvector('simple'::regconfig, immutable_unaccent(COALESCE(content, ''::text)))"))
+  embedding Unsupported("vector")?
 
-  @@index([product_code], map: "idx_product_2_code")
-  @@index([model_name], map: "idx_product_2_model_name")
+  @@index([embedding])
+  @@index([fts], type: Gin)
+  @@index([embedding], map: "knowledge_chunks_embedding_hnsw_idx_2")
+  @@index([fts], map: "knowledge_chunks_fts_gin_idx_2", type: Gin)
   @@schema("public")
 }
 
-/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
-model file_search_storage {
-  id               String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  file_search_name String?
-  drive_file_id    String?
-  drive_name       String?
-  hash             String?
+model knowledge_files {
+  doc_id            String
+  file_name         String?
+  full_text         String?
+  summary_embedding Unsupported("vector")?
+  metadata          Json?
+  id                String                 @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  sheet             String?
 
   @@schema("public")
 }
 
 /// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
-/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
-model file_search_storage_old {
-  id               String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  file_search_name String?
-  drive_file_id    String?
-  drive_name       String?
-  hash             String?
+model knowledge_sources_2 {
+  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  drive_file_id String?
+  drive_name    String?
+  created_at    DateTime @default(now()) @db.Timestamptz(6)
+  hash          String?
+  sheet_name    String?
 
   @@schema("public")
 }
 
-/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
-/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
-model file_search_storage_test {
-  id               String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  file_search_name String?
-  drive_file_id    String?
-  drive_name       String?
-  hash             String?
+model quote_items {
+  id               String                   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  quote_id         String?                  @db.Uuid
+  row_index        Int?
+  item_name        String?
+  model            String?
+  quantity         Int?
+  price            Decimal?                 @db.Decimal
+  full_text_search Unsupported("tsvector")?
 
   @@schema("public")
 }
 
-/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
-model inventory_daily_movement_2 {
-  year       Int
-  month      Int
-  day        Int
-  product_id BigInt
-  in_qty     Decimal  @default(0) @db.Decimal(18, 3)
-  out_qty    Decimal  @default(0) @db.Decimal(18, 3)
-  note       String?
-  created_at DateTime @default(now()) @db.Timestamptz(6)
-  updated_at DateTime @default(now()) @db.Timestamptz(6)
+model quotes {
+  id                    String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  quote_code            String?   @db.VarChar(50)
+  customer_name         String?
+  google_spreadsheet_id String
+  sheet_name            String?   @default("Sheet1")
+  created_at            DateTime? @default(now()) @db.Timestamptz(6)
 
-  @@id([year, month, day, product_id], map: "pk_inventory_daily_movement_2")
-  @@index([product_id, year, month, day], map: "idx_movement_2_product_ymd")
-  @@index([year, month, day], map: "idx_movement_2_ymd")
   @@schema("public")
 }
 
-/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
-model inventory_month_opening_2 {
-  year        Int
-  month       Int
-  product_id  BigInt
-  opening_qty Decimal  @default(0) @db.Decimal(18, 3)
-  note        String?
-  created_at  DateTime @default(now()) @db.Timestamptz(6)
-  updated_at  DateTime @default(now()) @db.Timestamptz(6)
+/// This model contains an expression index which requires additional setup for migrations. Visit https://pris.ly/d/expression-indexes for more info.
+model knowledge_chunks_3 {
+  id        String                   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  content   String?
+  metadata  Json?
+  fts       Unsupported("tsvector")? @default(dbgenerated("to_tsvector('simple'::regconfig, immutable_unaccent(COALESCE(content, ''::text)))"))
+  embedding Unsupported("vector")?
 
-  @@id([year, month, product_id], map: "pk_inventory_month_opening_2")
-  @@index([product_id, year, month], map: "idx_opening_2_product_ym")
+  @@index([embedding], map: "knowledge_chunks_embedding_hnsw_idx_3")
+  @@index([fts], map: "knowledge_chunks_fts_gin_idx_3", type: Gin)
+  @@schema("public")
+}
+
+model knowledge_files_3 {
+  doc_id            String
+  file_name         String?
+  full_text         String?
+  summary_embedding Unsupported("vector")?
+  metadata          Json?
+  id                String                 @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  sheet             String?
+
+  @@schema("public")
+}
+
+model knowledge_sources_3 {
+  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  drive_file_id String?
+  drive_name    String?
+  created_at    DateTime @default(now()) @db.Timestamptz(6)
+  hash          String?
+  sheet_name    String?
+
   @@schema("public")
 }
 

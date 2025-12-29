@@ -154,12 +154,7 @@ export async function POST(req: NextRequest) {
     });
 
     // 5. Forward to n8n
-    let n8nUrl = process.env.N8N_HOST;
-    if (type === "image" && process.env.N8N_WEBHOOK_IMAGE) {
-      n8nUrl = process.env.N8N_WEBHOOK_IMAGE;
-    } else {
-      n8nUrl = process.env.N8N_MAIN_RAG_WEBHOOK_URL;
-    }
+    let n8nUrl = process.env.N8N_MAIN_RAG_WEBHOOK_URL;
 
     if (!n8nUrl) {
       // Development Fallback

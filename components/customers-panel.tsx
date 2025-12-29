@@ -3,8 +3,18 @@
 import { useState, useEffect, useCallback } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { Search, Loader2, Plus, User, ChevronLeft, ChevronRight } from "lucide-react"
+import { Search, Loader2, Plus, User, ChevronLeft, ChevronRight, Building, Phone, MapPin, Briefcase } from "lucide-react"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
+import { ContactList } from "./contact-list"
+
+interface Contact {
+    id: string
+    name: string
+    title?: string
+    phone?: string
+    email?: string
+    is_primary: boolean
+}
 
 interface Customer {
     id: string
@@ -13,6 +23,7 @@ interface Customer {
     phone: string
     address: string
     customer_type: string
+    contacts: Contact[]
 }
 
 interface CustomersPanelProps {
@@ -25,6 +36,10 @@ export function CustomersPanel({ userRole }: CustomersPanelProps) {
     const [searchQuery, setSearchQuery] = useState("")
     const [showCreateModal, setShowCreateModal] = useState(false)
 
+    // Details Modal State
+    const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null)
+    const [showDetailsModal, setShowDetailsModal] = useState(false)
+
     // Pagination & Search State
     const [page, setPage] = useState(1)
     const [totalPages, setTotalPages] = useState(1)
@@ -35,6 +50,7 @@ export function CustomersPanel({ userRole }: CustomersPanelProps) {
     const [newItem, setNewItem] = useState({
         company_name: '',
         contact_person: '',
+        contact_title: '',
         phone: '',
         address: '',
         customer_type: 'C__nh_n'
@@ -109,6 +125,7 @@ export function CustomersPanel({ userRole }: CustomersPanelProps) {
             setNewItem({
                 company_name: '',
                 contact_person: '',
+                contact_title: '',
                 phone: '',
                 address: '',
                 customer_type: 'C__nh_n'
@@ -119,11 +136,47 @@ export function CustomersPanel({ userRole }: CustomersPanelProps) {
                 fetchCustomers()
             }
 
-        } catch (error: unknown) {
-            const message = error instanceof Error ? error.message : "Đã xảy ra lỗi không xác định";
-            alert(`Lỗi: ${message}`)
+        } catch (error: any) {
+            alert(`Lỗi: ${error.message}`)
         } finally {
             setIsSubmitting(false)
+        }
+    }
+
+    const handleCustomerClick = async (customer: Customer) => {
+        // If we already have contacts loaded via fetchCustomers (since we included them in API), simpler.
+        // If not, we might need to fetch them.
+        // Based on my API change, contacts ARE included.
+        setSelectedCustomer(customer)
+        setShowDetailsModal(true)
+    }
+
+    const refreshSelectedCustomer = async () => {
+        if (!selectedCustomer) return
+        // Re-fetch specific customer or just re-fetch all
+        // Since we don't have a single customer fetch for details easily without filtering, 
+        // we can just re-fetch the list, but that might close the modal if we are not careful with state references.
+        // However, if we just call fetchCustomers, the list updates. We need to update selectedCustomer too.
+
+        // Better strategy: fetch just contacts for this customer or find from list
+        await fetchCustomers()
+        // We rely on the list update. But we need to update selectedCustomer from the new list.
+        // Efficiently, we should have a `fetchCustomerDetails` or just update the contacts list in the local state.
+        // For now, let's close and reopen or just assume fetchCustomers updates the list that we might find from.
+        // Actually, `selectedCustomer` is a separate object state. Updating `customers` won't update `selectedCustomer`.
+        // I should create a small helper to refresh the selected customer's contacts.
+
+        try {
+            const res = await fetch(`/api/contacts?customer_id=${selectedCustomer.id}`)
+            if (res.ok) {
+                const data = await res.json()
+                setSelectedCustomer(prev => prev ? { ...prev, contacts: data.data } : null)
+
+                // Also update the main list so it reflects changes without refresh if possible, but simplicity first.
+                setCustomers(prev => prev.map(c => c.id === selectedCustomer.id ? { ...c, contacts: data.data } : c))
+            }
+        } catch (e) {
+            console.error(e)
         }
     }
 
@@ -141,7 +194,7 @@ export function CustomersPanel({ userRole }: CustomersPanelProps) {
                         <DialogTrigger asChild>
                             <Button size="sm" className="gap-2">
                                 <Plus className="w-4 h-4" />
-                                Thêm khách hàng
+                                <span className="hidden sm:inline">Thêm khách hàng</span>
                             </Button>
                         </DialogTrigger>
                         <DialogContent>
@@ -159,19 +212,28 @@ export function CustomersPanel({ userRole }: CustomersPanelProps) {
                                 </div>
                                 <div className="grid grid-cols-2 gap-4">
                                     <div className="space-y-2">
-                                        <label className="text-sm font-medium">Người liên hệ</label>
+                                        <label className="text-sm font-medium">Người liên hệ chính</label>
                                         <Input
                                             value={newItem.contact_person}
                                             onChange={(e) => setNewItem({ ...newItem, contact_person: e.target.value })}
+                                            placeholder="Họ tên..."
                                         />
                                     </div>
                                     <div className="space-y-2">
-                                        <label className="text-sm font-medium">Số điện thoại</label>
+                                        <label className="text-sm font-medium">Chức danh</label>
                                         <Input
-                                            value={newItem.phone}
-                                            onChange={(e) => setNewItem({ ...newItem, phone: e.target.value })}
+                                            value={newItem.contact_title}
+                                            onChange={(e) => setNewItem({ ...newItem, contact_title: e.target.value })}
+                                            placeholder="VD: Giám đốc"
                                         />
                                     </div>
+                                </div>
+                                <div className="space-y-2">
+                                    <label className="text-sm font-medium">Số điện thoại</label>
+                                    <Input
+                                        value={newItem.phone}
+                                        onChange={(e) => setNewItem({ ...newItem, phone: e.target.value })}
+                                    />
                                 </div>
                                 <div className="space-y-2">
                                     <label className="text-sm font-medium">Địa chỉ</label>
@@ -242,10 +304,22 @@ export function CustomersPanel({ userRole }: CustomersPanelProps) {
                                     </tr>
                                 ) : (
                                     customers.map((c) => (
-                                        <tr key={c.id} className="hover:bg-muted/50 transition-colors">
+                                        <tr
+                                            key={c.id}
+                                            className="hover:bg-muted/50 transition-colors cursor-pointer"
+                                            onClick={() => handleCustomerClick(c)}
+                                        >
                                             <td className="p-3 font-medium">{c.company_name}</td>
-                                            <td className="p-3">{c.contact_person || "-"}</td>
-                                            <td className="p-3">{c.phone || "-"}</td>
+                                            <td className="p-3">
+                                                <div className="flex flex-col">
+                                                    {/* Show primary contact or fallback to legacy field */}
+                                                    <span>{c.contacts?.find(cnt => cnt.is_primary)?.name || c.contact_person || "-"}</span>
+                                                    {c.contacts?.find(cnt => cnt.is_primary)?.title && (
+                                                        <span className="text-xs text-muted-foreground">{c.contacts.find(cnt => cnt.is_primary)?.title}</span>
+                                                    )}
+                                                </div>
+                                            </td>
+                                            <td className="p-3">{c.contacts?.find(cnt => cnt.is_primary)?.phone || c.phone || "-"}</td>
                                             <td className="p-3 hidden md:table-cell truncate max-w-xs">{c.address || "-"}</td>
                                             <td className="p-3">
                                                 <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${(c.customer_type === 'Doanh nghiệp' || c.customer_type === 'Doanh_nghi_p')
@@ -291,6 +365,51 @@ export function CustomersPanel({ userRole }: CustomersPanelProps) {
                     )}
                 </>
             </div>
+
+            {/* Customer Details Dialog */}
+            <Dialog open={showDetailsModal} onOpenChange={setShowDetailsModal}>
+                <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
+                    <DialogHeader>
+                        <DialogTitle className="flex items-center gap-2">
+                            <Building className="w-5 h-5 text-primary" />
+                            {selectedCustomer?.company_name}
+                        </DialogTitle>
+                    </DialogHeader>
+
+                    {selectedCustomer && (
+                        <div className="space-y-6 pt-4">
+                            {/* Basic Info */}
+                            <div className="grid md:grid-cols-2 gap-4 p-4 bg-muted/30 rounded-lg border">
+                                <div className="space-y-3">
+                                    <div className="flex items-start gap-2">
+                                        <MapPin className="w-4 h-4 text-muted-foreground mt-0.5" />
+                                        <span className="text-sm">{selectedCustomer.address || "Chưa cập nhật địa chỉ"}</span>
+                                    </div>
+                                    <div className="flex items-center gap-2">
+                                        <span className="text-xs bg-muted px-2 py-1 rounded border">
+                                            {selectedCustomer.customer_type === 'Doanh_nghi_p' ? 'Doanh nghiệp' : 'Cá nhân'}
+                                        </span>
+                                    </div>
+                                </div>
+                                <div className="space-y-1">
+                                    {/* Legacy info display if needed, but we focus on contacts now */}
+                                    <p className="text-xs text-muted-foreground uppercase tracking-wider mb-2">Thông tin chính</p>
+                                    <div className="text-sm font-medium">{selectedCustomer.contact_person}</div>
+                                    <div className="text-sm text-muted-foreground">{selectedCustomer.phone}</div>
+                                </div>
+                            </div>
+
+                            {/* Contacts Management */}
+                            <ContactList
+                                customerId={selectedCustomer.id}
+                                contacts={selectedCustomer.contacts || []}
+                                onUpdate={refreshSelectedCustomer}
+                                userRole={userRole}
+                            />
+                        </div>
+                    )}
+                </DialogContent>
+            </Dialog>
         </div>
     )
 }
