@@ -75,6 +75,7 @@ export async function GET(request: Request) {
   }
 }
 
+/*
 export async function POST(request: Request) {
   try {
     const body = await request.json();
@@ -135,6 +136,7 @@ export async function POST(request: Request) {
     return handleApiError(error, "Create Message Error");
   }
 }
+*/
 
 
 

@@ -688,6 +688,7 @@ model file_search_storage {
   drive_name       String?
   hash             String?
 
+  @@index([drive_file_id], map: "idx_drive_file_id")
   @@schema("public")
 }
 
