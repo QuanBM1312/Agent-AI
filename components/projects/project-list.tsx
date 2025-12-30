@@ -31,7 +31,7 @@ interface Project {
   output_contract_no: string | null
   output_contract_date: string | null
   created_at: string
-  project_items: any[]
+  project_items: ProjectItem[]
   project_personnel?: any[]
 }
 
@@ -76,7 +76,7 @@ export function ProjectList({ customerId, userRole }: ProjectListProps) {
     }))
   }
 
-  const formatDate = (dateString?: string) => {
+  const formatDate = (dateString?: string | null) => {
     if (!dateString) return "N/A"
     return new Date(dateString).toLocaleDateString("vi-VN")
   }
