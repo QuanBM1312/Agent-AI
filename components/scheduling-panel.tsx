@@ -77,6 +77,7 @@ export function SchedulingPanel({ userRole }: SchedulingPanelProps) {
 
   // Calendar State
   const [currentDate, setCurrentDate] = useState(new Date())
+  const [selectedDate, setSelectedDate] = useState(new Date())
 
   // Form State
   const [newItem, setNewItem] = useState({
@@ -470,7 +471,7 @@ export function SchedulingPanel({ userRole }: SchedulingPanelProps) {
         {/* Days Header */}
         <div className="grid grid-cols-7 mb-2 text-center">
           {['T2', 'T3', 'T4', 'T5', 'T6', 'T7', 'CN'].map(day => (
-            <div key={day} className="text-sm font-semibold text-muted-foreground py-2">
+            <div key={day} className="text-xs md:text-sm font-semibold text-muted-foreground py-2">
               {day}
             </div>
           ))}
@@ -487,19 +488,25 @@ export function SchedulingPanel({ userRole }: SchedulingPanelProps) {
           {Array.from({ length: daysInMonth }).map((_, i) => {
             const day = i + 1
             const dayJobs = getJobsForDay(day)
+            const isSelected = selectedDate.getDate() === day &&
+              selectedDate.getMonth() === currentDate.getMonth() &&
+              selectedDate.getFullYear() === currentDate.getFullYear()
 
             return (
               <div
                 key={day}
-                className={`min-h-[100px] md:min-h-[120px] p-2 rounded-md border ${isToday(day) ? 'border-primary bg-primary/5' : 'border-border bg-card'
-                  } flex flex-col gap-1 overflow-hidden transition-all hover:border-primary/50 relative group`}
+                onClick={() => setSelectedDate(new Date(currentDate.getFullYear(), currentDate.getMonth(), day))}
+                className={`min-h-[50px] md:min-h-[120px] p-1 md:p-2 rounded-md border flex flex-col gap-1 overflow-hidden transition-all hover:border-primary/50 relative group cursor-pointer ${isToday(day) ? 'border-primary bg-primary/5' :
+                  isSelected ? 'border-primary shadow-sm bg-accent/50' : 'border-border bg-card'
+                  }`}
               >
-                <span className={`text-sm font-medium w-6 h-6 flex items-center justify-center rounded-full mb-1 ${isToday(day) ? 'bg-primary text-primary-foreground' : 'text-foreground'
+                <span className={`text-[10px] md:text-sm font-medium w-5 h-5 md:w-6 md:h-6 flex items-center justify-center rounded-full mb-1 ${isToday(day) ? 'bg-primary text-primary-foreground' : 'text-foreground'
                   }`}>
                   {day}
                 </span>
 
-                <div className="flex flex-col gap-1 overflow-y-auto max-h-[150px] scrollbar-thin">
+                {/* Desktop View: Full Blocks */}
+                <div className="hidden md:flex flex-col gap-1 overflow-y-auto max-h-[150px] scrollbar-thin">
                   {dayJobs.map(job => (
                     <div
                       key={job.id}
@@ -518,10 +525,69 @@ export function SchedulingPanel({ userRole }: SchedulingPanelProps) {
                     </div>
                   ))}
                 </div>
+
+                {/* Mobile View: Dots */}
+                <div className="flex md:hidden flex-wrap gap-1 content-start">
+                  {dayJobs.map(job => {
+                    let colorClass = "bg-slate-400"
+                    const s = job.status?.trim()
+                    if (s === 'Ho_n_th_nh' || s === 'Hoàn thành') colorClass = "bg-green-500"
+                    else if (s === 'Ch_duy_t' || s === 'Chờ duyệt') colorClass = "bg-amber-500"
+                    else if (s === 'ph_n_c_ng' || s === 'Đã phân công') colorClass = "bg-blue-500"
+
+                    return (
+                      <div
+                        key={job.id}
+                        className={`w-1.5 h-1.5 rounded-full ${colorClass}`}
+                      />
+                    )
+                  })}
+                </div>
               </div>
             )
           })}
         </div>
+
+        {/* Selected Date Details (Mobile & Desktop) */}
+        <div className="mt-6 border-t pt-4">
+          <h3 className="font-semibold mb-3 flex items-center gap-2">
+            <Calendar className="w-4 h-4 text-primary" />
+            Công việc ngày {selectedDate.toLocaleDateString('vi-VN')}
+          </h3>
+
+          <div className="space-y-2">
+            {getJobsForDay(selectedDate.getDate()).length === 0 ? (
+              <p className="text-sm text-muted-foreground italic">Không có công việc nào trong ngày này.</p>
+            ) : (
+              getJobsForDay(selectedDate.getDate()).map(job => (
+                <div
+                  key={job.id}
+                  onClick={() => handleJobClick(job.id)}
+                  className={`p-3 rounded-lg border flex items-center justify-between cursor-pointer hover:shadow-md transition-all ${getStatusColor(job.status)}`}
+                >
+                  <div className="flex flex-col gap-1 overflow-hidden">
+                    <div className="flex items-center gap-2">
+                      {getStatusIcon(job.status)}
+                      <span className="font-semibold truncate">{job.customers?.company_name}</span>
+                    </div>
+                    <div className="flex items-center gap-2 text-xs opacity-80">
+                      <span className="font-medium bg-background/50 px-1.5 py-0.5 rounded">{job.job_code}</span>
+                      <span>•</span>
+                      <span>{job.scheduled_start_time ? new Date(job.scheduled_start_time).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }) : '--:--'}</span>
+                    </div>
+                    {job.notes && (
+                      <p className="text-xs truncate italic mt-0.5 max-w-[200px] md:max-w-full">
+                        {job.notes}
+                      </p>
+                    )}
+                  </div>
+                  <ChevronRight className="w-4 h-4 opacity-50 flex-shrink-0 ml-2" />
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+
       </div>
 
       {/* Create Modal */}
@@ -1044,6 +1110,6 @@ export function SchedulingPanel({ userRole }: SchedulingPanelProps) {
           )}
         </DialogContent>
       </Dialog>
-    </div>
+    </div >
   )
 }
