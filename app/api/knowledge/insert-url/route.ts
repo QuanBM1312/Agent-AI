@@ -28,8 +28,12 @@ export async function POST(request: Request) {
     }
 
     // 2. Call the external Webhook
-    // N8N_INSERT_URL=https://primary-production-79be44.up.railway.app/webhook-test/receive_url
-    const webhookUrl = "https://primary-production-79be44.up.railway.app/webhook-test/receive_url";
+    const webhookUrl = process.env.N8N_INSERT_URL;
+
+    if (!webhookUrl) {
+      console.error("Missing N8N_INSERT_URL environment variable");
+      return NextResponse.json({ error: "Server configuration error: Missing Webhook URL" }, { status: 500 });
+    }
 
     try {
       await fetch(webhookUrl, {
