@@ -264,7 +264,7 @@ export async function PUT(request: Request) {
     }
 
     const body = await request.json();
-    const { id, role, department_id } = body;
+    const { id, role, department_id, dob, id_card_no, phone_number } = body;
 
     if (!id) {
       return NextResponse.json({ error: "User ID is required" }, { status: 400 });
@@ -278,6 +278,9 @@ export async function PUT(request: Request) {
       data: {
         role,
         department_id,
+        dob: dob ? new Date(dob) : null,
+        id_card_no,
+        phone_number,
       },
     });
 

@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input"
 import { Search, Loader2, Plus, User, ChevronLeft, ChevronRight, Building, Phone, MapPin, Briefcase } from "lucide-react"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
 import { ContactList } from "./contact-list"
+import { ProjectList } from "./projects/project-list"
 
 interface Contact {
     id: string
@@ -406,6 +407,14 @@ export function CustomersPanel({ userRole }: CustomersPanelProps) {
                                 onUpdate={refreshSelectedCustomer}
                                 userRole={userRole}
                             />
+
+                            {/* Project Management */}
+                            <div className="border-t pt-6">
+                                <ProjectList
+                                    customerId={selectedCustomer.id}
+                                    userRole={userRole}
+                                />
+                            </div>
                         </div>
                     )}
                 </DialogContent>

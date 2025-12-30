@@ -77,6 +77,52 @@ model customers {
   customer_type  customer_type_enum?
   contacts       contacts[]
   jobs           jobs[]
+  projects       projects[]
+
+  @@schema("public")
+}
+
+model projects {
+  id                    String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  customer_id           String          @db.Uuid
+  name                  String
+  address               String?
+  contact_person        String?
+  contact_position      String?
+  input_contract_no     String?
+  input_contract_date   DateTime?       @db.Date
+  output_contract_no    String?
+  output_contract_date  DateTime?       @db.Date
+  created_at            DateTime        @default(now()) @db.Timestamptz(6)
+  updated_at            DateTime        @default(now()) @db.Timestamptz(6)
+  
+  customers             customers       @relation(fields: [customer_id], references: [id], onDelete: Cascade)
+  project_items         project_items[]
+  project_personnel     project_personnel[]
+
+  @@schema("public")
+}
+
+model project_items {
+  id                    String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  project_id            String            @db.Uuid
+  model_name            String
+  quantity              Int               @default(1)
+  warranty_start_date   DateTime?         @db.Date
+  warranty_end_date     DateTime?         @db.Date
+  
+  projects              projects          @relation(fields: [project_id], references: [id], onDelete: Cascade)
+  project_serials       project_serials[]
+
+  @@schema("public")
+}
+
+model project_serials {
+  id               String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  project_item_id  String        @db.Uuid
+  serial_number    String
+  
+  project_items    project_items @relation(fields: [project_item_id], references: [id], onDelete: Cascade)
 
   @@schema("public")
 }
@@ -201,19 +247,34 @@ model metadata_fields {
 }
 
 model users {
-  id                                      String            @id
-  department_id                           String?           @db.Uuid
-  email                                   String            @unique
+  id                                      String              @id
+  department_id                           String?             @db.Uuid
+  email                                   String              @unique
   full_name                               String?
   role                                    user_role_enum
+  dob                                     DateTime?           @db.Date
+  id_card_no                              String?
+  phone_number                            String?
   calendar_events                         calendar_events[]
   chat_sessions                           chat_sessions[]
   job_reports                             job_reports[]
   job_technicians                         job_technicians[]
-  jobs_jobs_assigned_technician_idTousers jobs[]            @relation("jobs_assigned_technician_idTousers")
-  jobs_jobs_created_by_user_idTousers     jobs[]            @relation("jobs_created_by_user_idTousers")
-  departments                             departments?      @relation(fields: [department_id], references: [id], onUpdate: NoAction)
+  jobs_jobs_assigned_technician_idTousers jobs[]              @relation("jobs_assigned_technician_idTousers")
+  jobs_jobs_created_by_user_idTousers     jobs[]              @relation("jobs_created_by_user_idTousers")
+  departments                             departments?        @relation(fields: [department_id], references: [id], onUpdate: NoAction)
+  project_personnel                       project_personnel[]
 
+  @@schema("public")
+}
+
+model project_personnel {
+  project_id String @db.Uuid
+  user_id    String
+
+  projects projects @relation(fields: [project_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  users    users    @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@id([project_id, user_id])
   @@schema("public")
 }
 

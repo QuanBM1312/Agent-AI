@@ -12,6 +12,9 @@ interface User {
     email: string
     role: string
     department_id: string | null
+    dob?: string
+    id_card_no?: string
+    phone_number?: string
     departments?: {
         name: string
     }
@@ -64,7 +67,7 @@ export function UsersPanel({ userRole }: { userRole: string }) {
             }
             if (dRes.ok) {
                 const dData = await dRes.json()
-                setDepartments(dData)
+                setDepartments(dData.data || [])
             }
 
         } catch (error) {
@@ -100,7 +103,10 @@ export function UsersPanel({ userRole }: { userRole: string }) {
                 body: JSON.stringify({
                     id: editingUser.id,
                     role: editingUser.role,
-                    department_id: editingUser.department_id
+                    department_id: editingUser.department_id,
+                    dob: editingUser.dob,
+                    id_card_no: editingUser.id_card_no,
+                    phone_number: editingUser.phone_number
                 })
             })
 
@@ -111,6 +117,9 @@ export function UsersPanel({ userRole }: { userRole: string }) {
                 ...u,
                 role: editingUser.role,
                 department_id: editingUser.department_id,
+                dob: editingUser.dob,
+                id_card_no: editingUser.id_card_no,
+                phone_number: editingUser.phone_number,
                 departments: departments.find(d => d.id === editingUser.department_id) ? { name: departments.find(d => d.id === editingUser.department_id)!.name } : undefined
             } : u))
 
@@ -258,6 +267,34 @@ export function UsersPanel({ userRole }: { userRole: string }) {
                             <div className="space-y-2">
                                 <label className="text-sm font-medium">Họ tên</label>
                                 <Input value={editingUser.full_name} disabled className="bg-muted" />
+                            </div>
+
+                            <div className="grid grid-cols-2 gap-4">
+                                <div className="space-y-2">
+                                    <label className="text-sm font-medium">Ngày sinh</label>
+                                    <Input
+                                        type="date"
+                                        value={editingUser.dob ? new Date(editingUser.dob).toISOString().split('T')[0] : ''}
+                                        onChange={e => setEditingUser({ ...editingUser, dob: e.target.value })}
+                                    />
+                                </div>
+                                <div className="space-y-2">
+                                    <label className="text-sm font-medium">Số điện thoại</label>
+                                    <Input
+                                        value={editingUser.phone_number || ''}
+                                        onChange={e => setEditingUser({ ...editingUser, phone_number: e.target.value })}
+                                        placeholder="09xx..."
+                                    />
+                                </div>
+                            </div>
+
+                            <div className="space-y-2">
+                                <label className="text-sm font-medium">Số CCCD</label>
+                                <Input
+                                    value={editingUser.id_card_no || ''}
+                                    onChange={e => setEditingUser({ ...editingUser, id_card_no: e.target.value })}
+                                    placeholder="Nhập số CCCD..."
+                                />
                             </div>
 
                             <div className="space-y-2">
