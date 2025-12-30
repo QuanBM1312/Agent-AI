@@ -377,9 +377,6 @@ export function KnowledgePortal() {
                       <p className="text-xs text-muted-foreground">{source.status}</p>
                     </div>
                   </a>
-                  <Button variant="outline" size="sm" className="shrink-0 ml-2">
-                    Cập nhật
-                  </Button>
                 </div>
               ))
             )}
