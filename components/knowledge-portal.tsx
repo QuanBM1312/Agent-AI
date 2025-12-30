@@ -200,7 +200,7 @@ export function KnowledgePortal() {
 
     setIsAddingSourceLoading(true)
     try {
-      const response = await fetch("/api/knowledge/sources", {
+      const response = await fetch("/api/knowledge/insert-url", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
