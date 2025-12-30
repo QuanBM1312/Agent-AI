@@ -36,15 +36,25 @@ export async function POST(request: Request) {
     }
 
     try {
-      await fetch(webhookUrl, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          url: source_url,
-          title: pageTitle,
-          frequency: refresh_frequency
-        })
+      // Prepare URL with query params for GET request
+      const targetUrl = new URL(webhookUrl);
+      targetUrl.searchParams.append("url", source_url);
+      targetUrl.searchParams.append("title", pageTitle || "");
+      targetUrl.searchParams.append("frequency", refresh_frequency);
+
+      console.log(`[Insert URL] Attempting to send to webhook (GET): ${targetUrl.toString()}`);
+
+      const response = await fetch(targetUrl.toString(), {
+        method: "GET",
+        headers: { "Content-Type": "application/json" }
       });
+
+      console.log(`[Insert URL] Webhook response status: ${response.status}`);
+      if (!response.ok) {
+        console.error(`[Insert URL] Webhook failed with status: ${response.status} - ${await response.text()}`);
+      } else {
+        console.log(`[Insert URL] Webhook successfully triggered`);
+      }
     } catch (webhookError) {
       console.error("Error sending to webhook:", webhookError);
       // We continue even if webhook fails? Or fail? 
