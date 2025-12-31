@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { db as prisma } from "@/lib/db";
+import { Prisma } from "@prisma/client";
 
 /**
  * @swagger
@@ -35,13 +36,24 @@ import { getPaginationParams, formatPaginatedResponse } from "@/lib/pagination";
 
 export async function GET(req: Request) {
   try {
+    const { searchParams } = new URL(req.url);
+    const type = searchParams.get('type');
     const paginationParams = getPaginationParams(req);
+
+    // Determine the WHERE clause based on type
+    let whereCondition = Prisma.empty;
+    if (type === 'source') {
+      whereCondition = Prisma.sql`WHERE sheet_name IN ('WEB_URL', 'GOOGLE_SHEET')`;
+    } else if (type === 'document') {
+      whereCondition = Prisma.sql`WHERE (sheet_name NOT IN ('WEB_URL', 'GOOGLE_SHEET') OR sheet_name IS NULL)`;
+    }
 
     const sourcesResult = await prisma.$queryRaw<any[]>`
       SELECT 
         *,
         COUNT(*) OVER() as full_count
       FROM public.knowledge_sources
+      ${whereCondition}
       ORDER BY created_at DESC
       LIMIT ${paginationParams.limit} OFFSET ${paginationParams.skip}
     `;

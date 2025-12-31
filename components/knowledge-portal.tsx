@@ -19,97 +19,37 @@ interface SourceItem {
   name: string
   type: "GOOGLE_SHEET" | "WEB_URL"
   status: string
-  url?: string // URL to the source (Google Drive/Sheet or Web URL)
+  url?: string
 }
 
 export function KnowledgePortal() {
   const [isUploading, setIsUploading] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
-  const [items, setItems] = useState<KnowledgeItem[]>([])
 
+  // Documents State
+  const [items, setItems] = useState<KnowledgeItem[]>([])
+  const [isDocumentsLoading, setIsDocumentsLoading] = useState(true)
+  const [documentsPage, setDocumentsPage] = useState(1)
+  const [documentsTotalPages, setDocumentsTotalPages] = useState(1)
+  const documentsLimit = 10
+
+  // Sources State
   const [sources, setSources] = useState<SourceItem[]>([])
+  const [isSourcesLoading, setIsSourcesLoading] = useState(true)
   const [isAddingSource, setIsAddingSource] = useState(false)
   const [newSourceUrl, setNewSourceUrl] = useState("")
   const [isAddingSourceLoading, setIsAddingSourceLoading] = useState(false)
-  const [isLoading, setIsLoading] = useState(true)
-
-  // Pagination State
-  const [page, setPage] = useState(1)
-  const [totalPages, setTotalPages] = useState(1)
-  const limit = 10
+  const [sourcesPage, setSourcesPage] = useState(1)
+  const [sourcesTotalPages, setSourcesTotalPages] = useState(1)
+  const sourcesLimit = 5
 
   const getFileType = (fileName: string): KnowledgeItem['type'] => {
     const ext = fileName.split('.').pop()?.toLowerCase()
     if (ext === 'pdf') return 'pdf'
     if (['xls', 'xlsx', 'csv'].includes(ext || '')) return 'excel'
     if (['doc', 'docx'].includes(ext || '')) return 'word'
-    return 'pdf' // Default fallback
+    return 'pdf'
   }
-
-
-  const fetchData = useCallback(async () => {
-    setIsLoading(true)
-    try {
-      const response = await fetch(`/api/knowledge/sources?page=${page}&limit=${limit}`)
-      if (response.ok) {
-        const data = await response.json()
-        const rawItems = (data.data || []) as Array<{
-          id: string;
-          sheet_name?: string;
-          drive_file_id?: string;
-          drive_name?: string;
-          hash?: string;
-          created_at?: string;
-        }>
-
-        if (data.pagination) {
-          setTotalPages(data.pagination.totalPages)
-        }
-
-        const validSources: SourceItem[] = []
-        const validItems: KnowledgeItem[] = []
-
-        rawItems.forEach((item) => {
-          // Identify type based on sheet_name or logic
-          if (item.sheet_name === 'WEB_URL' || item.sheet_name === 'GOOGLE_SHEET') {
-            // Construct Google Drive/Sheet URL
-            let url = item.drive_file_id
-            if (item.sheet_name === 'GOOGLE_SHEET' && item.drive_file_id && !item.drive_file_id.startsWith('http')) {
-              url = `https://docs.google.com/spreadsheets/d/${item.drive_file_id}/edit`
-            } else if (item.drive_file_id && !item.drive_file_id.startsWith('http')) {
-              url = `https://drive.google.com/file/d/${item.drive_file_id}/view`
-            }
-
-            validSources.push({
-              id: item.id,
-              name: item.drive_name || item.drive_file_id || "",
-              type: item.sheet_name === 'GOOGLE_SHEET' ? 'GOOGLE_SHEET' : 'WEB_URL',
-              status: "Đang đồng bộ",
-              url: url || ""
-            })
-          } else {
-            validItems.push({
-              id: item.id,
-              name: item.drive_name || "Unknown File",
-              type: getFileType(item.drive_name || ""),
-              size: formatFileSize(Number(item.hash) || 0),
-              uploadedAt: item.created_at ? new Date(item.created_at).toISOString().split('T')[0] : ""
-            })
-          }
-        })
-        setSources(validSources)
-        setItems(validItems)
-      }
-    } catch (error) {
-      console.error("Failed to fetch knowledge sources:", error)
-    } finally {
-      setIsLoading(false)
-    }
-  }, [page, limit])
-
-  useEffect(() => {
-    fetchData()
-  }, [fetchData])
 
   const formatFileSize = (bytes: number) => {
     if (bytes === 0) return '0 Bytes'
@@ -118,6 +58,81 @@ export function KnowledgePortal() {
     const i = Math.floor(Math.log(bytes) / Math.log(k))
     return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i]
   }
+
+  const fetchSources = useCallback(async () => {
+    setIsSourcesLoading(true)
+    try {
+      // Fetch recent sources (limit 20 for now)
+      const response = await fetch(`/api/knowledge/sources?type=source&page=${sourcesPage}&limit=${sourcesLimit}`)
+      if (response.ok) {
+        const data = await response.json()
+        const rawItems = (data.data || []) as any[]
+
+        if (data.pagination) {
+          setSourcesTotalPages(data.pagination.totalPages)
+        }
+
+        const validSources: SourceItem[] = rawItems.map((item) => {
+          let url = item.drive_file_id
+          if (item.sheet_name === 'GOOGLE_SHEET' && item.drive_file_id && !item.drive_file_id.startsWith('http')) {
+            url = `https://docs.google.com/spreadsheets/d/${item.drive_file_id}/edit`
+          } else if (item.drive_file_id && !item.drive_file_id.startsWith('http')) {
+            url = `https://drive.google.com/file/d/${item.drive_file_id}/view`
+          }
+
+          return {
+            id: item.id,
+            name: item.drive_name || item.drive_file_id || "",
+            type: item.sheet_name === 'GOOGLE_SHEET' ? 'GOOGLE_SHEET' : 'WEB_URL',
+            status: "Đang đồng bộ",
+            url: url || ""
+          }
+        })
+        setSources(validSources)
+      }
+    } catch (error) {
+      console.error("Failed to fetch sources:", error)
+    } finally {
+      setIsSourcesLoading(false)
+    }
+  }, [sourcesPage])
+
+  const fetchDocuments = useCallback(async () => {
+    setIsDocumentsLoading(true)
+    try {
+      const response = await fetch(`/api/knowledge/sources?type=document&page=${documentsPage}&limit=${documentsLimit}`)
+      if (response.ok) {
+        const data = await response.json()
+        const rawItems = (data.data || []) as any[]
+
+        if (data.pagination) {
+          setDocumentsTotalPages(data.pagination.totalPages)
+        }
+
+        const validItems: KnowledgeItem[] = rawItems.map((item) => ({
+          id: item.id,
+          name: item.drive_name || "Unknown File",
+          type: getFileType(item.drive_name || ""),
+          size: formatFileSize(Number(item.hash) || 0),
+          uploadedAt: item.created_at ? new Date(item.created_at).toISOString().split('T')[0] : ""
+        }))
+
+        setItems(validItems)
+      }
+    } catch (error) {
+      console.error("Failed to fetch documents:", error)
+    } finally {
+      setIsDocumentsLoading(false)
+    }
+  }, [documentsPage])
+
+  useEffect(() => {
+    fetchSources()
+  }, [fetchSources])
+
+  useEffect(() => {
+    fetchDocuments()
+  }, [fetchDocuments])
 
   const handleUpload = async (file: File) => {
     setIsUploading(true)
@@ -136,7 +151,6 @@ export function KnowledgePortal() {
           const errorData = JSON.parse(errorText) as { error?: string }
           throw new Error(errorData.error || "Upload failed")
         } catch (e: unknown) {
-          // If JSON parse failed, it's likely an HTML error page or empty
           if (e instanceof Error && e.message !== "Upload failed" && !errorText.trim().startsWith("{")) {
             throw new Error(`Server Error ${response.status}: ${errorText.slice(0, 50)}`)
           }
@@ -147,17 +161,16 @@ export function KnowledgePortal() {
       const data = await response.json()
 
       const newItem: KnowledgeItem = {
-        id: data.fileId || Date.now().toString(), // Should ideally be DB UUID but using GDrive ID for now
+        id: data.fileId || Date.now().toString(),
         name: data.fileName || file.name,
         type: getFileType(file.name),
-        size: formatFileSize(file.size), // Display size immediately
+        size: formatFileSize(file.size),
         uploadedAt: new Date().toISOString().split('T')[0],
       }
 
-      setItems(prev => [newItem, ...prev])
+      // Refresh documents list
+      fetchDocuments()
 
-      // Optionally re-fetch to get the DB ID if needed
-      // await fetchData()
     } catch (error: unknown) {
       console.error("Error uploading file:", error)
       const message = error instanceof Error ? error.message : "An unknown error occurred"
@@ -213,14 +226,16 @@ export function KnowledgePortal() {
 
       if (response.ok) {
         const data = await response.json()
-        setSources(prev => [...prev, {
+        setSources(prev => [{
           id: data.id || Date.now().toString(),
           name: data.drive_name || newSourceUrl,
           type: "WEB_URL",
-          status: "Đang đồng bộ"
-        }])
+          status: "Đang đồng bộ",
+          url: newSourceUrl
+        }, ...prev])
         setNewSourceUrl("")
         setIsAddingSource(false)
+        fetchSources() // Refresh list on add
       } else {
         throw new Error("Failed to add source")
       }
@@ -346,9 +361,9 @@ export function KnowledgePortal() {
           )}
 
           <div className="space-y-3">
-            {isLoading ? (
+            {isSourcesLoading ? (
               // Sources Skeleton
-              [...Array(3)].map((_, i) => (
+              [...Array(sourcesLimit)].map((_, i) => (
                 <div key={i} className="flex items-center justify-between p-4 bg-card border border-border rounded-lg animate-pulse">
                   <div className="flex items-center gap-3 flex-1">
                     <div className="w-10 h-10 rounded bg-muted"></div>
@@ -382,26 +397,26 @@ export function KnowledgePortal() {
             )}
           </div>
 
-          {/* Pagination Controls */}
-          {totalPages > 1 && (
+          {/* Pagination Controls for Sources */}
+          {sourcesTotalPages > 1 && (
             <div className="flex items-center justify-between px-2 py-4 border-t mt-4">
               <p className="text-sm text-muted-foreground">
-                Trang {page} / {totalPages}
+                Trang {sourcesPage} / {sourcesTotalPages}
               </p>
               <div className="flex gap-2">
                 <Button
                   variant="outline"
                   size="sm"
-                  onClick={() => setPage(p => Math.max(1, p - 1))}
-                  disabled={page === 1}
+                  onClick={() => setSourcesPage(p => Math.max(1, p - 1))}
+                  disabled={sourcesPage === 1}
                 >
                   <ChevronLeft className="w-4 h-4 mr-1" /> Trước
                 </Button>
                 <Button
                   variant="outline"
                   size="sm"
-                  onClick={() => setPage(p => Math.min(totalPages, p + 1))}
-                  disabled={page === totalPages}
+                  onClick={() => setSourcesPage(p => Math.min(sourcesTotalPages, p + 1))}
+                  disabled={sourcesPage === sourcesTotalPages}
                 >
                   Sau <ChevronRight className="w-4 h-4 ml-1" />
                 </Button>
@@ -420,7 +435,7 @@ export function KnowledgePortal() {
             </Button>
           </div>
           <div className="space-y-2">
-            {isLoading ? (
+            {isDocumentsLoading ? (
               // Files Skeleton
               [...Array(5)].map((_, i) => (
                 <div key={i} className="flex items-center justify-between p-4 bg-card border border-border rounded-lg animate-pulse">
@@ -458,6 +473,33 @@ export function KnowledgePortal() {
               ))
             )}
           </div>
+
+          {/* Pagination Controls for Documents */}
+          {documentsTotalPages > 1 && (
+            <div className="flex items-center justify-between px-2 py-4 border-t mt-4">
+              <p className="text-sm text-muted-foreground">
+                Trang {documentsPage} / {documentsTotalPages}
+              </p>
+              <div className="flex gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setDocumentsPage(p => Math.max(1, p - 1))}
+                  disabled={documentsPage === 1}
+                >
+                  <ChevronLeft className="w-4 h-4 mr-1" /> Trước
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setDocumentsPage(p => Math.min(documentsTotalPages, p + 1))}
+                  disabled={documentsPage === documentsTotalPages}
+                >
+                  Sau <ChevronRight className="w-4 h-4 ml-1" />
+                </Button>
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </div>
