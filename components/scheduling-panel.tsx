@@ -149,6 +149,13 @@ export function SchedulingPanel({ userRole }: SchedulingPanelProps) {
 
   const handleUpdate = async () => {
     if (!selectedJob) return
+
+    // Validation: Must have at least one technician
+    if (editItem.technician_ids.length === 0) {
+      alert("Vui lòng chọn ít nhất một kỹ thuật viên")
+      return
+    }
+
     setIsSubmitting(true)
     try {
       const startDateTime = new Date(`${editItem.start_date}T${editItem.start_time || '09:00'}:00`).toISOString()
@@ -510,7 +517,7 @@ export function SchedulingPanel({ userRole }: SchedulingPanelProps) {
                   {dayJobs.map(job => (
                     <div
                       key={job.id}
-                      className={`text-[10px] md:text-xs p-1.5 rounded cursor-pointer transition-transform hover:scale-[1.02] active:scale-95 ${getStatusColor(job.status)}`}
+                      className={`text-[10px] md:text-xs p-1.5 rounded cursor-pointer ${getStatusColor(job.status)}`}
                       title={`${job.job_code} - ${job.customers?.company_name} (${job.status})`}
                       onClick={(e) => {
                         e.stopPropagation()
@@ -563,7 +570,7 @@ export function SchedulingPanel({ userRole }: SchedulingPanelProps) {
                 <div
                   key={job.id}
                   onClick={() => handleJobClick(job.id)}
-                  className={`p-3 rounded-lg border flex items-center justify-between cursor-pointer hover:shadow-md transition-all ${getStatusColor(job.status)}`}
+                  className={`p-3 rounded-lg border flex items-center justify-between cursor-pointer ${getStatusColor(job.status)}`}
                 >
                   <div className="flex flex-col gap-1 overflow-hidden">
                     <div className="flex items-center gap-2">
@@ -804,9 +811,9 @@ export function SchedulingPanel({ userRole }: SchedulingPanelProps) {
                         value={editItem.status}
                         onChange={(e) => setEditItem({ ...editItem, status: e.target.value })}
                       >
-                        <option value="Mới">Mới</option>
-                        <option value="Đang xử lý">Đang xử lý</option>
-                        <option value="Hoàn thành">Hoàn thành</option>
+                        <option value="Mới">Đã phân công (Mới)</option>
+                        <option value="Đang xử lý">Chờ duyệt (Đã xong việc)</option>
+                        <option value="Hoàn thành">Hoàn thành (Đã duyệt)</option>
                       </select>
                     </div>
                   </div>
@@ -999,11 +1006,17 @@ export function SchedulingPanel({ userRole }: SchedulingPanelProps) {
                         <div>
                           <p className="text-xs text-muted-foreground uppercase tracking-wider font-semibold">Mã công việc</p>
                           <p className="text-lg font-bold text-primary">{selectedJob.job_code}</p>
-                          <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium mt-1 ${selectedJob.status === 'Ho_n_th_nh' ? 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400' :
-                            selectedJob.status === 'M_i' ? 'bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400' :
-                              'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400'
+                          <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium mt-1 ${(selectedJob.status === 'Ho_n_th_nh' || selectedJob.status === 'Hoàn thành') ? 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400' :
+                            (selectedJob.status === 'Ch_duy_t' || selectedJob.status === 'Chờ duyệt') ? 'bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-400' :
+                              (selectedJob.status === 'ph_n_c_ng' || selectedJob.status === 'Đã phân công') ? 'bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400' :
+                                (selectedJob.status === 'M_i' || selectedJob.status === 'Mới') ? 'bg-slate-100 text-slate-800 dark:bg-slate-800/50 dark:text-slate-300' :
+                                  'bg-slate-100 text-slate-800 dark:bg-slate-800/50 dark:text-slate-300' // Default
                             }`}>
-                            {selectedJob.status === 'Ho_n_th_nh' ? 'Hoàn thành' : selectedJob.status === 'M_i' ? 'Mới' : 'Đang xử lý'}
+                            {(selectedJob.status === 'Ho_n_th_nh' || selectedJob.status === 'Hoàn thành') ? 'Hoàn thành' :
+                              (selectedJob.status === 'Ch_duy_t' || selectedJob.status === 'Chờ duyệt') ? 'Chờ duyệt' :
+                                (selectedJob.status === 'ph_n_c_ng' || selectedJob.status === 'Đã phân công') ? 'Đã phân công' :
+                                  (selectedJob.status === 'M_i' || selectedJob.status === 'Mới') ? 'Mới' :
+                                    selectedJob.status || 'Đang xử lý'}
                           </span>
                         </div>
                       </div>
