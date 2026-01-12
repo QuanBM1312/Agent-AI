@@ -93,7 +93,7 @@ export async function GET(req: NextRequest) {
       const currentStock = Number(p.opening) + Number(p.total_in) - Number(p.total_out);
 
       return {
-        id: p.product_code,
+        id: p.product_id.toString(),
         item_code: p.product_code,
         name: p.model_name,
         unit: p.unit,
@@ -113,5 +113,181 @@ export async function GET(req: NextRequest) {
       { error: "Failed to fetch inventory" },
       { status: 500 }
     );
+  }
+}
+
+export async function POST(req: NextRequest) {
+  try {
+    const currentUser = await getCurrentUserWithRole();
+    if (!currentUser || currentUser.role === "Technician") {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
+
+    const { product_code, model_name, unit, opening_qty } = await req.json();
+
+    if (!product_code || !model_name || !unit) {
+      return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
+    }
+
+    // 1. Create Product
+    const newProduct = await db.dim_product.create({
+      data: {
+        product_code,
+        model_name,
+        unit,
+      },
+    });
+
+    // 2. Initialize opening stock for current month if provided
+    if (opening_qty !== undefined) {
+      const currentYear = new Date().getFullYear();
+      const currentMonth = new Date().getMonth() + 1;
+
+      await db.inventory_month_opening.create({
+        data: {
+          year: currentYear,
+          month: currentMonth,
+          product_id: newProduct.product_id,
+          opening_qty: Number(opening_qty),
+          note: "Khởi tạo khi tạo sản phẩm mới",
+        },
+      });
+    }
+
+    return NextResponse.json({ data: newProduct });
+  } catch (error: any) {
+    console.error("Error creating product:", error);
+    if (error.code === 'P2002') {
+      return NextResponse.json({ error: "Mã sản phẩm đã tồn tại" }, { status: 400 });
+    }
+    return NextResponse.json({ error: "Failed to create product" }, { status: 500 });
+  }
+}
+
+export async function PUT(req: NextRequest) {
+  try {
+    const currentUser = await getCurrentUserWithRole();
+    if (!currentUser || currentUser.role === "Technician") {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
+
+    const { product_id, product_code, model_name, unit, opening_qty, total_in, total_out } = await req.json();
+
+    if (!product_id) {
+      return NextResponse.json({ error: "Missing product_id" }, { status: 400 });
+    }
+
+    const currentYear = new Date().getFullYear();
+    const currentMonth = new Date().getMonth() + 1;
+    const today = new Date().getDate();
+
+    // 1. Update Product Details
+    const updatedProduct = await db.dim_product.update({
+      where: { product_id: BigInt(product_id) },
+      data: {
+        product_code,
+        model_name,
+        unit,
+      },
+    });
+
+    // 2. Adjust opening stock
+    if (opening_qty !== undefined) {
+      await db.inventory_month_opening.upsert({
+        where: {
+          year_month_product_id: {
+            year: currentYear,
+            month: currentMonth,
+            product_id: BigInt(product_id)
+          }
+        },
+        update: {
+          opening_qty: Number(opening_qty),
+          updated_at: new Date()
+        },
+        create: {
+          year: currentYear,
+          month: currentMonth,
+          product_id: BigInt(product_id),
+          opening_qty: Number(opening_qty),
+          note: "Cập nhật thủ công",
+        },
+      });
+    }
+
+    // 3. Adjust In/Out Movements
+    if (total_in !== undefined || total_out !== undefined) {
+      // Find current monthly totals
+      const currentMovements = await db.inventory_daily_movement.aggregate({
+        where: {
+          product_id: BigInt(product_id),
+          year: currentYear,
+          month: currentMonth,
+        },
+        _sum: {
+          in_qty: true,
+          out_qty: true,
+        },
+      });
+
+      const currentSumIn = Number(currentMovements._sum.in_qty || 0);
+      const currentSumOut = Number(currentMovements._sum.out_qty || 0);
+
+      const diffIn = total_in !== undefined ? Number(total_in) - currentSumIn : 0;
+      const diffOut = total_out !== undefined ? Number(total_out) - currentSumOut : 0;
+
+      if (diffIn !== 0 || diffOut !== 0) {
+        // Record the discrepancy as a movement today
+        const existingToday = await db.inventory_daily_movement.findUnique({
+          where: {
+            year_month_day_product_id: {
+              year: currentYear,
+              month: currentMonth,
+              day: today,
+              product_id: BigInt(product_id)
+            }
+          }
+        });
+
+        if (existingToday) {
+          await db.inventory_daily_movement.update({
+            where: {
+              year_month_day_product_id: {
+                year: currentYear,
+                month: currentMonth,
+                day: today,
+                product_id: BigInt(product_id)
+              }
+            },
+            data: {
+              in_qty: { increment: diffIn },
+              out_qty: { increment: diffOut },
+              note: (existingToday.note ? existingToday.note + "; " : "") + "Điều chỉnh kiểm kê tháng",
+              updated_at: new Date()
+            }
+          });
+        } else {
+          await db.inventory_daily_movement.create({
+            data: {
+              year: currentYear,
+              month: currentMonth,
+              day: today,
+              product_id: BigInt(product_id),
+              in_qty: diffIn,
+              out_qty: diffOut,
+              note: "Điều chỉnh kiểm kê tháng",
+            }
+          });
+        }
+      }
+    }
+
+    return NextResponse.json({ data: { ...updatedProduct, product_id: updatedProduct.product_id.toString() } });
+  } catch (error: any) {
+    console.error("Error updating product:", error);
+    if (error.code === 'P2002') {
+      return NextResponse.json({ error: "Mã sản phẩm đã tồn tại" }, { status: 400 });
+    }
+    return NextResponse.json({ error: "Failed to update product" }, { status: 500 });
   }
 }

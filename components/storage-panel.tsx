@@ -1,9 +1,11 @@
 "use client"
 
 import { useState, useEffect } from "react"
-import { Search, Loader2, Package, Archive, AlertCircle } from "lucide-react"
+import { Search, Loader2, Package, Archive, AlertCircle, Plus, Edit2 } from "lucide-react"
 import { Input } from "@/components/ui/input"
+import { Button } from "@/components/ui/button"
 import { MobileMenuButton } from "@/components/mobile-menu-button"
+import { InventoryDialog } from "@/components/inventory-dialog"
 
 interface InventoryItem {
   id: string
@@ -22,6 +24,8 @@ export function StoragePanel() {
   const [items, setItems] = useState<InventoryItem[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [searchQuery, setSearchQuery] = useState("")
+  const [isDialogOpen, setIsDialogOpen] = useState(false)
+  const [editingItem, setEditingItem] = useState<InventoryItem | undefined>(undefined)
 
   const fetchInventory = async () => {
     setIsLoading(true)
@@ -70,15 +74,20 @@ export function StoragePanel() {
 
       {/* Content */}
       <div className="flex-1 overflow-hidden flex flex-col p-4 md:p-6">
-        {/* Search */}
-        <div className="mb-4 relative max-w-md">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-          <Input
-            placeholder="Tìm kiếm theo mã, tên vật tư..."
-            className="pl-9"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-          />
+        <div className="mb-4 flex items-center justify-between gap-4">
+          <div className="relative max-w-md flex-1">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+            <Input
+              placeholder="Tìm kiếm theo mã, tên vật tư..."
+              className="pl-9"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+            />
+          </div>
+          <Button onClick={() => { setEditingItem(undefined); setIsDialogOpen(true); }}>
+            <Plus className="w-4 h-4 mr-2" />
+            Thêm vật tư
+          </Button>
         </div>
 
         {/* Table */}
@@ -93,6 +102,7 @@ export function StoragePanel() {
                 <th className="p-3 w-40 text-right hidden lg:table-cell text-muted-foreground/70 font-normal">Đầu kỳ</th>
                 <th className="p-3 w-40 text-right hidden lg:table-cell text-green-600/70 font-normal">Nhập</th>
                 <th className="p-3 w-40 text-right hidden lg:table-cell text-red-600/70 font-normal">Xuất</th>
+                <th className="p-3 w-16 text-center text-muted-foreground/70 font-normal">Thao tác</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-border">
@@ -105,7 +115,7 @@ export function StoragePanel() {
                 </tr>
               ) : items.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="p-10 text-center text-muted-foreground flex flex-col items-center">
+                  <td colSpan={8} className="p-10 text-center text-muted-foreground flex flex-col items-center">
                     <Archive className="w-10 h-10 mb-2 opacity-20" />
                     <p>Không tìm thấy sản phẩm nào trong kho.</p>
                   </td>
@@ -126,12 +136,37 @@ export function StoragePanel() {
                     <td className="p-3 text-right hidden lg:table-cell text-muted-foreground">{item.details.opening}</td>
                     <td className="p-3 text-right hidden lg:table-cell text-green-600">+{item.details.in}</td>
                     <td className="p-3 text-right hidden lg:table-cell text-red-600">-{item.details.out}</td>
+                    <td className="p-3 text-center">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-8 w-8 p-0"
+                        onClick={() => { setEditingItem(item); setIsDialogOpen(true); }}
+                      >
+                        <Edit2 className="w-4 h-4 text-muted-foreground group-hover:text-primary transition-colors" />
+                      </Button>
+                    </td>
                   </tr>
                 ))
               )}
             </tbody>
           </table>
         </div>
+
+        <InventoryDialog
+          isOpen={isDialogOpen}
+          onClose={() => setIsDialogOpen(false)}
+          onSuccess={fetchInventory}
+          item={editingItem ? {
+            id: editingItem.id,
+            item_code: editingItem.item_code,
+            name: editingItem.name,
+            unit: editingItem.unit,
+            initial_opening: editingItem.details.opening,
+            total_in: editingItem.details.in,
+            total_out: editingItem.details.out
+          } : undefined}
+        />
       </div>
     </div>
   )
