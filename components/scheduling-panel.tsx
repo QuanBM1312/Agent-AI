@@ -57,7 +57,13 @@ interface Job {
 export function SchedulingPanel({ userRole }: SchedulingPanelProps) {
   const [jobs, setJobs] = useState<Job[]>([])
   const [technicians, setTechnicians] = useState<{ id: string, full_name: string }[]>([])
-  const [customers, setCustomers] = useState<{ id: string, company_name: string }[]>([])
+  const [customers, setCustomers] = useState<{ 
+    id: string
+    company_name: string
+    contact_person: string | null
+    phone: string | null
+    address: string | null
+  }[]>([])
   const [showCreateModal, setShowCreateModal] = useState(false)
   const [selectedJob, setSelectedJob] = useState<Job | null>(null)
   const [showDetailModal, setShowDetailModal] = useState(false)
@@ -84,7 +90,9 @@ export function SchedulingPanel({ userRole }: SchedulingPanelProps) {
     job_code: '',
     job_type: 'Lắp đặt mới',
     start_date: '',
+    end_date: '',
     start_time: '',
+    end_time: '',
     customer_id: '',
     technician_ids: [] as string[], // Changed to array
     notes: ''
@@ -299,7 +307,17 @@ export function SchedulingPanel({ userRole }: SchedulingPanelProps) {
     setIsSubmitting(true)
     try {
       const startDateTime = new Date(`${newItem.start_date}T${newItem.start_time || '09:00'}:00`).toISOString()
-      const endDateTime = new Date(new Date(startDateTime).getTime() + 2 * 60 * 60 * 1000).toISOString()
+      
+      let endDateTime: string;
+      const targetEndDate = newItem.end_date ? newItem.end_date : newItem.start_date;
+      
+      if (newItem.end_time) {
+         endDateTime = new Date(`${targetEndDate}T${newItem.end_time}:00`).toISOString()
+      } else {
+         // Default to 2 hours if not provided (on the same day or next day dependent on time)
+         // But here we simply add 2 hours to start time
+         endDateTime = new Date(new Date(startDateTime).getTime() + 2 * 60 * 60 * 1000).toISOString()
+      }
 
       const payload = {
         job_code: newItem.job_code,
@@ -328,7 +346,9 @@ export function SchedulingPanel({ userRole }: SchedulingPanelProps) {
         job_code: '',
         job_type: 'Lắp đặt mới',
         start_date: '',
+        end_date: '',
         start_time: '',
+        end_time: '',
         customer_id: '',
         technician_ids: [],
         notes: ''
@@ -604,6 +624,7 @@ export function SchedulingPanel({ userRole }: SchedulingPanelProps) {
             <DialogTitle>Tạo lịch hẹn mới</DialogTitle>
           </DialogHeader>
           <div className="space-y-4 py-4">
+
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
                 <label className="text-sm font-medium">Mã công việc</label>
@@ -643,7 +664,34 @@ export function SchedulingPanel({ userRole }: SchedulingPanelProps) {
               </select>
             </div>
 
-            <div className="grid grid-cols-2 gap-4">
+            {/* Customer Details Display - Derived from selection */}
+            {newItem.customer_id && (() => {
+               const selectedCustomer = customers.find(c => c.id === newItem.customer_id);
+               return (
+                 <div className="grid grid-cols-3 gap-4 p-3 bg-muted/30 rounded-lg border border-border/50">
+                    <div className="space-y-1">
+                      <span className="text-xs text-muted-foreground font-medium">Tên khách hàng</span>
+                      <div className="font-medium text-sm truncate" title={selectedCustomer?.contact_person || ''}>
+                        {selectedCustomer?.contact_person || '--'}
+                      </div>
+                    </div>
+                    <div className="space-y-1">
+                      <span className="text-xs text-muted-foreground font-medium">SĐT liên hệ</span>
+                      <div className="font-medium text-sm truncate" title={selectedCustomer?.phone || ''}>
+                        {selectedCustomer?.phone || '--'}
+                      </div>
+                    </div>
+                    <div className="space-y-1">
+                      <span className="text-xs text-muted-foreground font-medium">Địa chỉ</span>
+                      <div className="font-medium text-sm truncate" title={selectedCustomer?.address || ''}>
+                        {selectedCustomer?.address || '--'}
+                      </div>
+                    </div>
+                 </div>
+               );
+            })()}
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div className="space-y-2">
                 <label className="text-sm font-medium">Ngày bắt đầu</label>
                 <Input
@@ -653,11 +701,31 @@ export function SchedulingPanel({ userRole }: SchedulingPanelProps) {
                 />
               </div>
               <div className="space-y-2">
+                <label className="text-sm font-medium">Ngày kết thúc</label>
+                <Input
+                  type="date"
+                  value={newItem.end_date}
+                  placeholder={newItem.start_date || "Ngày kết thúc"}
+                  onChange={(e) => setNewItem({ ...newItem, end_date: e.target.value })}
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="space-y-2">
                 <label className="text-sm font-medium">Giờ bắt đầu</label>
                 <Input
                   type="time"
                   value={newItem.start_time}
                   onChange={(e) => setNewItem({ ...newItem, start_time: e.target.value })}
+                />
+              </div>
+              <div className="space-y-2">
+                <label className="text-sm font-medium">Giờ kết thúc</label>
+                <Input
+                  type="time"
+                  value={newItem.end_time}
+                  onChange={(e) => setNewItem({ ...newItem, end_time: e.target.value })}
                 />
               </div>
             </div>
@@ -874,6 +942,33 @@ export function SchedulingPanel({ userRole }: SchedulingPanelProps) {
                       </select>
                     </div>
                   </div>
+
+                  {/* Customer Details Display - Derived from selection */}
+                  {editItem.customer_id && (() => {
+                     const selectedCustomer = customers.find(c => c.id === editItem.customer_id);
+                     return (
+                       <div className="grid grid-cols-3 gap-4 p-3 bg-muted/30 rounded-lg border border-border/50">
+                          <div className="space-y-1">
+                            <span className="text-xs text-muted-foreground font-medium">Tên khách hàng</span>
+                            <div className="font-medium text-sm truncate" title={selectedCustomer?.contact_person || ''}>
+                              {selectedCustomer?.contact_person || '--'}
+                            </div>
+                          </div>
+                          <div className="space-y-1">
+                            <span className="text-xs text-muted-foreground font-medium">SĐT liên hệ</span>
+                            <div className="font-medium text-sm truncate" title={selectedCustomer?.phone || ''}>
+                              {selectedCustomer?.phone || '--'}
+                            </div>
+                          </div>
+                          <div className="space-y-1">
+                            <span className="text-xs text-muted-foreground font-medium">Địa chỉ</span>
+                            <div className="font-medium text-sm truncate" title={selectedCustomer?.address || ''}>
+                              {selectedCustomer?.address || '--'}
+                            </div>
+                          </div>
+                       </div>
+                     );
+                  })()}
 
                   <div className="space-y-2">
                     <label className="text-xs font-bold uppercase text-muted-foreground">Phân công kỹ thuật</label>
