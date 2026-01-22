@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useEffect, useMemo, useCallback, useRef } from "react"
-import { Plus, ChevronLeft, ChevronRight, X, Search, Clock, Calendar, Briefcase, User, FileText, ClipboardList, CheckCircle2, AlertCircle } from "lucide-react"
+import { Plus, ChevronLeft, ChevronRight, X, Search, Clock, Calendar, Briefcase, User, FileText, ClipboardList, CheckCircle2, AlertCircle, Flag } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
@@ -17,6 +17,7 @@ interface Job {
   job_type: string
   scheduled_start_time: string | null
   scheduled_end_time: string | null
+  actual_end_time?: string | null
   status: string
   customer_id: string
   assigned_technician_id?: string | null
@@ -54,6 +55,14 @@ interface Job {
   }[]
 }
 
+// Helper to get local date string YYYY-MM-DD
+const getLocalDateString = (date: Date) => {
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
 export function SchedulingPanel({ userRole }: SchedulingPanelProps) {
   const [jobs, setJobs] = useState<Job[]>([])
   const [technicians, setTechnicians] = useState<{ id: string, full_name: string }[]>([])
@@ -78,7 +87,8 @@ export function SchedulingPanel({ userRole }: SchedulingPanelProps) {
     customer_id: '',
     technician_ids: [] as string[],
     notes: '',
-    status: ''
+    status: '',
+    end_date: ''
   })
 
   // Calendar State
@@ -90,9 +100,7 @@ export function SchedulingPanel({ userRole }: SchedulingPanelProps) {
     job_code: '',
     job_type: 'Lắp đặt mới',
     start_date: '',
-    end_date: '',
     start_time: '',
-    end_time: '',
     customer_id: '',
     technician_ids: [] as string[], // Changed to array
     notes: ''
@@ -142,6 +150,7 @@ export function SchedulingPanel({ userRole }: SchedulingPanelProps) {
       if (res.ok) {
         const data = await res.json()
         setSelectedJob(data.job)
+        setIsEditMode(false) // Reset edit mode when viewing a new job
       } else {
         alert("Không thể tải chi tiết công việc")
         setShowDetailModal(false)
@@ -205,9 +214,18 @@ export function SchedulingPanel({ userRole }: SchedulingPanelProps) {
 
   const startEditing = () => {
     if (!selectedJob) return
-    const startDate = selectedJob.scheduled_start_time ? new Date(selectedJob.scheduled_start_time).toISOString().split('T')[0] : ''
+    const startDate = selectedJob.scheduled_start_time ? getLocalDateString(new Date(selectedJob.scheduled_start_time)) : ''
     const startTime = selectedJob.scheduled_start_time ? new Date(selectedJob.scheduled_start_time).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', hour12: false }) : '09:00'
-    const endTime = selectedJob.scheduled_end_time ? new Date(selectedJob.scheduled_end_time).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', hour12: false }) : '11:00'
+    const endTime = (selectedJob.status === 'Ho_n_t_t___n' || selectedJob.status === 'Hoàn tất đơn') && selectedJob.actual_end_time 
+      ? new Date(selectedJob.actual_end_time).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', hour12: false })
+      : selectedJob.scheduled_end_time 
+        ? new Date(selectedJob.scheduled_end_time).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', hour12: false }) 
+        : '11:00'
+    const endDate = (selectedJob.status === 'Ho_n_t_t___n' || selectedJob.status === 'Hoàn tất đơn') && selectedJob.actual_end_time
+      ? getLocalDateString(new Date(selectedJob.actual_end_time))
+      : selectedJob.scheduled_end_time 
+        ? getLocalDateString(new Date(selectedJob.scheduled_end_time))
+        : startDate
 
     const currentTechIds = selectedJob.job_technicians?.map(jt => jt.users.id) ||
       (selectedJob.assigned_technician_id ? [selectedJob.assigned_technician_id] : [])
@@ -221,7 +239,11 @@ export function SchedulingPanel({ userRole }: SchedulingPanelProps) {
       customer_id: selectedJob.customer_id,
       technician_ids: currentTechIds,
       notes: selectedJob.notes || '',
-      status: selectedJob.status === 'ph_n_c_ng' ? 'Mới' : selectedJob.status === 'Ho_n_th_nh' ? 'Hoàn thành' : 'Đang xử lý'
+      status: (selectedJob.status === 'ph_n_c_ng' || selectedJob.status === 'Đã phân công') ? 'Đã phân công' : 
+              (selectedJob.status === 'Ch_duy_t' || selectedJob.status === 'Chờ duyệt') ? 'Chờ duyệt' : 
+              (selectedJob.status === 'Ho_n_th_nh' || selectedJob.status === 'Đã duyệt') ? 'Đã duyệt' : 
+              (selectedJob.status === 'Ho_n_t_t___n' || selectedJob.status === 'Hoàn tất đơn') ? 'Hoàn tất đơn' : 'Chờ duyệt',
+      end_date: endDate
     })
     setIsEditMode(true)
   }
@@ -308,16 +330,9 @@ export function SchedulingPanel({ userRole }: SchedulingPanelProps) {
     try {
       const startDateTime = new Date(`${newItem.start_date}T${newItem.start_time || '09:00'}:00`).toISOString()
       
-      let endDateTime: string;
-      const targetEndDate = newItem.end_date ? newItem.end_date : newItem.start_date;
-      
-      if (newItem.end_time) {
-         endDateTime = new Date(`${targetEndDate}T${newItem.end_time}:00`).toISOString()
-      } else {
-         // Default to 2 hours if not provided (on the same day or next day dependent on time)
-         // But here we simply add 2 hours to start time
-         endDateTime = new Date(new Date(startDateTime).getTime() + 2 * 60 * 60 * 1000).toISOString()
-      }
+      // Default to 2 hours after start for planning purposes
+      const endDateTime = new Date(new Date(startDateTime).getTime() + 2 * 60 * 60 * 1000).toISOString()
+
 
       const payload = {
         job_code: newItem.job_code,
@@ -345,10 +360,8 @@ export function SchedulingPanel({ userRole }: SchedulingPanelProps) {
       setNewItem({
         job_code: '',
         job_type: 'Lắp đặt mới',
-        start_date: '',
-        end_date: '',
+        start_date: getLocalDateString(selectedDate),
         start_time: '',
-        end_time: '',
         customer_id: '',
         technician_ids: [],
         notes: ''
@@ -402,9 +415,14 @@ export function SchedulingPanel({ userRole }: SchedulingPanelProps) {
     // Normalize status to handle both Vietnamese text and enum values
     const normalizedStatus = status.trim()
 
-    // Check for completed status (both formats)
-    if (normalizedStatus === 'Ho_n_th_nh' || normalizedStatus === 'Hoàn thành') {
+    // Check for "Đã duyệt" (Approved) status
+    if (normalizedStatus === 'Ho_n_th_nh' || normalizedStatus === 'Hoàn thành' || normalizedStatus === 'Đã duyệt') {
       return 'bg-green-100 border-l-4 border-l-green-500 border-y border-r border-green-400 text-green-900 dark:bg-green-900/30 dark:border-l-green-500 dark:border-y dark:border-r dark:border-green-600 dark:text-green-200'
+    }
+
+    // Check for "Hoàn tất đơn" (Completed) status
+    if (normalizedStatus === 'Ho_n_t_t___n' || normalizedStatus === 'Hoàn tất đơn') {
+      return 'bg-slate-100 border-l-4 border-l-slate-600 border-y border-r border-slate-400 text-slate-900 dark:bg-slate-800/50 dark:border-l-slate-600 dark:border-y dark:border-r dark:border-slate-600 dark:text-slate-200'
     }
 
     // Check for pending approval (both formats)
@@ -428,9 +446,14 @@ export function SchedulingPanel({ userRole }: SchedulingPanelProps) {
 
     const normalizedStatus = status.trim()
 
-    // Completed
-    if (normalizedStatus === 'Ho_n_th_nh' || normalizedStatus === 'Hoàn thành') {
+    // Approved / Done
+    if (normalizedStatus === 'Ho_n_th_nh' || normalizedStatus === 'Đã duyệt') {
       return <CheckCircle2 className="w-3 h-3 text-green-600 dark:text-green-400 flex-shrink-0" />
+    }
+
+    // Finalized
+    if (normalizedStatus === 'Ho_n_t_t___n' || normalizedStatus === 'Hoàn tất đơn') {
+      return <Flag className="w-3 h-3 text-slate-600 dark:text-slate-400 flex-shrink-0" />
     }
 
     // Pending approval
@@ -480,13 +503,24 @@ export function SchedulingPanel({ userRole }: SchedulingPanelProps) {
             </div>
             <div className="flex items-center gap-1.5">
               <div className="w-3 h-3 rounded-full bg-green-400 border-2 border-green-600 dark:bg-green-500 dark:border-green-400"></div>
-              <span>Hoàn thành</span>
+              <span>Đã duyệt</span>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <div className="w-3 h-3 rounded-full bg-slate-400 border-2 border-slate-600 dark:bg-slate-500 dark:border-slate-400"></div>
+              <span>Hoàn tất đơn</span>
             </div>
           </div>
         </div>
 
         {canCreateJob && (
-          <Button onClick={() => setShowCreateModal(true)} size="sm" className="gap-2">
+          <Button 
+            onClick={() => {
+              setNewItem(prev => ({ ...prev, start_date: getLocalDateString(selectedDate) }))
+              setShowCreateModal(true)
+            }} 
+            size="sm" 
+            className="gap-2"
+          >
             <Plus className="w-4 h-4" />
             <span className="hidden sm:inline">Tạo lịch hẹn</span>
           </Button>
@@ -558,7 +592,8 @@ export function SchedulingPanel({ userRole }: SchedulingPanelProps) {
                   {dayJobs.map(job => {
                     let colorClass = "bg-slate-400"
                     const s = job.status?.trim()
-                    if (s === 'Ho_n_th_nh' || s === 'Hoàn thành') colorClass = "bg-green-500"
+                    if (s === 'Ho_n_th_nh' || s === 'Hoàn thành' || s === 'Đã duyệt') colorClass = "bg-green-500"
+                    else if (s === 'Ho_n_t_t___n' || s === 'Hoàn tất đơn') colorClass = "bg-slate-600"
                     else if (s === 'Ch_duy_t' || s === 'Chờ duyệt') colorClass = "bg-amber-500"
                     else if (s === 'ph_n_c_ng' || s === 'Đã phân công') colorClass = "bg-blue-500"
 
@@ -701,31 +736,11 @@ export function SchedulingPanel({ userRole }: SchedulingPanelProps) {
                 />
               </div>
               <div className="space-y-2">
-                <label className="text-sm font-medium">Ngày kết thúc</label>
-                <Input
-                  type="date"
-                  value={newItem.end_date}
-                  placeholder={newItem.start_date || "Ngày kết thúc"}
-                  onChange={(e) => setNewItem({ ...newItem, end_date: e.target.value })}
-                />
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div className="space-y-2">
                 <label className="text-sm font-medium">Giờ bắt đầu</label>
                 <Input
                   type="time"
                   value={newItem.start_time}
                   onChange={(e) => setNewItem({ ...newItem, start_time: e.target.value })}
-                />
-              </div>
-              <div className="space-y-2">
-                <label className="text-sm font-medium">Giờ kết thúc</label>
-                <Input
-                  type="time"
-                  value={newItem.end_time}
-                  onChange={(e) => setNewItem({ ...newItem, end_time: e.target.value })}
                 />
               </div>
             </div>
@@ -874,21 +889,17 @@ export function SchedulingPanel({ userRole }: SchedulingPanelProps) {
                     </div>
                     <div className="space-y-2">
                       <label className="text-xs font-bold uppercase text-muted-foreground">Trạng thái</label>
-                      <select
-                        className="w-full h-10 px-3 rounded-md border border-input bg-background text-sm"
+                      <Input
                         value={editItem.status}
-                        onChange={(e) => setEditItem({ ...editItem, status: e.target.value })}
-                      >
-                        <option value="Mới">Đã phân công (Mới)</option>
-                        <option value="Đang xử lý">Chờ duyệt (Đã xong việc)</option>
-                        <option value="Hoàn thành">Hoàn thành (Đã duyệt)</option>
-                      </select>
+                        readOnly
+                        className="bg-muted cursor-not-allowed font-medium"
+                      />
                     </div>
                   </div>
 
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div className="space-y-2">
-                      <label className="text-xs font-bold uppercase text-muted-foreground">Ngày công việc</label>
+                      <label className="text-xs font-bold uppercase text-muted-foreground">Ngày bắt đầu</label>
                       <Input
                         type="date"
                         value={editItem.start_date}
@@ -903,15 +914,28 @@ export function SchedulingPanel({ userRole }: SchedulingPanelProps) {
                         onChange={(e) => setEditItem({ ...editItem, start_time: e.target.value })}
                       />
                     </div>
-                    <div className="space-y-2">
-                      <label className="text-xs font-bold uppercase text-muted-foreground">Giờ kết thúc</label>
-                      <Input
-                        type="time"
-                        value={editItem.end_time}
-                        onChange={(e) => setEditItem({ ...editItem, end_time: e.target.value })}
-                      />
-                    </div>
                   </div>
+
+                  {editItem.status === 'Hoàn tất đơn' && (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <label className="text-xs font-bold uppercase text-muted-foreground">Ngày kết thúc</label>
+                        <Input
+                          type="date"
+                          value={editItem.end_date}
+                          onChange={(e) => setEditItem({ ...editItem, end_date: e.target.value })}
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-xs font-bold uppercase text-muted-foreground">Giờ kết thúc</label>
+                        <Input
+                          type="time"
+                          value={editItem.end_time}
+                          onChange={(e) => setEditItem({ ...editItem, end_time: e.target.value })}
+                        />
+                      </div>
+                    </div>
+                  )}
 
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div className="space-y-2">
@@ -1101,17 +1125,17 @@ export function SchedulingPanel({ userRole }: SchedulingPanelProps) {
                         <div>
                           <p className="text-xs text-muted-foreground uppercase tracking-wider font-semibold">Mã công việc</p>
                           <p className="text-lg font-bold text-primary">{selectedJob.job_code}</p>
-                          <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium mt-1 ${(selectedJob.status === 'Ho_n_th_nh' || selectedJob.status === 'Hoàn thành') ? 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400' :
-                            (selectedJob.status === 'Ch_duy_t' || selectedJob.status === 'Chờ duyệt') ? 'bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-400' :
-                              (selectedJob.status === 'ph_n_c_ng' || selectedJob.status === 'Đã phân công') ? 'bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400' :
-                                (selectedJob.status === 'M_i' || selectedJob.status === 'Mới') ? 'bg-slate-100 text-slate-800 dark:bg-slate-800/50 dark:text-slate-300' :
-                                  'bg-slate-100 text-slate-800 dark:bg-slate-800/50 dark:text-slate-300' // Default
+                          <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium mt-1 ${(selectedJob.status === 'Ho_n_t_t___n' || selectedJob.status === 'Hoàn tất đơn') ? 'bg-slate-100 text-slate-800 dark:bg-slate-800/50 dark:text-slate-300' :
+                             (selectedJob.status === 'Ho_n_th_nh' || selectedJob.status === 'Đã duyệt') ? 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400' :
+                             (selectedJob.status === 'Ch_duy_t' || selectedJob.status === 'Chờ duyệt') ? 'bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-400' :
+                             (selectedJob.status === 'ph_n_c_ng' || selectedJob.status === 'Đã phân công') ? 'bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400' :
+                             'bg-slate-100 text-slate-800 dark:bg-slate-800/50 dark:text-slate-300'
                             }`}>
-                            {(selectedJob.status === 'Ho_n_th_nh' || selectedJob.status === 'Hoàn thành') ? 'Hoàn thành' :
-                              (selectedJob.status === 'Ch_duy_t' || selectedJob.status === 'Chờ duyệt') ? 'Chờ duyệt' :
-                                (selectedJob.status === 'ph_n_c_ng' || selectedJob.status === 'Đã phân công') ? 'Đã phân công' :
-                                  (selectedJob.status === 'M_i' || selectedJob.status === 'Mới') ? 'Mới' :
-                                    selectedJob.status || 'Đang xử lý'}
+                            {(selectedJob.status === 'Ho_n_t_t___n' || selectedJob.status === 'Hoàn tất đơn') ? 'Hoàn tất đơn' :
+                             (selectedJob.status === 'Ho_n_th_nh' || selectedJob.status === 'Đã duyệt') ? 'Đã duyệt' :
+                             (selectedJob.status === 'Ch_duy_t' || selectedJob.status === 'Chờ duyệt') ? 'Chờ duyệt' :
+                             (selectedJob.status === 'ph_n_c_ng' || selectedJob.status === 'Đã phân công') ? 'Đã phân công' :
+                             'Chờ duyệt'}
                           </span>
                         </div>
                       </div>
@@ -1136,8 +1160,18 @@ export function SchedulingPanel({ userRole }: SchedulingPanelProps) {
                             <Clock className="w-3.5 h-3.5" />
                             <span>
                               {selectedJob.scheduled_start_time ? new Date(selectedJob.scheduled_start_time).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }) : '--'}
-                              {' - '}
-                              {selectedJob.scheduled_end_time ? new Date(selectedJob.scheduled_end_time).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }) : '--'}
+                              {(selectedJob.status === 'Ho_n_t_t___n' || selectedJob.status === 'Hoàn tất đơn') && (
+                                <>
+                                  {' - '}
+                                  {selectedJob.actual_end_time 
+                                    ? <span className="font-medium text-slate-900 border-b border-blue-200">
+                                        {new Date(selectedJob.actual_end_time).toLocaleDateString('vi-VN')} {new Date(selectedJob.actual_end_time).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })}
+                                      </span>
+                                    : selectedJob.scheduled_end_time 
+                                      ? new Date(selectedJob.scheduled_end_time).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })
+                                      : '--'}
+                                </>
+                              )}
                             </span>
                           </div>
                         </div>

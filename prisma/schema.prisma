@@ -834,7 +834,8 @@ enum item_type_enum {
 enum job_status_enum {
   ph_n_c_ng  @map("Đã phân công")
   Ch_duy_t   @map("Chờ duyệt")
-  Ho_n_th_nh @map("Hoàn thành")
+  Ho_n_th_nh   @map("Đã duyệt")
+  Ho_n_t_t___n @map("Hoàn tất đơn")
 
   @@schema("public")
 }

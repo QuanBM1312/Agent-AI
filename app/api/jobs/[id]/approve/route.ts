@@ -92,7 +92,6 @@ export async function POST(
       where: { id },
       data: {
         status: "Ho_n_th_nh", // "Hoàn thành" - Completed
-        actual_end_time: new Date(),
       },
       include: {
         customers: true,

@@ -1,9 +1,9 @@
 "use client"
 
-import { useState, useEffect, useCallback, useRef } from "react"
+import { useState, useEffect, useCallback, useRef, useMemo } from "react"
 import Image from "next/image"
 import { Button } from "@/components/ui/button"
-import { Loader2, CheckCircle2, FileText, Mic, Image as ImageIcon, History, Send, X, Square, ChevronLeft, ChevronRight } from "lucide-react"
+import { Loader2, CheckCircle2, FileText, Mic, Image as ImageIcon, History, Send, X, Square, ChevronLeft, ChevronRight, FolderOpen, ChevronDown, CheckCircle } from "lucide-react"
 import { useMediaRecorder } from "@/hooks/use-media-recorder"
 
 interface ReportsPanelProps {
@@ -55,6 +55,7 @@ export function ReportsPanel({ userRole }: ReportsPanelProps) {
   // Media State
   const { isRecording, mediaBlob, startRecording, stopRecording, clearRecording } = useMediaRecorder()
   const [selectedImage, setSelectedImage] = useState<File | null>(null)
+  const [expandedJobs, setExpandedJobs] = useState<Record<string, boolean>>({}) // Accordion state
   const imageInputRef = useRef<HTMLInputElement>(null)
 
   // Form State
@@ -103,6 +104,21 @@ export function ReportsPanel({ userRole }: ReportsPanelProps) {
       setIsLoading(false)
     }
   }, [page])
+
+  // Group reports by job
+  const reportsByJob = useMemo(() => {
+    const map: Record<string, { job: Report['jobs']; reports: Report[] }> = {}
+    reports.forEach(report => {
+      if (!map[report.job_id]) {
+        map[report.job_id] = {
+          job: report.jobs,
+          reports: []
+        }
+      }
+      map[report.job_id].reports.push(report)
+    })
+    return map
+  }, [reports])
 
   useEffect(() => {
     setPage(1)
@@ -200,7 +216,7 @@ export function ReportsPanel({ userRole }: ReportsPanelProps) {
   }
 
   const handleApprove = async (jobId: string) => {
-    if (!confirm("Bạn có chắc chắn muốn duyệt báo cáo này và hoàn thành công việc?")) return
+    if (!confirm("Bạn có chắc chắn muốn duyệt báo cáo này?")) return
 
     try {
       const res = await fetch(`/api/jobs/${jobId}/approve`, {
@@ -208,7 +224,7 @@ export function ReportsPanel({ userRole }: ReportsPanelProps) {
       })
 
       if (res.ok) {
-        alert("Đã duyệt thành công!")
+        alert("Đã duyệt báo cáo thành công!")
         fetchReports() // Refresh list
       } else {
         const err = await res.json()
@@ -218,6 +234,36 @@ export function ReportsPanel({ userRole }: ReportsPanelProps) {
       console.error("Approve error", error)
       alert("Lỗi kết nối")
     }
+  }
+
+  const handleComplete = async (jobId: string) => {
+    if (!confirm("Bạn có chắc chắn muốn HOÀN TẤT ĐƠN này? Hành động này sẽ ghi nhận thời gian kết thúc thực tế.")) return
+
+    try {
+      const res = await fetch(`/api/jobs/${jobId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: "Hoàn tất đơn" })
+      })
+
+      if (res.ok) {
+        alert("Hoàn tất đơn hàng thành công!")
+        fetchReports() // Refresh list
+      } else {
+        const err = await res.json()
+        alert(`Lỗi: ${err.error}`)
+      }
+    } catch (error) {
+      console.error("Complete error", error)
+      alert("Lỗi kết nối")
+    }
+  }
+
+  const toggleJobExpand = (jobId: string) => {
+    setExpandedJobs(prev => ({
+      ...prev,
+      [jobId]: !prev[jobId]
+    }))
   }
 
   return (
@@ -417,81 +463,132 @@ export function ReportsPanel({ userRole }: ReportsPanelProps) {
                 <Loader2 className="w-8 h-8 animate-spin mx-auto mb-2" />
                 Đang tải dữ liệu...
               </div>
-            ) : reports.length === 0 ? (
-              <div className="text-center py-12 text-slate-500 bg-white rounded-xl border border-dashed">
-                <History className="w-8 h-8 mx-auto mb-2 opacity-50" />
-                Chưa có báo cáo nào
-              </div>
             ) : (
-              <div className="grid gap-4">
-                {reports.map((report) => (
-                  // ... existing report card code ...
-                  <div key={report.id} className="bg-white rounded-xl border shadow-sm p-4 hover:shadow-md transition-shadow">
-                    {/* ... report content ... */}
-                    <div className="flex justify-between items-start mb-3">
-                      <div>
-                        <h4 className="font-bold text-slate-800 flex items-center gap-2">
-                          Job: {report.jobs.job_code}
-                          <span className={`text-xs px-2 py-0.5 rounded-full ${(report.jobs.status === 'Ho_n_th_nh' || report.jobs.status === 'Hoàn thành')
-                            ? 'bg-green-100 text-green-700'
-                            : (report.jobs.status === 'Ch_duy_t' || report.jobs.status === 'Chờ duyệt')
-                              ? 'bg-amber-100 text-amber-700'
-                              : 'bg-slate-100 text-slate-600'
+              <div className="grid gap-6">
+                {Object.keys(reportsByJob).map((jobId) => {
+                  const { job, reports: jobReports } = reportsByJob[jobId]
+                  const isExpanded = expandedJobs[jobId]
+
+                  return (
+                    <div key={jobId} className="bg-white rounded-xl border shadow-sm overflow-hidden flex flex-col">
+                      {/* Job Folder Header */}
+                      <div
+                        className={`p-4 flex flex-wrap items-center justify-between gap-4 cursor-pointer transition-colors ${isExpanded ? 'bg-slate-50' : 'hover:bg-slate-50'
+                          }`}
+                        onClick={() => toggleJobExpand(jobId)}
+                      >
+                        <div className="flex items-center gap-4">
+                          <div className={`w-10 h-10 rounded-full flex items-center justify-center ${isExpanded ? 'bg-blue-100 text-blue-600' : 'bg-slate-100 text-slate-500'
                             }`}>
-                            {report.jobs.status === 'Ho_n_th_nh' ? 'Hoàn thành' :
-                              report.jobs.status === 'Ch_duy_t' ? 'Chờ duyệt' : report.jobs.status}
-                          </span>
-                        </h4>
-                        <p className="text-sm font-medium text-slate-600 mt-1">{report.jobs.customers?.company_name}</p>
-                      </div>
-                      <div className="text-right">
-                        <p className="text-xs text-slate-500">Tạo bởi: <span className="font-medium text-slate-700">{report.users.full_name}</span></p>
-                        <p className="text-xs text-slate-400">{new Date(report.timestamp).toLocaleString()}</p>
-                      </div>
-                    </div>
-
-                    <div className="grid md:grid-cols-2 gap-4 mb-4 bg-slate-50 p-3 rounded-lg text-sm">
-                      <div>
-                        <span className="font-medium text-slate-500 block mb-1">Vấn đề:</span>
-                        <p className="text-slate-800">{report.problem_summary}</p>
-                      </div>
-                      <div>
-                        <span className="font-medium text-slate-500 block mb-1">Đã xử lý:</span>
-                        <p className="text-slate-800">{report.actions_taken || "-"}</p>
-                      </div>
-                    </div>
-
-                    {/* Attachments */}
-                    {(report.image_urls.length > 0 || report.voice_message_url) && (
-                      <div className="flex gap-2 mb-4 flex-wrap">
-                        {report.image_urls.map((img, idx) => (
-                          <a key={idx} href={img} target="_blank" rel="noopener noreferrer" className="relative group block w-16 h-16 rounded border overflow-hidden">
-                            <Image src={img} alt="Evidence" width={64} height={64} className="w-full h-full object-cover" />
-                          </a>
-                        ))}
-                        {report.voice_message_url && (
-                          <div className="flex items-center gap-1 text-xs bg-purple-50 text-purple-700 px-2 py-1 rounded border border-purple-100 h-8 mt-auto">
-                            <Mic className="w-3 h-3" />
-                            <a href={report.voice_message_url} target="_blank" rel="noreferrer" className="hover:underline">Voice Memo</a>
+                            <FolderOpen className="w-5 h-5" />
                           </div>
-                        )}
-                      </div>
-                    )}
+                          <div>
+                            <div className="flex items-center gap-2">
+                              <h4 className="font-bold text-slate-800">Job: {job.job_code}</h4>
+                              <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold uppercase tracking-wider ${(job.status === 'Ho_n_th_nh' || job.status === 'Đã duyệt')
+                                ? 'bg-green-100 text-green-700'
+                                : (job.status === 'Ch_duy_t' || job.status === 'Chờ duyệt')
+                                  ? 'bg-amber-100 text-amber-700'
+                                  : (job.status === 'Ho_n_t_t___n' || job.status === 'Hoàn tất đơn')
+                                    ? 'bg-slate-100 text-slate-600'
+                                    : 'bg-blue-100 text-blue-700'
+                                }`}>
+                                {job.status === 'Ho_n_th_nh' || job.status === 'Đã duyệt' ? 'Đã duyệt' :
+                                  job.status === 'Ch_duy_t' || job.status === 'Chờ duyệt' ? 'Chờ duyệt' :
+                                    job.status === 'Ho_n_t_t___n' || job.status === 'Hoàn tất đơn' ? 'Hoàn tất đơn' :
+                                      job.status === 'ph_n_c_ng' || job.status === 'Đã phân công' ? 'Mới' : job.status}
+                              </span>
+                            </div>
+                            <p className="text-sm font-medium text-slate-600">{job.customers?.company_name}</p>
+                          </div>
+                        </div>
 
-                    {/* Actions (Only for Review Tab and Pending Jobs) */}
-                    {activeTab === "review" && (report.jobs.status === "Ch_duy_t" || report.jobs.status === "Chờ duyệt") && (
-                      <div className="flex justify-end pt-3 border-t">
-                        <Button
-                          onClick={() => handleApprove(report.job_id)}
-                          className="bg-green-600 hover:bg-green-700 text-white gap-2"
-                        >
-                          <CheckCircle2 className="w-4 h-4" />
-                          Duyệt & Hoàn thành
-                        </Button>
+                        <div className="flex items-center gap-3">
+                          <div className="text-right hidden sm:block">
+                            <p className="text-xs font-semibold text-slate-500">{jobReports.length} báo cáo</p>
+                            <p className="text-[10px] text-slate-400">Cập nhật: {new Date(jobReports[0].timestamp).toLocaleDateString()}</p>
+                          </div>
+
+                          <div className="flex items-center gap-2" onClick={e => e.stopPropagation()}>
+                            {/* Actions for Managers/Admins */}
+                            {isManagerOrAdmin && activeTab === "review" && (
+                              <>
+                                {(job.status === "Ch_duy_t" || job.status === "Chờ duyệt") && (
+                                  <Button
+                                    size="sm"
+                                    onClick={() => handleApprove(jobId)}
+                                    className="bg-green-600 hover:bg-green-700 text-white gap-2 shadow-sm"
+                                  >
+                                    <CheckCircle2 className="w-3.5 h-3.5" />
+                                    Duyệt báo cáo
+                                  </Button>
+                                )}
+                                {(job.status === "Ho_n_th_nh" || job.status === "Đã duyệt") && (
+                                  <Button
+                                    size="sm"
+                                    onClick={() => handleComplete(jobId)}
+                                    className="bg-blue-600 hover:bg-blue-700 text-white gap-2 shadow-sm"
+                                  >
+                                    <CheckCircle className="w-3.5 h-3.5" />
+                                    Hoàn tất đơn
+                                  </Button>
+                                )}
+                              </>
+                            )}
+                            <ChevronDown className={`w-5 h-5 text-slate-400 transition-transform duration-200 ${isExpanded ? 'rotate-180' : ''}`} />
+                          </div>
+                        </div>
                       </div>
-                    )}
-                  </div>
-                ))}
+
+                      {/* Expanded Reports Area */}
+                      {isExpanded && (
+                        <div className="border-t bg-slate-50/50 p-4 space-y-4 animate-in slide-in-from-top-2 duration-200">
+                          {jobReports.map((report: Report) => (
+                            <div key={report.id} className="bg-white rounded-lg border shadow-sm p-4">
+                              <div className="flex justify-between items-start mb-3 pb-2 border-b border-slate-100">
+                                <div>
+                                  <p className="text-xs text-slate-500">Người báo cáo: <span className="font-semibold text-slate-700">{report.users.full_name}</span></p>
+                                  <p className="text-[10px] text-slate-400">{new Date(report.timestamp).toLocaleString()}</p>
+                                </div>
+                              </div>
+
+                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4 text-sm">
+                                <div>
+                                  <span className="text-[10px] font-bold uppercase text-slate-400 block mb-1">Vấn đề:</span>
+                                  <p className="text-slate-800 leading-relaxed">{report.problem_summary}</p>
+                                </div>
+                                <div>
+                                  <span className="text-[10px] font-bold uppercase text-slate-400 block mb-1">Đã xử lý:</span>
+                                  <p className="text-slate-800 leading-relaxed">{report.actions_taken || "-"}</p>
+                                </div>
+                              </div>
+
+                              {/* Attachments */}
+                              {(report.image_urls.length > 0 || report.voice_message_url) && (
+                                <div className="flex gap-2 flex-wrap pt-2">
+                                  {report.image_urls.map((img: string, idx: number) => (
+                                    <a key={idx} href={img} target="_blank" rel="noopener noreferrer" className="relative group block w-16 h-16 rounded-md border overflow-hidden hover:ring-2 hover:ring-blue-500 transition-all">
+                                      <Image src={img} alt="Evidence" width={64} height={64} className="w-full h-full object-cover" />
+                                      <div className="absolute inset-0 bg-black/20 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
+                                        <ImageIcon className="w-4 h-4 text-white" />
+                                      </div>
+                                    </a>
+                                  ))}
+                                  {report.voice_message_url && (
+                                    <div className="flex items-center gap-2 text-xs bg-purple-50 text-purple-700 px-3 py-1.5 rounded-full border border-purple-100 hover:bg-purple-100 transition-colors cursor-pointer self-end">
+                                      <Mic className="w-3.5 h-3.5" />
+                                      <a href={report.voice_message_url} target="_blank" rel="noreferrer" className="font-semibold uppercase tracking-tighter">Voice Memo</a>
+                                    </div>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )
+                })}
 
                 {/* Pagination Controls */}
                 {totalPages > 1 && (

@@ -181,10 +181,21 @@ export async function PATCH(
     };
 
     const statusMap: Record<string, string> = {
-      "Mới": "ph_n_c_ng",
-      "Đang xử lý": "Ch_duy_t",
-      "Hoàn thành": "Ho_n_th_nh"
+      "Đã phân công": "ph_n_c_ng",
+      "Chờ duyệt": "Ch_duy_t",
+      "Đã duyệt": "Ho_n_th_nh",
+      "Hoàn tất đơn": "Ho_n_t_t___n"
     };
+
+    // Fetch existing job to check current status
+    const existingJob = await db.jobs.findUnique({
+      where: { id },
+      select: { status: true }
+    });
+
+    if (!existingJob) {
+      return NextResponse.json({ error: "Job not found" }, { status: 404 });
+    }
 
     // Update job in a transaction to handle technicians
     const updatedJob = await db.$transaction(async (tx: unknown) => {
@@ -197,7 +208,14 @@ export async function PATCH(
       if (scheduled_start_time) data.scheduled_start_time = new Date(scheduled_start_time);
       if (scheduled_end_time) data.scheduled_end_time = new Date(scheduled_end_time);
       if (notes !== undefined) data.notes = notes;
-      if (status) data.status = statusMap[status] || status;
+      if (status) {
+        const newStatus = statusMap[status] || status;
+        data.status = newStatus;
+        // If transitioning TO completed status for the first time
+        if (newStatus === "Ho_n_t_t___n" && (existingJob.status as string) !== "Ho_n_t_t___n") {
+           data.actual_end_time = new Date();
+        }
+      }
 
       // Handle technicians
       if (assigned_technician_ids !== undefined) {
