@@ -885,6 +885,7 @@ export function SchedulingPanel({ userRole }: SchedulingPanelProps) {
                       <Input
                         value={editItem.job_code}
                         onChange={(e) => setEditItem({ ...editItem, job_code: e.target.value })}
+                        disabled={editItem.status === 'Ho_n_t_t___n' || editItem.status === 'Hoàn tất đơn'} 
                       />
                     </div>
                     <div className="space-y-2">
@@ -904,6 +905,7 @@ export function SchedulingPanel({ userRole }: SchedulingPanelProps) {
                         type="date"
                         value={editItem.start_date}
                         onChange={(e) => setEditItem({ ...editItem, start_date: e.target.value })}
+                        disabled={editItem.status === 'Ho_n_t_t___n' || editItem.status === 'Hoàn tất đơn'}
                       />
                     </div>
                     <div className="space-y-2">
@@ -912,6 +914,7 @@ export function SchedulingPanel({ userRole }: SchedulingPanelProps) {
                         type="time"
                         value={editItem.start_time}
                         onChange={(e) => setEditItem({ ...editItem, start_time: e.target.value })}
+                        disabled={editItem.status === 'Ho_n_t_t___n' || editItem.status === 'Hoàn tất đơn'}
                       />
                     </div>
                   </div>
@@ -944,6 +947,7 @@ export function SchedulingPanel({ userRole }: SchedulingPanelProps) {
                         className="w-full h-10 px-3 rounded-md border border-input bg-background text-sm"
                         value={editItem.customer_id}
                         onChange={(e) => setEditItem({ ...editItem, customer_id: e.target.value })}
+                        disabled={editItem.status === 'Ho_n_t_t___n' || editItem.status === 'Hoàn tất đơn'}
                       >
                         <option value="">-- Chọn khách hàng --</option>
                         {customers.map(cust => (
@@ -959,6 +963,7 @@ export function SchedulingPanel({ userRole }: SchedulingPanelProps) {
                         className="w-full h-10 px-3 rounded-md border border-input bg-background text-sm"
                         value={editItem.job_type}
                         onChange={(e) => setEditItem({ ...editItem, job_type: e.target.value })}
+                        disabled={editItem.status === 'Ho_n_t_t___n' || editItem.status === 'Hoàn tất đơn'}
                       >
                         <option value="Lắp đặt mới">Lắp đặt mới</option>
                         <option value="Bảo hành">Bảo hành</option>
@@ -1000,8 +1005,12 @@ export function SchedulingPanel({ userRole }: SchedulingPanelProps) {
                     <div className="relative" ref={techListRef}>
                       {/* Search Input & Toggle */}
                       <div
-                        className="relative cursor-pointer"
-                        onClick={() => setIsTechListOpen(!isTechListOpen)}
+                        className={`relative ${!(editItem.status === 'Ho_n_t_t___n' || editItem.status === 'Hoàn tất đơn') ? 'cursor-pointer' : 'cursor-not-allowed opacity-70'}`}
+                        onClick={() => {
+                           if (!(editItem.status === 'Ho_n_t_t___n' || editItem.status === 'Hoàn tất đơn')) {
+                              setIsTechListOpen(!isTechListOpen)
+                           }
+                        }}
                       >
                         <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
                         <Input
@@ -1071,16 +1080,21 @@ export function SchedulingPanel({ userRole }: SchedulingPanelProps) {
                           return tech ? (
                             <div key={techId} className="group flex items-center gap-1.5 bg-secondary hover:bg-secondary/80 text-secondary-foreground pl-2.5 pr-1 py-1 rounded-full text-xs font-medium transition-colors border border-transparent hover:border-border">
                               <span>{tech.full_name}</span>
-                              <button
+                                <button
                                 type="button"
                                 onClick={(e) => {
                                   e.stopPropagation()
-                                  setEditItem({
-                                    ...editItem,
-                                    technician_ids: editItem.technician_ids.filter(id => id !== techId)
-                                  })
+                                  // Disable removal if completed
+                                  if (!(editItem.status === 'Ho_n_t_t___n' || editItem.status === 'Hoàn tất đơn')) {
+                                    setEditItem({
+                                      ...editItem,
+                                      technician_ids: editItem.technician_ids.filter(id => id !== techId)
+                                    })
+                                  }
                                 }}
-                                className="hover:bg-destructive hover:text-destructive-foreground rounded-full p-0.5 transition-colors"
+                                className={`hover:bg-destructive hover:text-destructive-foreground rounded-full p-0.5 transition-colors ${
+                                   (editItem.status === 'Ho_n_t_t___n' || editItem.status === 'Hoàn tất đơn') ? 'hidden' : ''
+                                }`}
                               >
                                 <X className="w-3 h-3" />
                               </button>
@@ -1094,16 +1108,23 @@ export function SchedulingPanel({ userRole }: SchedulingPanelProps) {
                   <div className="space-y-2">
                     <label className="text-xs font-bold uppercase text-muted-foreground">Ghi chú</label>
                     <Input
-                      value={editItem.notes}
-                      onChange={(e) => setEditItem({ ...editItem, notes: e.target.value })}
+                       value={editItem.notes}
+                       onChange={(e) => setEditItem({ ...editItem, notes: e.target.value })}
+                       disabled={editItem.status === 'Ho_n_t_t___n' || editItem.status === 'Hoàn tất đơn'}
                     />
                   </div>
 
                   <div className="flex gap-2 pt-4">
-                    <Button variant="outline" className="flex-1" onClick={() => setIsEditMode(false)}>Hủy</Button>
-                    <Button className="flex-1" onClick={handleUpdate} disabled={isSubmitting}>
-                      {isSubmitting ? "Đang lưu..." : "Lưu thay đổi"}
-                    </Button>
+                    {(editItem.status === 'Ho_n_t_t___n' || editItem.status === 'Hoàn tất đơn') ? (
+                       <Button className="w-full" onClick={() => setIsEditMode(false)}>Đóng</Button>
+                    ) : (
+                       <>
+                         <Button variant="outline" className="flex-1" onClick={() => setIsEditMode(false)}>Hủy</Button>
+                         <Button className="flex-1" onClick={handleUpdate} disabled={isSubmitting}>
+                           {isSubmitting ? "Đang lưu..." : "Lưu thay đổi"}
+                         </Button>
+                       </>
+                    )}
                   </div>
                 </div>
               ) : (
@@ -1111,10 +1132,17 @@ export function SchedulingPanel({ userRole }: SchedulingPanelProps) {
                 <>
                   <div className="flex justify-end mb-2">
                     {canCreateJob && (
-                      <Button variant="outline" size="sm" onClick={startEditing} className="gap-2">
-                        <Plus className="w-3.5 h-3.5" />
-                        Chỉnh sửa
-                      </Button>
+                       (selectedJob.status === 'Ho_n_t_t___n' || selectedJob.status === 'Hoàn tất đơn') ? (
+                          <Button variant="outline" size="sm" onClick={startEditing} className="gap-2">
+                             <FileText className="w-3.5 h-3.5" />
+                             Xem chi tiết
+                          </Button>
+                       ) : (
+                          <Button variant="outline" size="sm" onClick={startEditing} className="gap-2">
+                             <Plus className="w-3.5 h-3.5" />
+                             Chỉnh sửa
+                          </Button>
+                       )
                     )}
                   </div>
                   {/* Top Summary */}
@@ -1125,18 +1153,23 @@ export function SchedulingPanel({ userRole }: SchedulingPanelProps) {
                         <div>
                           <p className="text-xs text-muted-foreground uppercase tracking-wider font-semibold">Mã công việc</p>
                           <p className="text-lg font-bold text-primary">{selectedJob.job_code}</p>
-                          <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium mt-1 ${(selectedJob.status === 'Ho_n_t_t___n' || selectedJob.status === 'Hoàn tất đơn') ? 'bg-slate-100 text-slate-800 dark:bg-slate-800/50 dark:text-slate-300' :
-                             (selectedJob.status === 'Ho_n_th_nh' || selectedJob.status === 'Đã duyệt') ? 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400' :
-                             (selectedJob.status === 'Ch_duy_t' || selectedJob.status === 'Chờ duyệt') ? 'bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-400' :
-                             (selectedJob.status === 'ph_n_c_ng' || selectedJob.status === 'Đã phân công') ? 'bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400' :
-                             'bg-slate-100 text-slate-800 dark:bg-slate-800/50 dark:text-slate-300'
-                            }`}>
-                            {(selectedJob.status === 'Ho_n_t_t___n' || selectedJob.status === 'Hoàn tất đơn') ? 'Hoàn tất đơn' :
-                             (selectedJob.status === 'Ho_n_th_nh' || selectedJob.status === 'Đã duyệt') ? 'Đã duyệt' :
-                             (selectedJob.status === 'Ch_duy_t' || selectedJob.status === 'Chờ duyệt') ? 'Chờ duyệt' :
-                             (selectedJob.status === 'ph_n_c_ng' || selectedJob.status === 'Đã phân công') ? 'Đã phân công' :
-                             'Chờ duyệt'}
-                          </span>
+                          <div className="flex flex-wrap gap-2 mt-1">
+                             <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${(selectedJob.status === 'Ho_n_t_t___n' || selectedJob.status === 'Hoàn tất đơn') ? 'bg-slate-100 text-slate-800 dark:bg-slate-800/50 dark:text-slate-300' :
+                              (selectedJob.status === 'Ho_n_th_nh' || selectedJob.status === 'Đã duyệt') ? 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400' :
+                              (selectedJob.status === 'Ch_duy_t' || selectedJob.status === 'Chờ duyệt') ? 'bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-400' :
+                              (selectedJob.status === 'ph_n_c_ng' || selectedJob.status === 'Đã phân công') ? 'bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400' :
+                              'bg-slate-100 text-slate-800 dark:bg-slate-800/50 dark:text-slate-300'
+                             }`}>
+                             {(selectedJob.status === 'Ho_n_t_t___n' || selectedJob.status === 'Hoàn tất đơn') ? 'Hoàn tất đơn' :
+                              (selectedJob.status === 'Ho_n_th_nh' || selectedJob.status === 'Đã duyệt') ? 'Đã duyệt' :
+                              (selectedJob.status === 'Ch_duy_t' || selectedJob.status === 'Chờ duyệt') ? 'Chờ duyệt' :
+                              (selectedJob.status === 'ph_n_c_ng' || selectedJob.status === 'Đã phân công') ? 'Đã phân công' :
+                              'Chờ duyệt'}
+                           </span>
+                           <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-secondary text-secondary-foreground border border-border">
+                              {selectedJob.job_type === 'L_p___t_m_i' ? 'Lắp đặt mới' : selectedJob.job_type === 'B_o_h_nh' ? 'Bảo hành' : selectedJob.job_type || 'Lắp đặt mới'}
+                           </span>
+                          </div>
                         </div>
                       </div>
                       <div className="flex items-start gap-3">
@@ -1146,6 +1179,16 @@ export function SchedulingPanel({ userRole }: SchedulingPanelProps) {
                           <p className="font-bold">{selectedJob.customers?.company_name}</p>
                         </div>
                       </div>
+                      
+                      {selectedJob.notes && (
+                        <div className="flex items-start gap-3 pt-2 border-t border-border/50">
+                           <Flag className="w-5 h-5 text-muted-foreground mt-0.5" />
+                           <div className="w-full">
+                              <p className="text-xs text-muted-foreground uppercase tracking-wider font-semibold">Ghi chú</p>
+                              <p className="text-sm italic text-slate-700 bg-white p-2 rounded border mt-1 w-full">{selectedJob.notes}</p>
+                           </div>
+                        </div>
+                      )}
                     </div>
 
                     <div className="space-y-4">
@@ -1178,10 +1221,25 @@ export function SchedulingPanel({ userRole }: SchedulingPanelProps) {
                       </div>
                       <div className="flex items-start gap-3">
                         <User className="w-5 h-5 text-muted-foreground mt-0.5" />
-                        <div>
+                        <div className="w-full">
                           <p className="text-xs text-muted-foreground uppercase tracking-wider font-semibold">Kỹ thuật viên</p>
-                          <p className="font-medium">{selectedJob.users_jobs_assigned_technician_idTousers?.full_name || 'Chưa phân công'}</p>
-                          <p className="text-xs text-muted-foreground">{selectedJob.users_jobs_assigned_technician_idTousers?.email}</p>
+                          {selectedJob.job_technicians && selectedJob.job_technicians.length > 0 ? (
+                             <div className="flex flex-col gap-1 mt-1">
+                                {selectedJob.job_technicians.map((jt, idx) => (
+                                   <div key={idx} className="flex items-center gap-2 bg-white px-2 py-1 rounded border shadow-sm">
+                                      <div className="w-5 h-5 rounded-full bg-slate-100 flex items-center justify-center text-[10px] font-bold">
+                                         {jt.users.full_name.charAt(0)}
+                                      </div>
+                                      <span className="text-sm font-medium">{jt.users.full_name}</span>
+                                   </div>
+                                ))}
+                             </div>
+                          ) : (
+                             <>
+                                <p className="font-medium">{selectedJob.users_jobs_assigned_technician_idTousers?.full_name || 'Chưa phân công'}</p>
+                                <p className="text-xs text-muted-foreground">{selectedJob.users_jobs_assigned_technician_idTousers?.email}</p>
+                             </>
+                          )}
                         </div>
                       </div>
                     </div>
