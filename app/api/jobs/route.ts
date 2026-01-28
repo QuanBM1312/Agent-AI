@@ -260,6 +260,14 @@ export async function GET(req: NextRequest) {
 
     const filterFragment = fragments.length > 0 ? Prisma.join(fragments, "") : Prisma.empty;
 
+    // Report Permission Filter for Subquery
+    let reportFilterSql = Prisma.empty;
+    if (currentUser.role === "Technician") {
+       reportFilterSql = Prisma.sql` AND jr.created_by_user_id = ${currentUser.id}`;
+    } else if (currentUser.role === "Manager" && currentUser.department_id) {
+       reportFilterSql = Prisma.sql` AND u.department_id = ${currentUser.department_id}::uuid`;
+    }
+
     // Main Query using Raw SQL
     const jobsResult = await db.$queryRaw<any[]>`
       WITH filtered_jobs AS (
@@ -303,7 +311,26 @@ export async function GET(req: NextRequest) {
           FROM public.job_technicians jt
           JOIN public.users u ON jt.technician_id = u.id
           WHERE jt.job_id = j.id
-        ) as technicians
+        ) as technicians,
+        (
+          SELECT jsonb_agg(jsonb_build_object(
+            'id', jr.id,
+            'job_id', jr.job_id,
+            'problem_summary', jr.problem_summary,
+            'actions_taken', jr.actions_taken,
+            'image_urls', jr.image_urls,
+            'voice_message_url', jr.voice_message_url,
+            'timestamp', jr.timestamp,
+            'created_by_user_id', jr.created_by_user_id,
+            'users', jsonb_build_object(
+              'full_name', u.full_name,
+              'email', u.email
+            )
+          ) ORDER BY jr.timestamp DESC)
+          FROM public.job_reports jr
+          JOIN public.users u ON jr.created_by_user_id = u.id
+          WHERE jr.job_id = j.id${reportFilterSql}
+        ) as job_reports
       FROM filtered_jobs j
       LEFT JOIN public.customers c ON j.customer_id = c.id
       LEFT JOIN public.users u_tech ON j.assigned_technician_id = u_tech.id
@@ -329,6 +356,7 @@ export async function GET(req: NextRequest) {
         } : null,
         job_line_items: j.line_items || [],
         job_technicians: j.technicians || [],
+        job_reports: j.job_reports || [],
       };
 
       // Sales restriction

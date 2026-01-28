@@ -14,9 +14,11 @@ interface Job {
   id: string
   job_code: string
   status: string
+  scheduled_start_time: string
   customers: {
     company_name: string
   }
+  job_reports?: Report[] 
 }
 
 interface Report {
@@ -43,7 +45,7 @@ interface Report {
 export function ReportsPanel({ userRole }: ReportsPanelProps) {
   const [activeTab, setActiveTab] = useState<"create" | "history" | "review">("create")
   const [jobs, setJobs] = useState<Job[]>([])
-  const [reports, setReports] = useState<Report[]>([])
+  const [reports, setReports] = useState<Report[]>([]) // Keep for legacy or specific report view if needed, but mainly use jobs.job_reports
   const [isLoading, setIsLoading] = useState(false)
   const [isSubmitting, setIsSubmitting] = useState(false)
 
@@ -86,39 +88,29 @@ export function ReportsPanel({ userRole }: ReportsPanelProps) {
     }
   }, [])
 
-  // Fetch Reports (history/review)
-  const fetchReports = useCallback(async () => {
+  // Fetch Jobs with Reports (history/review)
+  const fetchJobsWithReports = useCallback(async () => {
     setIsLoading(true)
     try {
-      const res = await fetch(`/api/job-reports?page=${page}&limit=${limit}`)
+      // Fetch jobs with reports included
+      const res = await fetch(`/api/jobs?page=${page}&limit=${limit}`)
       if (res.ok) {
         const data = await res.json()
-        setReports(data.data || [])
+        setJobs(data.data || [])
         if (data.pagination) {
           setTotalPages(data.pagination.totalPages)
         }
       }
     } catch (error) {
-      console.error("Failed to fetch reports", error)
+      console.error("Failed to fetch jobs with reports", error)
     } finally {
       setIsLoading(false)
     }
   }, [page])
 
-  // Group reports by job
-  const reportsByJob = useMemo(() => {
-    const map: Record<string, { job: Report['jobs']; reports: Report[] }> = {}
-    reports.forEach(report => {
-      if (!map[report.job_id]) {
-        map[report.job_id] = {
-          job: report.jobs,
-          reports: []
-        }
-      }
-      map[report.job_id].reports.push(report)
-    })
-    return map
-  }, [reports])
+  // No longer need reportsByJob optimization since structure is nested in jobs
+  // But strictly speaking, the old `reports` state is now unused for history/review tab rendering.
+  // We can remove reportsByJob memo.
 
   useEffect(() => {
     setPage(1)
@@ -126,8 +118,8 @@ export function ReportsPanel({ userRole }: ReportsPanelProps) {
 
   useEffect(() => {
     if (activeTab === "create") fetchJobs()
-    if (activeTab === "history" || activeTab === "review") fetchReports()
-  }, [activeTab, fetchJobs, fetchReports, page])
+    if (activeTab === "history" || activeTab === "review") fetchJobsWithReports()
+  }, [activeTab, fetchJobs, fetchJobsWithReports, page])
 
   const handleImageSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
@@ -162,6 +154,12 @@ export function ReportsPanel({ userRole }: ReportsPanelProps) {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!selectedJobId) return alert("Vui lòng chọn công việc")
+    
+    // Check if job is completed
+    const selectedJob = jobs.find(j => j.id === selectedJobId)
+    if (selectedJob && (selectedJob.status === 'Ho_n_t_t___n' || selectedJob.status === 'Hoàn tất đơn')) {
+      return alert("Công việc này đã hoàn tất, không thể gửi thêm báo cáo.")
+    }
 
     // Check mandatory media requirement
     if (!selectedImage && !mediaBlob) return alert("Vui lòng đính kèm hình ảnh hoặc ghi âm voice báo cáo")
@@ -203,6 +201,7 @@ export function ReportsPanel({ userRole }: ReportsPanelProps) {
         setSelectedJobId("")
         // Switch to history
         setActiveTab("history")
+        // No need to call fetch here as useEffect will trigger on tab change
       } else {
         const err = await res.json()
         alert(`Lỗi: ${err.error}`)
@@ -225,7 +224,8 @@ export function ReportsPanel({ userRole }: ReportsPanelProps) {
 
       if (res.ok) {
         alert("Đã duyệt báo cáo thành công!")
-        fetchReports() // Refresh list
+        alert("Đã duyệt báo cáo thành công!")
+        fetchJobsWithReports() // Refresh list
       } else {
         const err = await res.json()
         alert(`Lỗi: ${err.error}`)
@@ -248,7 +248,8 @@ export function ReportsPanel({ userRole }: ReportsPanelProps) {
 
       if (res.ok) {
         alert("Hoàn tất đơn hàng thành công!")
-        fetchReports() // Refresh list
+        alert("Hoàn tất đơn hàng thành công!")
+        fetchJobsWithReports() // Refresh list
       } else {
         const err = await res.json()
         alert(`Lỗi: ${err.error}`)
@@ -337,11 +338,14 @@ export function ReportsPanel({ userRole }: ReportsPanelProps) {
                   required
                 >
                   <option value="">-- Chọn công việc --</option>
-                  {jobs.map(job => (
-                    <option key={job.id} value={job.id}>
-                      [{job.job_code}] {job.customers?.company_name} ({job.status})
-                    </option>
-                  ))}
+                  {jobs.map(job => {
+                    const isCompleted = job.status === 'Ho_n_t_t___n' || job.status === 'Hoàn tất đơn'
+                    return (
+                      <option key={job.id} value={job.id} disabled={isCompleted}>
+                        [{job.job_code}] {job.customers?.company_name} ({job.status}) {isCompleted ? '-- Đã hoàn tất' : ''}
+                      </option>
+                    )
+                  })}
                 </select>
               </div>
 
@@ -465,17 +469,17 @@ export function ReportsPanel({ userRole }: ReportsPanelProps) {
               </div>
             ) : (
               <div className="grid gap-6">
-                {Object.keys(reportsByJob).map((jobId) => {
-                  const { job, reports: jobReports } = reportsByJob[jobId]
-                  const isExpanded = expandedJobs[jobId]
+                {jobs.map((job) => {
+                  const jobReports = job.job_reports || []
+                  const isExpanded = expandedJobs[job.id]
 
                   return (
-                    <div key={jobId} className="bg-white rounded-xl border shadow-sm overflow-hidden flex flex-col">
+                    <div key={job.id} className="bg-white rounded-xl border shadow-sm overflow-hidden flex flex-col">
                       {/* Job Folder Header */}
                       <div
                         className={`p-4 flex flex-wrap items-center justify-between gap-4 cursor-pointer transition-colors ${isExpanded ? 'bg-slate-50' : 'hover:bg-slate-50'
                           }`}
-                        onClick={() => toggleJobExpand(jobId)}
+                        onClick={() => toggleJobExpand(job.id)}
                       >
                         <div className="flex items-center gap-4">
                           <div className={`w-10 h-10 rounded-full flex items-center justify-center ${isExpanded ? 'bg-blue-100 text-blue-600' : 'bg-slate-100 text-slate-500'
@@ -500,13 +504,20 @@ export function ReportsPanel({ userRole }: ReportsPanelProps) {
                               </span>
                             </div>
                             <p className="text-sm font-medium text-slate-600">{job.customers?.company_name}</p>
+                            {job.scheduled_start_time && (
+                              <p className="text-xs text-slate-400 flex items-center gap-1 mt-1">
+                                <span>Bắt đầu: {new Date(job.scheduled_start_time).toLocaleString()}</span>
+                              </p>
+                            )}
                           </div>
                         </div>
 
                         <div className="flex items-center gap-3">
                           <div className="text-right hidden sm:block">
                             <p className="text-xs font-semibold text-slate-500">{jobReports.length} báo cáo</p>
-                            <p className="text-[10px] text-slate-400">Cập nhật: {new Date(jobReports[0].timestamp).toLocaleDateString()}</p>
+                            {jobReports.length > 0 && (
+                              <p className="text-[10px] text-slate-400">Cập nhật: {new Date(jobReports[0].timestamp).toLocaleDateString()}</p>
+                            )}
                           </div>
 
                           <div className="flex items-center gap-2" onClick={e => e.stopPropagation()}>
@@ -516,7 +527,7 @@ export function ReportsPanel({ userRole }: ReportsPanelProps) {
                                 {(job.status === "Ch_duy_t" || job.status === "Chờ duyệt") && (
                                   <Button
                                     size="sm"
-                                    onClick={() => handleApprove(jobId)}
+                                    onClick={() => handleApprove(job.id)}
                                     className="bg-green-600 hover:bg-green-700 text-white gap-2 shadow-sm"
                                   >
                                     <CheckCircle2 className="w-3.5 h-3.5" />
@@ -526,7 +537,7 @@ export function ReportsPanel({ userRole }: ReportsPanelProps) {
                                 {(job.status === "Ho_n_th_nh" || job.status === "Đã duyệt") && (
                                   <Button
                                     size="sm"
-                                    onClick={() => handleComplete(jobId)}
+                                    onClick={() => handleComplete(job.id)}
                                     className="bg-blue-600 hover:bg-blue-700 text-white gap-2 shadow-sm"
                                   >
                                     <CheckCircle className="w-3.5 h-3.5" />
@@ -543,47 +554,54 @@ export function ReportsPanel({ userRole }: ReportsPanelProps) {
                       {/* Expanded Reports Area */}
                       {isExpanded && (
                         <div className="border-t bg-slate-50/50 p-4 space-y-4 animate-in slide-in-from-top-2 duration-200">
-                          {jobReports.map((report: Report) => (
-                            <div key={report.id} className="bg-white rounded-lg border shadow-sm p-4">
-                              <div className="flex justify-between items-start mb-3 pb-2 border-b border-slate-100">
-                                <div>
-                                  <p className="text-xs text-slate-500">Người báo cáo: <span className="font-semibold text-slate-700">{report.users.full_name}</span></p>
-                                  <p className="text-[10px] text-slate-400">{new Date(report.timestamp).toLocaleString()}</p>
-                                </div>
-                              </div>
-
-                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4 text-sm">
-                                <div>
-                                  <span className="text-[10px] font-bold uppercase text-slate-400 block mb-1">Vấn đề:</span>
-                                  <p className="text-slate-800 leading-relaxed">{report.problem_summary}</p>
-                                </div>
-                                <div>
-                                  <span className="text-[10px] font-bold uppercase text-slate-400 block mb-1">Đã xử lý:</span>
-                                  <p className="text-slate-800 leading-relaxed">{report.actions_taken || "-"}</p>
-                                </div>
-                              </div>
-
-                              {/* Attachments */}
-                              {(report.image_urls.length > 0 || report.voice_message_url) && (
-                                <div className="flex gap-2 flex-wrap pt-2">
-                                  {report.image_urls.map((img: string, idx: number) => (
-                                    <a key={idx} href={img} target="_blank" rel="noopener noreferrer" className="relative group block w-16 h-16 rounded-md border overflow-hidden hover:ring-2 hover:ring-blue-500 transition-all">
-                                      <Image src={img} alt="Evidence" width={64} height={64} className="w-full h-full object-cover" />
-                                      <div className="absolute inset-0 bg-black/20 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
-                                        <ImageIcon className="w-4 h-4 text-white" />
-                                      </div>
-                                    </a>
-                                  ))}
-                                  {report.voice_message_url && (
-                                    <div className="flex items-center gap-2 text-xs bg-purple-50 text-purple-700 px-3 py-1.5 rounded-full border border-purple-100 hover:bg-purple-100 transition-colors cursor-pointer self-end">
-                                      <Mic className="w-3.5 h-3.5" />
-                                      <a href={report.voice_message_url} target="_blank" rel="noreferrer" className="font-semibold uppercase tracking-tighter">Voice Memo</a>
-                                    </div>
-                                  )}
-                                </div>
-                              )}
+                          {jobReports.length === 0 ? (
+                            <div className="text-center py-8 text-slate-400">
+                                <FileText className="w-12 h-12 mx-auto mb-2 opacity-50" />
+                                <p>Chưa có báo cáo nào cho công việc này.</p>
                             </div>
-                          ))}
+                          ) : (
+                            jobReports.map((report: Report) => (
+                              <div key={report.id} className="bg-white rounded-lg border shadow-sm p-4">
+                                <div className="flex justify-between items-start mb-3 pb-2 border-b border-slate-100">
+                                  <div>
+                                    <p className="text-xs text-slate-500">Người báo cáo: <span className="font-semibold text-slate-700">{report.users.full_name}</span></p>
+                                    <p className="text-[10px] text-slate-400">{new Date(report.timestamp).toLocaleString()}</p>
+                                  </div>
+                                </div>
+
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4 text-sm">
+                                  <div>
+                                    <span className="text-[10px] font-bold uppercase text-slate-400 block mb-1">Vấn đề:</span>
+                                    <p className="text-slate-800 leading-relaxed">{report.problem_summary}</p>
+                                  </div>
+                                  <div>
+                                    <span className="text-[10px] font-bold uppercase text-slate-400 block mb-1">Đã xử lý:</span>
+                                    <p className="text-slate-800 leading-relaxed">{report.actions_taken || "-"}</p>
+                                  </div>
+                                </div>
+
+                                {/* Attachments */}
+                                {(report.image_urls.length > 0 || report.voice_message_url) && (
+                                  <div className="flex gap-2 flex-wrap pt-2">
+                                    {report.image_urls.map((img: string, idx: number) => (
+                                      <a key={idx} href={img} target="_blank" rel="noopener noreferrer" className="relative group block w-16 h-16 rounded-md border overflow-hidden hover:ring-2 hover:ring-blue-500 transition-all">
+                                        <Image src={img} alt="Evidence" width={64} height={64} className="w-full h-full object-cover" />
+                                        <div className="absolute inset-0 bg-black/20 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
+                                          <ImageIcon className="w-4 h-4 text-white" />
+                                        </div>
+                                      </a>
+                                    ))}
+                                    {report.voice_message_url && (
+                                      <div className="flex items-center gap-2 text-xs bg-purple-50 text-purple-700 px-3 py-1.5 rounded-full border border-purple-100 hover:bg-purple-100 transition-colors cursor-pointer self-end">
+                                        <Mic className="w-3.5 h-3.5" />
+                                        <a href={report.voice_message_url} target="_blank" rel="noreferrer" className="font-semibold uppercase tracking-tighter">Voice Memo</a>
+                                      </div>
+                                    )}
+                                  </div>
+                                )}
+                              </div>
+                            ))
+                          )}
                         </div>
                       )}
                     </div>
@@ -597,6 +615,7 @@ export function ReportsPanel({ userRole }: ReportsPanelProps) {
                       Trang {page} / {totalPages}
                     </p>
                     <div className="flex gap-2">
+                       {/* Pagination buttons logic remains same, just ensure it affects the 'jobs' fetch via page state */}
                       <Button
                         variant="outline"
                         size="sm"

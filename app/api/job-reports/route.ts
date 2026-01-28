@@ -177,9 +177,14 @@ export async function GET(req: NextRequest) {
     // Build the dynamic WHERE clause fragments
     const fragments: Prisma.Sql[] = [];
     if (jobId) fragments.push(Prisma.sql` AND j_rep.job_id = ${jobId}::uuid`);
+    
+    // Permission Logic
     if (currentUser.role === "Technician") {
       fragments.push(Prisma.sql` AND j_rep.created_by_user_id = ${currentUser.id}`);
+    } else if (currentUser.role === "Manager" && currentUser.department_id) {
+       fragments.push(Prisma.sql` AND u.department_id = ${currentUser.department_id}::uuid`);
     }
+
     if (search) {
       const searchPattern = `%${search}%`;
       fragments.push(Prisma.sql` AND (
