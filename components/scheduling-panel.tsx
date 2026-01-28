@@ -185,7 +185,7 @@ export function SchedulingPanel({ userRole }: SchedulingPanelProps) {
         scheduled_start_time: startDateTime,
         scheduled_end_time: endDateTime,
         notes: editItem.notes,
-        status: editItem.status,
+        status: selectedJob.status,
         assigned_technician_ids: editItem.technician_ids
       }
 
@@ -885,7 +885,7 @@ export function SchedulingPanel({ userRole }: SchedulingPanelProps) {
                       <Input
                         value={editItem.job_code}
                         onChange={(e) => setEditItem({ ...editItem, job_code: e.target.value })}
-                        disabled={editItem.status === 'Ho_n_t_t___n' || editItem.status === 'Hoàn tất đơn'} 
+                        disabled={editItem.status === 'Hoàn tất đơn'} 
                       />
                     </div>
                     <div className="space-y-2">
@@ -905,7 +905,7 @@ export function SchedulingPanel({ userRole }: SchedulingPanelProps) {
                         type="date"
                         value={editItem.start_date}
                         onChange={(e) => setEditItem({ ...editItem, start_date: e.target.value })}
-                        disabled={editItem.status === 'Ho_n_t_t___n' || editItem.status === 'Hoàn tất đơn'}
+                        disabled={editItem.status === 'Hoàn tất đơn'}
                       />
                     </div>
                     <div className="space-y-2">
@@ -914,7 +914,7 @@ export function SchedulingPanel({ userRole }: SchedulingPanelProps) {
                         type="time"
                         value={editItem.start_time}
                         onChange={(e) => setEditItem({ ...editItem, start_time: e.target.value })}
-                        disabled={editItem.status === 'Ho_n_t_t___n' || editItem.status === 'Hoàn tất đơn'}
+                        disabled={editItem.status === 'Hoàn tất đơn'}
                       />
                     </div>
                   </div>
@@ -947,7 +947,7 @@ export function SchedulingPanel({ userRole }: SchedulingPanelProps) {
                         className="w-full h-10 px-3 rounded-md border border-input bg-background text-sm"
                         value={editItem.customer_id}
                         onChange={(e) => setEditItem({ ...editItem, customer_id: e.target.value })}
-                        disabled={editItem.status === 'Ho_n_t_t___n' || editItem.status === 'Hoàn tất đơn'}
+                        disabled={editItem.status === 'Hoàn tất đơn'}
                       >
                         <option value="">-- Chọn khách hàng --</option>
                         {customers.map(cust => (
@@ -963,7 +963,7 @@ export function SchedulingPanel({ userRole }: SchedulingPanelProps) {
                         className="w-full h-10 px-3 rounded-md border border-input bg-background text-sm"
                         value={editItem.job_type}
                         onChange={(e) => setEditItem({ ...editItem, job_type: e.target.value })}
-                        disabled={editItem.status === 'Ho_n_t_t___n' || editItem.status === 'Hoàn tất đơn'}
+                        disabled={editItem.status === 'Hoàn tất đơn'}
                       >
                         <option value="Lắp đặt mới">Lắp đặt mới</option>
                         <option value="Bảo hành">Bảo hành</option>
@@ -1005,9 +1005,9 @@ export function SchedulingPanel({ userRole }: SchedulingPanelProps) {
                     <div className="relative" ref={techListRef}>
                       {/* Search Input & Toggle */}
                       <div
-                        className={`relative ${!(editItem.status === 'Ho_n_t_t___n' || editItem.status === 'Hoàn tất đơn') ? 'cursor-pointer' : 'cursor-not-allowed opacity-70'}`}
+                        className={`relative ${!(editItem.status === 'Hoàn tất đơn') ? 'cursor-pointer' : 'cursor-not-allowed opacity-70'}`}
                         onClick={() => {
-                           if (!(editItem.status === 'Ho_n_t_t___n' || editItem.status === 'Hoàn tất đơn')) {
+                           if (!(editItem.status === 'Hoàn tất đơn')) {
                               setIsTechListOpen(!isTechListOpen)
                            }
                         }}
@@ -1085,7 +1085,7 @@ export function SchedulingPanel({ userRole }: SchedulingPanelProps) {
                                 onClick={(e) => {
                                   e.stopPropagation()
                                   // Disable removal if completed
-                                  if (!(editItem.status === 'Ho_n_t_t___n' || editItem.status === 'Hoàn tất đơn')) {
+                                  if (!(editItem.status === 'Hoàn tất đơn')) {
                                     setEditItem({
                                       ...editItem,
                                       technician_ids: editItem.technician_ids.filter(id => id !== techId)
@@ -1093,7 +1093,7 @@ export function SchedulingPanel({ userRole }: SchedulingPanelProps) {
                                   }
                                 }}
                                 className={`hover:bg-destructive hover:text-destructive-foreground rounded-full p-0.5 transition-colors ${
-                                   (editItem.status === 'Ho_n_t_t___n' || editItem.status === 'Hoàn tất đơn') ? 'hidden' : ''
+                                   (editItem.status === 'Hoàn tất đơn') ? 'hidden' : ''
                                 }`}
                               >
                                 <X className="w-3 h-3" />
@@ -1110,12 +1110,12 @@ export function SchedulingPanel({ userRole }: SchedulingPanelProps) {
                     <Input
                        value={editItem.notes}
                        onChange={(e) => setEditItem({ ...editItem, notes: e.target.value })}
-                       disabled={editItem.status === 'Ho_n_t_t___n' || editItem.status === 'Hoàn tất đơn'}
+                       disabled={editItem.status === 'Hoàn tất đơn'}
                     />
                   </div>
 
                   <div className="flex gap-2 pt-4">
-                    {(editItem.status === 'Ho_n_t_t___n' || editItem.status === 'Hoàn tất đơn') ? (
+                    {(editItem.status === 'Hoàn tất đơn') ? (
                        <Button className="w-full" onClick={() => setIsEditMode(false)}>Đóng</Button>
                     ) : (
                        <>
