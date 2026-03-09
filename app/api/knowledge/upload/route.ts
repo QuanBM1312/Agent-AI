@@ -4,37 +4,31 @@ import { Readable } from 'stream';
 import { db as prisma } from "@/lib/db";
 
 
-async function uploadToGoogleDrive(file: File) {
-  const serviceAccountBase64 = process.env.GOOGLE_SERVICE_ACCOUNT_BASE64;
+export async function uploadToGoogleDrive(
+  file: File,
+  sourceUrl?: string
+): Promise<any> {
+  const clientId = process.env.GOOGLE_OAUTH_CLIENT_ID;
+  const clientSecret = process.env.GOOGLE_OAUTH_CLIENT_SECRET;
+  const refreshToken = process.env.GOOGLE_OAUTH_REFRESH_TOKEN;
   const folderId = process.env.GOOGLE_DRIVE_FOLDER_ID;
-  const userToImpersonate = process.env.GOOGLE_DRIVE_IMPERSONATED_USER_EMAIL;
 
-  if (!serviceAccountBase64 || !folderId || !userToImpersonate) {
-    throw new Error("Missing Google Drive configuration (Env vars)");
+  if (!clientId || !clientSecret || !refreshToken || !folderId) {
+    throw new Error("Missing Google Drive OAuth2 configuration (Env vars)");
   }
 
-  // 1. Decode a key
-  const serviceAccountJson = Buffer.from(
-    serviceAccountBase64,
-    'base64'
-  ).toString('utf-8');
+  // 1. Auth with OAuth2
+  const auth = new google.auth.OAuth2(
+    clientId,
+    clientSecret,
+    "https://developers.google.com/oauthplayground" // redirect URI
+  );
 
-  let credentials;
-  try {
-    credentials = JSON.parse(serviceAccountJson);
-  } catch (e) {
-    throw new Error("Invalid Google Service Account JSON");
-  }
-
-  // 2. Auth
-  const auth = new google.auth.JWT({
-    email: credentials.client_email,
-    key: credentials.private_key,
-    scopes: ['https://www.googleapis.com/auth/drive.file'],
-    subject: userToImpersonate,
-  });
+  auth.setCredentials({ refresh_token: refreshToken });
 
   const drive = google.drive({ version: 'v3', auth });
+
+  console.log(`Starting upload to Google Drive for file: ${file.name}`);
 
   // 3. Prepare content
   const fileBuffer = Buffer.from(await file.arrayBuffer());
@@ -50,10 +44,13 @@ async function uploadToGoogleDrive(file: File) {
       name: file.name,
       parents: [folderId],
     },
-    fields: 'id,name',
+    fields: 'id, name, webViewLink, webContentLink',
   });
 
-  return response.data;
+  const fileData = response.data;
+  console.log(`Successfully uploaded. File ID: ${fileData.id}`);
+
+  return fileData;
 }
 
 
