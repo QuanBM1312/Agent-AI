@@ -4,7 +4,7 @@ import { Readable } from 'stream';
 import { db as prisma } from "@/lib/db";
 
 
-export async function uploadToGoogleDrive(
+async function uploadToGoogleDrive(
   file: File,
   sourceUrl?: string
 ): Promise<any> {
