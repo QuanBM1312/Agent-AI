@@ -429,7 +429,7 @@ export function KnowledgePortal() {
         <div>
           <div className="flex items-center justify-between mb-4">
             <h3 className="font-semibold text-foreground">Tài liệu đã tải lên</h3>
-            <Button size="sm" className="gap-2">
+            <Button onClick={triggerFileInput} size="sm" className="gap-2">
               <Plus className="w-4 h-4" />
               Thêm tài liệu
             </Button>
