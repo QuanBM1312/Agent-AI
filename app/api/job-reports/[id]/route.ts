@@ -65,10 +65,11 @@ export async function PUT(
       success: true,
       report: updatedReport,
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error("Error updating report:", error);
 
-    if (error.message.includes("Forbidden")) {
+    const message = error instanceof Error ? error.message : "";
+    if (message.includes("Forbidden")) {
       return NextResponse.json(
         {
           error:
@@ -103,10 +104,11 @@ export async function DELETE(
       success: true,
       message: "Report deleted successfully",
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error("Error deleting report:", error);
 
-    if (error.message.includes("Forbidden")) {
+    const message = error instanceof Error ? error.message : "";
+    if (message.includes("Forbidden")) {
       return NextResponse.json(
         {
           error: "Chỉ Admin mới được phép xóa báo cáo (Data Integrity Policy)",

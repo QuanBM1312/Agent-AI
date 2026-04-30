@@ -1,23 +1,51 @@
 import { NextResponse } from 'next/server';
-import { google } from 'googleapis';
+import { drive_v3, google } from 'googleapis';
 import { Readable } from 'stream';
 import { db as prisma } from "@/lib/db";
+import { getCurrentUserWithRole } from "@/lib/auth-utils";
 
+const DRIVE_SCOPES = ['https://www.googleapis.com/auth/drive'];
 
-async function uploadToGoogleDrive(
-  file: File,
-  sourceUrl?: string
-): Promise<any> {
+function parseServiceAccountCredentials() {
+  const rawJson =
+    process.env.GOOGLE_SERVICE_ACCOUNT_JSON ||
+    process.env.GDRIVE_JSON;
+  const base64Json = process.env.GOOGLE_SERVICE_ACCOUNT_BASE64;
+
+  if (rawJson) {
+    return JSON.parse(rawJson);
+  }
+
+  if (base64Json) {
+    return JSON.parse(Buffer.from(base64Json, "base64").toString("utf8"));
+  }
+
+  return null;
+}
+
+function buildGoogleDriveAuth() {
+  const serviceAccount = parseServiceAccountCredentials();
+  const impersonatedUser = process.env.GOOGLE_DRIVE_IMPERSONATED_USER_EMAIL;
+
+  if (serviceAccount?.client_email && serviceAccount?.private_key) {
+    return new google.auth.JWT({
+      email: serviceAccount.client_email,
+      key: serviceAccount.private_key,
+      scopes: DRIVE_SCOPES,
+      subject: impersonatedUser,
+    });
+  }
+
   const clientId = process.env.GOOGLE_OAUTH_CLIENT_ID;
   const clientSecret = process.env.GOOGLE_OAUTH_CLIENT_SECRET;
   const refreshToken = process.env.GOOGLE_OAUTH_REFRESH_TOKEN;
-  const folderId = process.env.GOOGLE_DRIVE_FOLDER_ID;
 
-  if (!clientId || !clientSecret || !refreshToken || !folderId) {
-    throw new Error("Missing Google Drive OAuth2 configuration (Env vars)");
+  if (!clientId || !clientSecret || !refreshToken) {
+    throw new Error(
+      "Missing Google Drive credentials. Provide GOOGLE_SERVICE_ACCOUNT_BASE64 / GOOGLE_SERVICE_ACCOUNT_JSON / GDRIVE_JSON, or the OAuth fallback env vars."
+    );
   }
 
-  // 1. Auth with OAuth2
   const auth = new google.auth.OAuth2(
     clientId,
     clientSecret,
@@ -25,7 +53,19 @@ async function uploadToGoogleDrive(
   );
 
   auth.setCredentials({ refresh_token: refreshToken });
+  return auth;
+}
 
+async function uploadToGoogleDrive(
+  file: File
+): Promise<drive_v3.Schema$File> {
+  const folderId = process.env.GOOGLE_DRIVE_FOLDER_ID;
+
+  if (!folderId) {
+    throw new Error("Missing GOOGLE_DRIVE_FOLDER_ID");
+  }
+
+  const auth = buildGoogleDriveAuth();
   const drive = google.drive({ version: 'v3', auth });
 
   console.log(`Starting upload to Google Drive for file: ${file.name}`);
@@ -92,6 +132,19 @@ async function uploadToGoogleDrive(
  */
 export async function POST(request: Request) {
   try {
+    const currentUser = await getCurrentUserWithRole();
+
+    if (!currentUser) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    if (!["Admin", "Manager"].includes(currentUser.role)) {
+      return NextResponse.json(
+        { error: "Forbidden: Only Admin and Manager can upload knowledge" },
+        { status: 403 }
+      );
+    }
+
     const formData = await request.formData();
     const file = formData.get('file') as File;
 
@@ -151,9 +204,10 @@ export async function POST(request: Request) {
       fileName: uploadedFile.name,
     });
 
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('An error occurred during file upload:', error);
+    const message = error instanceof Error ? error.message : 'Internal server error';
     // Return the actual error message for debugging
-    return NextResponse.json({ error: error.message || 'Internal server error' }, { status: 500 });
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }

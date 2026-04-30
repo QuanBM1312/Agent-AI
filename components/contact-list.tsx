@@ -1,8 +1,8 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState } from "react"
 import { Button } from "@/components/ui/button"
-import { Plus, User, Phone, Mail, Star, Edit, Trash2, Briefcase } from "lucide-react"
+import { Plus, Phone, Mail, Star, Edit, Trash2, Briefcase } from "lucide-react"
 import { ContactFormDialog } from "./contact-form-dialog"
 
 interface Contact {

@@ -32,7 +32,15 @@ interface Project {
   output_contract_date: string | null
   created_at: string
   project_items: ProjectItem[]
-  project_personnel?: any[]
+  project_personnel?: ProjectPersonnel[]
+}
+
+interface ProjectPersonnel {
+  user_id: string
+  users?: {
+    full_name?: string | null
+    role?: string | null
+  } | null
 }
 
 interface ProjectListProps {
@@ -200,7 +208,7 @@ export function ProjectList({ customerId, userRole }: ProjectListProps) {
                         Nhân sự thực hiện
                       </h4>
                       <div className="flex flex-wrap gap-2">
-                        {project.project_personnel.map((p: any) => (
+                        {project.project_personnel.map((p) => (
                           <div key={p.user_id} className="flex items-center gap-1.5 px-2 py-1 bg-background border rounded-md text-[10px]">
                             <span className="font-semibold text-primary">{p.users?.full_name}</span>
                             <span className="text-muted-foreground">({p.users?.role})</span>

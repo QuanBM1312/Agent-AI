@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
 import { getCurrentUserWithRole } from "@/lib/auth-utils";
 
@@ -17,6 +18,17 @@ import { getCurrentUserWithRole } from "@/lib/auth-utils";
  *         description: Forbidden
  */
 import { getPaginationParams, formatPaginatedResponse } from "@/lib/pagination";
+
+type InventoryProductRow = {
+  product_id: bigint;
+  product_code: string;
+  model_name: string;
+  unit: string;
+  opening: number | string;
+  total_in: number | string;
+  total_out: number | string;
+  full_count: bigint | number;
+};
 
 export async function GET(req: NextRequest) {
   try {
@@ -45,7 +57,7 @@ export async function GET(req: NextRequest) {
 
     // 1. Fetch Products with optimized Raw SQL to aggregate stock in 1 query
     const productsResult = search
-      ? await db.$queryRaw<any[]>`
+      ? await db.$queryRaw<InventoryProductRow[]>`
           SELECT 
             p.product_id, 
             p.product_code, 
@@ -65,7 +77,7 @@ export async function GET(req: NextRequest) {
           ORDER BY p.model_name ASC
           LIMIT ${paginationParams.limit} OFFSET ${paginationParams.skip}
         `
-      : await db.$queryRaw<any[]>`
+      : await db.$queryRaw<InventoryProductRow[]>`
           SELECT 
             p.product_id, 
             p.product_code, 
@@ -89,7 +101,9 @@ export async function GET(req: NextRequest) {
     const products = productsResult;
 
     // 2. Map Raw SQL result to expected response format
-    const inventory = products.map(({ full_count: _, ...p }) => {
+    const inventory = products.map((product) => {
+      const { full_count, ...p } = product;
+      void full_count;
       const currentStock = Number(p.opening) + Number(p.total_in) - Number(p.total_out);
 
       return {
@@ -155,9 +169,12 @@ export async function POST(req: NextRequest) {
     }
 
     return NextResponse.json({ data: newProduct });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error("Error creating product:", error);
-    if (error.code === 'P2002') {
+    if (
+      error instanceof Prisma.PrismaClientKnownRequestError &&
+      error.code === "P2002"
+    ) {
       return NextResponse.json({ error: "Mã sản phẩm đã tồn tại" }, { status: 400 });
     }
     return NextResponse.json({ error: "Failed to create product" }, { status: 500 });
@@ -283,9 +300,12 @@ export async function PUT(req: NextRequest) {
     }
 
     return NextResponse.json({ data: { ...updatedProduct, product_id: updatedProduct.product_id.toString() } });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error("Error updating product:", error);
-    if (error.code === 'P2002') {
+    if (
+      error instanceof Prisma.PrismaClientKnownRequestError &&
+      error.code === "P2002"
+    ) {
       return NextResponse.json({ error: "Mã sản phẩm đã tồn tại" }, { status: 400 });
     }
     return NextResponse.json({ error: "Failed to update product" }, { status: 500 });

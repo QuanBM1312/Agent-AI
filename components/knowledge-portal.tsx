@@ -22,6 +22,15 @@ interface SourceItem {
   url?: string
 }
 
+interface KnowledgeApiItem {
+  id: string
+  drive_file_id?: string | null
+  drive_name?: string | null
+  sheet_name?: string | null
+  hash?: string | number | null
+  created_at?: string | null
+}
+
 export function KnowledgePortal() {
   const [isUploading, setIsUploading] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -66,7 +75,7 @@ export function KnowledgePortal() {
       const response = await fetch(`/api/knowledge/sources?type=source&page=${sourcesPage}&limit=${sourcesLimit}`)
       if (response.ok) {
         const data = await response.json()
-        const rawItems = (data.data || []) as any[]
+        const rawItems = (data.data || []) as KnowledgeApiItem[]
 
         if (data.pagination) {
           setSourcesTotalPages(data.pagination.totalPages)
@@ -103,7 +112,7 @@ export function KnowledgePortal() {
       const response = await fetch(`/api/knowledge/sources?type=document&page=${documentsPage}&limit=${documentsLimit}`)
       if (response.ok) {
         const data = await response.json()
-        const rawItems = (data.data || []) as any[]
+        const rawItems = (data.data || []) as KnowledgeApiItem[]
 
         if (data.pagination) {
           setDocumentsTotalPages(data.pagination.totalPages)
@@ -156,16 +165,6 @@ export function KnowledgePortal() {
           }
           throw e
         }
-      }
-
-      const data = await response.json()
-
-      const newItem: KnowledgeItem = {
-        id: data.fileId || Date.now().toString(),
-        name: data.fileName || file.name,
-        type: getFileType(file.name),
-        size: formatFileSize(file.size),
-        uploadedAt: new Date().toISOString().split('T')[0],
       }
 
       // Refresh documents list

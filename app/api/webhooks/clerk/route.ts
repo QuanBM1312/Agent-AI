@@ -1,105 +1,65 @@
-import { Webhook } from 'svix'
-import { headers } from 'next/headers'
-import { WebhookEvent } from '@clerk/nextjs/server'
-import { prisma } from '@/lib/prisma'
+import { verifyWebhook } from "@clerk/backend/webhooks";
+import { prisma } from "@/lib/prisma";
+import { deleteClerkUser, upsertClerkUser } from "@/lib/clerk-user-sync";
+
+function getWebhookSecret() {
+  return (
+    process.env.CLERK_WEBHOOK_SIGNING_SECRET ||
+    process.env.CLERK_WEBHOOK_SECRET ||
+    ""
+  );
+}
 
 export async function POST(req: Request) {
-  const WEBHOOK_SECRET = process.env.CLERK_WEBHOOK_SECRET
+  const signingSecret = getWebhookSecret();
 
-  if (!WEBHOOK_SECRET) {
-    throw new Error('Please add CLERK_WEBHOOK_SECRET from Clerk Dashboard to .env or .env.local')
+  if (!signingSecret) {
+    return new Response("Missing Clerk webhook signing secret", { status: 500 });
   }
 
-  const headerPayload = await headers();
-  const svix_id = headerPayload.get("svix-id");
-  const svix_timestamp = headerPayload.get("svix-timestamp");
-  const svix_signature = headerPayload.get("svix-signature");
-
-  if (!svix_id || !svix_timestamp || !svix_signature) {
-    return new Response('Error occured -- no svix headers', {
-      status: 400
-    })
-  }
-
-  const payload = await req.json()
-  const body = JSON.stringify(payload)
-
-  const wh = new Webhook(WEBHOOK_SECRET)
-
-  let evt: WebhookEvent
+  let evt;
 
   try {
-    evt = wh.verify(body, {
-      "svix-id": svix_id,
-      "svix-timestamp": svix_timestamp,
-      "svix-signature": svix_signature,
-    }) as WebhookEvent
-  } catch (err) {
-    console.error('Error verifying webhook:', err);
-    return new Response('Error occured', {
-      status: 400
-    })
+    evt = await verifyWebhook(req, { signingSecret });
+  } catch (error) {
+    console.error("[clerk-webhook] verification failed", error);
+    return new Response("Webhook verification failed", { status: 400 });
   }
 
-  const eventType = evt.type;
-
-  if (eventType === 'user.created') {
-    const { id, email_addresses, image_url, first_name, last_name, public_metadata } = evt.data;
-
-    const email = email_addresses[0]?.email_address;
-    const fullName = `${first_name || ''} ${last_name || ''}`.trim();
-
-    // Read role and department from Clerk metadata (set by Admin)
-    const role = (public_metadata?.role as string) || 'NOT_ASSIGN'; // Default to NOT_ASSIGN if not set
-    const departmentId = public_metadata?.department_id as string | undefined;
-
-    try {
-      await prisma.users.create({
-        data: {
-          id: id,
-          email: email,
-          full_name: fullName,
-          role: role as any, // Cast to user_role_enum
-          department_id: departmentId || null,
+  try {
+    switch (evt.type) {
+      case "user.created":
+      case "user.updated": {
+        await upsertClerkUser(prisma, {
+          id: evt.data.id,
+          emailAddresses: evt.data.email_addresses,
+          firstName: evt.data.first_name,
+          lastName: evt.data.last_name,
+          publicMetadata:
+            evt.data.public_metadata &&
+            typeof evt.data.public_metadata === "object"
+              ? (evt.data.public_metadata as Record<string, unknown>)
+              : null,
+        });
+        break;
+      }
+      case "user.deleted": {
+        const deletedUserId = typeof evt.data.id === "string" ? evt.data.id.trim() : "";
+        if (deletedUserId) {
+          await deleteClerkUser(prisma, deletedUserId);
         }
-      })
-      console.log(`✅ User ${id} created in DB with role: ${role}`);
-    } catch (e) {
-      console.error('❌ Error creating user in DB:', e);
-      return new Response('Error creating user in DB', { status: 500 });
-    }
-  } else if (eventType === 'user.updated') {
-    const { id, email_addresses, first_name, last_name, public_metadata } = evt.data;
-    const email = email_addresses[0]?.email_address;
-    const fullName = `${first_name || ''} ${last_name || ''}`.trim();
-
-    // Read updated role and department from metadata
-    const role = public_metadata?.role as string | undefined;
-    const departmentId = public_metadata?.department_id as string | undefined;
-
-    try {
-      const updateData: any = {
-        email: email,
-        full_name: fullName,
-      };
-
-      // Only update role/department if they exist in metadata
-      if (role) {
-        updateData.role = role;
+        break;
       }
-      if (departmentId !== undefined) {
-        updateData.department_id = departmentId || null;
-      }
-
-      await prisma.users.update({
-        where: { id: id },
-        data: updateData
-      })
-      console.log(`✅ User ${id} updated in DB`);
-    } catch (e) {
-      console.error(`❌ Error updating user ${id}:`, e);
+      default:
+        break;
     }
+  } catch (error) {
+    console.error("[clerk-webhook] sync failed", {
+      eventType: evt.type,
+      message: error instanceof Error ? error.message : String(error),
+    });
+    return new Response("Webhook sync failed", { status: 500 });
   }
 
-  return new Response('', { status: 200 })
+  return new Response("", { status: 200 });
 }

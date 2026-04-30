@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { supabaseAdmin } from "@/lib/supabase";
+import { getSupabaseAdmin } from "@/lib/supabase";
+import { getCurrentUserWithRole } from "@/lib/auth-utils";
 
 /**
  * @swagger
@@ -34,6 +35,12 @@ import { supabaseAdmin } from "@/lib/supabase";
  */
 export async function POST(req: NextRequest) {
     try {
+        const currentUser = await getCurrentUserWithRole();
+
+        if (!currentUser) {
+            return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+        }
+
         const data = await req.formData();
         const file: File | null = data.get("file") as unknown as File;
 
@@ -43,6 +50,7 @@ export async function POST(req: NextRequest) {
 
         const bytes = await file.arrayBuffer();
         const buffer = Buffer.from(bytes);
+        const supabaseAdmin = getSupabaseAdmin();
 
         // Create unique filename
         const timestamp = Date.now();
@@ -58,7 +66,7 @@ export async function POST(req: NextRequest) {
         }
 
         // Upload to Supabase Storage (Bucket: 'uploads')
-        const { data: uploadData, error: uploadError } = await supabaseAdmin
+        const { error: uploadError } = await supabaseAdmin
             .storage
             .from(bucket)
             .upload(filename, buffer, {

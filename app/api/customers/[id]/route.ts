@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { db as prisma } from "@/lib/db";
+import { getCurrentUserWithRole } from "@/lib/auth-utils";
 
 // Singleton db used
 
@@ -47,11 +48,32 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const currentUser = await getCurrentUserWithRole();
+
+    if (!currentUser) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    if (!["Admin", "Manager"].includes(currentUser.role)) {
+      return NextResponse.json(
+        { error: "Forbidden: You do not have access to customer details" },
+        { status: 403 }
+      );
+    }
+
     const { id } = await params;
     const customer = await prisma.customers.findUnique({
       where: {
         id: id as string,
       },
+      include: {
+        contacts: {
+          orderBy: [
+            { is_primary: "desc" },
+            { created_at: "asc" }
+          ]
+        }
+      }
     }
     );
     if (!customer) {
@@ -128,6 +150,19 @@ export async function PATCH(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const currentUser = await getCurrentUserWithRole();
+
+    if (!currentUser) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    if (!["Admin", "Manager", "Sales"].includes(currentUser.role)) {
+      return NextResponse.json(
+        { error: "Forbidden: You do not have permission to update customers" },
+        { status: 403 }
+      );
+    }
+
     const { id } = await params;
     const body = await request.json();
     const updatedCustomer = await prisma.customers.update({
@@ -175,6 +210,19 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const currentUser = await getCurrentUserWithRole();
+
+    if (!currentUser) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    if (!["Admin", "Manager"].includes(currentUser.role)) {
+      return NextResponse.json(
+        { error: "Forbidden: You do not have permission to delete customers" },
+        { status: 403 }
+      );
+    }
+
     const { id } = await params;
     const deletedCustomer = await prisma.customers.delete({
       where: {

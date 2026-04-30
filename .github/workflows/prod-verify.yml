@@ -1,0 +1,77 @@
+name: Production Verify
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  APP_BASE_URL: https://aioperation.dieuhoathanglong.com.vn
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Build
+        run: npm run build
+
+  verify-live:
+    runs-on: ubuntu-latest
+    needs: build
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Verify live fingerprint
+        env:
+          EXPECTED_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+
+          expected_fingerprint=$(node -e "const fs = require('fs'); const source = fs.readFileSync('./lib/build-info.ts', 'utf8'); const match = source.match(/AUTH_HYDRATION_FINGERPRINT = \"([^\"]+)\"/); if (!match) process.exit(1); process.stdout.write(match[1]);")
+          echo "Expected fingerprint: ${expected_fingerprint}"
+          echo "Expected commit: ${EXPECTED_SHA}"
+
+          for attempt in $(seq 1 40); do
+            echo "Attempt ${attempt}/40"
+
+            body=$(curl -fsS "${APP_BASE_URL}/api/version" || true)
+            if [ -n "${body}" ]; then
+              echo "${body}"
+
+              actual_sha=$(printf '%s' "${body}" | node -e "let data=''; process.stdin.on('data', c => data += c); process.stdin.on('end', () => { try { const parsed = JSON.parse(data); process.stdout.write(parsed.commitSha || ''); } catch { process.stdout.write(''); } });")
+              actual_fingerprint=$(printf '%s' "${body}" | node -e "let data=''; process.stdin.on('data', c => data += c); process.stdin.on('end', () => { try { const parsed = JSON.parse(data); process.stdout.write(parsed.authHydrationFingerprint || ''); } catch { process.stdout.write(''); } });")
+              ok_flag=$(printf '%s' "${body}" | node -e "let data=''; process.stdin.on('data', c => data += c); process.stdin.on('end', () => { try { const parsed = JSON.parse(data); process.stdout.write(parsed.ok ? 'true' : 'false'); } catch { process.stdout.write('false'); } });")
+
+              if [ "${ok_flag}" = "true" ] && [ "${actual_fingerprint}" = "${expected_fingerprint}" ] && [ "${actual_sha}" = "${EXPECTED_SHA}" ]; then
+                echo "Live production is serving the expected commit and fingerprint."
+                exit 0
+              fi
+            fi
+
+            sleep 30
+          done
+
+          echo "Production did not report the expected commit/fingerprint in time."
+          exit 1

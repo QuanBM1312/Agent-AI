@@ -130,13 +130,14 @@ export async function POST(req: NextRequest) {
         });
 
         return NextResponse.json(newContact, { status: 201 });
-    } catch (error: any) {
+    } catch (error: unknown) {
         console.error("Failed to create contact:", error);
 
-        if (error.message?.includes("Forbidden") || error.message?.includes("Unauthorized")) {
+        const message = error instanceof Error ? error.message : "";
+        if (message.includes("Forbidden") || message.includes("Unauthorized")) {
             return NextResponse.json(
-                { error: error.message },
-                { status: error.message.includes("Unauthorized") ? 401 : 403 }
+                { error: message },
+                { status: message.includes("Unauthorized") ? 401 : 403 }
             );
         }
 

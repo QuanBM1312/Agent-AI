@@ -4,15 +4,34 @@ const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
 const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY
 
-if (!supabaseUrl || !supabaseAnonKey) {
-    throw new Error('Missing Supabase environment variables')
+let supabaseClient: ReturnType<typeof createClient> | null = null
+let supabaseAdminClient: ReturnType<typeof createClient> | null = null
+
+export function getSupabase() {
+    if (!supabaseUrl || !supabaseAnonKey) {
+        throw new Error('Missing Supabase environment variables')
+    }
+
+    if (!supabaseClient) {
+        supabaseClient = createClient(supabaseUrl, supabaseAnonKey)
+    }
+
+    return supabaseClient
 }
 
-// Client for general use (client-side safe)
-export const supabase = createClient(supabaseUrl, supabaseAnonKey)
-
 // Client for server-side with elevated privileges (admin use)
-export const supabaseAdmin = createClient(
-    supabaseUrl,
-    supabaseServiceRoleKey || supabaseAnonKey // Fallback to anon if service role is missing
-)
+export function getSupabaseAdmin() {
+    if (!supabaseUrl || !supabaseAnonKey) {
+        throw new Error('Missing Supabase environment variables')
+    }
+
+    if (!supabaseServiceRoleKey) {
+        throw new Error('SUPABASE_SERVICE_ROLE_KEY is required for privileged storage operations')
+    }
+
+    if (!supabaseAdminClient) {
+        supabaseAdminClient = createClient(supabaseUrl, supabaseServiceRoleKey)
+    }
+
+    return supabaseAdminClient
+}

@@ -3,6 +3,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { handleApiError } from "@/lib/api-helper";
 import { db as prisma } from "@/lib/db";
 import { getCurrentUserWithRole } from "@/lib/auth-utils";
+import { isTenantDatabaseBoundaryError } from "@/lib/db-runtime";
 
 /**
  * @swagger
@@ -52,31 +53,62 @@ export async function GET(request: Request) {
 
     const paginationParams = getPaginationParams(request);
 
-    // Fetch sessions with latest message in 1 query
-    const sessionsResult = await prisma.$queryRaw<any[]>`
-      SELECT 
-        s.*,
-        COUNT(*) OVER() as full_count,
-        (
-          SELECT content 
-          FROM public.chat_messages m 
-          WHERE m.session_id = s.id 
-          ORDER BY m.timestamp DESC 
-          LIMIT 1
-        ) as preview
-      FROM public.chat_sessions s
-      WHERE s.user_id = ${currentUser.id}
-      ORDER BY s.created_at DESC
-      LIMIT ${paginationParams.limit} OFFSET ${paginationParams.skip}
-    `;
+    let sessions: Array<{
+      id: string;
+      summary: string | null;
+      created_at: Date;
+      chat_messages: Array<{ content: string }>;
+    }> = [];
+    let totalCount = 0;
 
-    const totalCount = Number(sessionsResult[0]?.full_count || 0);
+    try {
+      [sessions, totalCount] = await prisma.$transaction([
+        prisma.chat_sessions.findMany({
+          where: {
+            user_id: currentUser.id,
+          },
+          orderBy: {
+            created_at: "desc",
+          },
+          skip: paginationParams.skip,
+          take: paginationParams.limit,
+          select: {
+            id: true,
+            summary: true,
+            created_at: true,
+            chat_messages: {
+              orderBy: {
+                timestamp: "desc",
+              },
+              take: 1,
+              select: {
+                content: true,
+              },
+            },
+          },
+        }),
+        prisma.chat_sessions.count({
+          where: {
+            user_id: currentUser.id,
+          },
+        }),
+      ]);
+    } catch (error) {
+      if (!isTenantDatabaseBoundaryError(error)) {
+        throw error;
+      }
 
-    const formattedSessions = sessionsResult.map(session => ({
+      return NextResponse.json(
+        { error: "Chat sessions are temporarily unavailable" },
+        { status: 503 }
+      );
+    }
+
+    const formattedSessions = sessions.map((session) => ({
       id: session.id,
       title: session.summary || "New Chat",
       updatedAt: session.created_at,
-      preview: session.preview || "No messages yet"
+      preview: session.chat_messages[0]?.content || "No messages yet",
     }));
 
     return NextResponse.json(formatPaginatedResponse(formattedSessions, totalCount, paginationParams));
@@ -95,14 +127,30 @@ export async function POST(request: Request) {
 
     const body = await request.json();
 
-    const newSession = await prisma.chat_sessions.create({
-      data: {
+    let newSession;
+
+    try {
+      newSession = await prisma.chat_sessions.create({
+        data: {
+          id: uuidv4(),
+          user_id: currentUser.id,
+          summary: body.summary || "New Chat",
+          created_at: new Date()
+        }
+      });
+    } catch (error) {
+      if (!isTenantDatabaseBoundaryError(error)) {
+        throw error;
+      }
+
+      newSession = {
         id: uuidv4(),
         user_id: currentUser.id,
         summary: body.summary || "New Chat",
-        created_at: new Date()
-      }
-    });
+        created_at: new Date(),
+        degraded: true,
+      };
+    }
 
     return NextResponse.json(newSession, { status: 201 });
   } catch (error) {
@@ -110,6 +158,3 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Failed to create session" }, { status: 500 });
   }
 }
-
-
-

@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useCallback } from "react"
 import { Search, Loader2, Package, Archive, AlertCircle, Plus, Edit2 } from "lucide-react"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
@@ -27,7 +27,7 @@ export function StoragePanel() {
   const [isDialogOpen, setIsDialogOpen] = useState(false)
   const [editingItem, setEditingItem] = useState<InventoryItem | undefined>(undefined)
 
-  const fetchInventory = async () => {
+  const fetchInventory = useCallback(async () => {
     setIsLoading(true)
     try {
       const params = new URLSearchParams()
@@ -43,7 +43,7 @@ export function StoragePanel() {
     } finally {
       setIsLoading(false)
     }
-  }
+  }, [searchQuery])
 
   useEffect(() => {
     // Debounce search
@@ -51,7 +51,7 @@ export function StoragePanel() {
       fetchInventory()
     }, 500)
     return () => clearTimeout(timer)
-  }, [searchQuery])
+  }, [fetchInventory])
 
   return (
     <div className="flex flex-col h-full bg-background">

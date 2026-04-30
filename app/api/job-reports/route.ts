@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
-import { getCurrentUserWithRole, requireRole } from "@/lib/auth-utils";
+import { getCurrentUserWithRole } from "@/lib/auth-utils";
 
 /**
  * @swagger
@@ -161,6 +161,26 @@ export async function POST(req: NextRequest) {
  */
 import { getPaginationParams, formatPaginatedResponse } from "@/lib/pagination";
 
+type JobReportRow = {
+  id: string;
+  job_id: string;
+  created_by_user_id: string;
+  customer_id: string | null;
+  problem_summary: string | null;
+  actions_taken: string | null;
+  image_urls: string[] | null;
+  voice_message_url: string | null;
+  customer_ref: string | null;
+  timestamp: Date;
+  full_count: bigint | number;
+  creator_full_name: string | null;
+  creator_email: string | null;
+  job_code: string | null;
+  job_status: string | null;
+  customer_company_name: string | null;
+  customer_contact_person: string | null;
+};
+
 export async function GET(req: NextRequest) {
   try {
     const currentUser = await getCurrentUserWithRole();
@@ -197,7 +217,7 @@ export async function GET(req: NextRequest) {
 
     const filterFragment = fragments.length > 0 ? Prisma.join(fragments, "") : Prisma.empty;
 
-    const reportsResult = await db.$queryRaw<any[]>`
+    const reportsResult = await db.$queryRaw<JobReportRow[]>`
       SELECT 
         j_rep.*,
         COUNT(*) OVER() as full_count,
@@ -218,24 +238,29 @@ export async function GET(req: NextRequest) {
 
     const totalCount = reportsResult.length > 0 ? Number(reportsResult[0].full_count) : 0;
 
-    const reports = reportsResult.map(({ full_count: _, ...r }) => ({
-      ...r,
-      users: {
-        id: r.created_by_user_id,
-        full_name: r.creator_full_name,
-        email: r.creator_email,
-      },
-      jobs: {
-        id: r.job_id,
-        job_code: r.job_code,
-        status: r.job_status,
-        customers: {
-          id: r.customer_id,
-          company_name: r.customer_company_name,
-          contact_person: r.customer_contact_person,
+    const reports = reportsResult.map((row) => {
+      const { full_count, ...r } = row;
+      void full_count;
+
+      return {
+        ...r,
+        users: {
+          id: r.created_by_user_id,
+          full_name: r.creator_full_name,
+          email: r.creator_email,
         },
-      },
-    }));
+        jobs: {
+          id: r.job_id,
+          job_code: r.job_code,
+          status: r.job_status,
+          customers: {
+            id: r.customer_id,
+            company_name: r.customer_company_name,
+            contact_person: r.customer_contact_person,
+          },
+        },
+      };
+    });
 
     return NextResponse.json(formatPaginatedResponse(reports, totalCount, paginationParams));
   } catch (error: unknown) {

@@ -214,6 +214,23 @@ export async function POST(req: NextRequest) {
  */
 import { getPaginationParams, formatPaginatedResponse } from "@/lib/pagination";
 
+type JobRow = {
+  id: string;
+  customer_id: string;
+  assigned_technician_id: string | null;
+  full_count: bigint | number;
+  customer_company_name: string | null;
+  customer_contact_person: string | null;
+  customer_phone: string | null;
+  customer_address: string | null;
+  tech_full_name: string | null;
+  tech_email: string | null;
+  line_items: unknown[] | null;
+  technicians: unknown[] | null;
+  job_reports: unknown[] | null;
+  [key: string]: unknown;
+};
+
 export async function GET(req: NextRequest) {
   try {
     const currentUser = await getCurrentUserWithRole();
@@ -269,7 +286,7 @@ export async function GET(req: NextRequest) {
     }
 
     // Main Query using Raw SQL
-    const jobsResult = await db.$queryRaw<any[]>`
+    const jobsResult = await db.$queryRaw<JobRow[]>`
       WITH filtered_jobs AS (
         SELECT 
           j.*,
@@ -339,7 +356,10 @@ export async function GET(req: NextRequest) {
     const totalCount = jobsResult.length > 0 ? Number(jobsResult[0].full_count) : 0;
 
     // Map Raw SQL result to expected response format (sanitize if needed)
-    const jobs = jobsResult.map(({ full_count: _, ...j }) => {
+    const jobs = jobsResult.map((row) => {
+      const { full_count, ...j } = row;
+      void full_count;
+
       const mappedJob = {
         ...j,
         customers: {
@@ -364,6 +384,9 @@ export async function GET(req: NextRequest) {
         mappedJob.customers = {
           id: j.customer_id,
           company_name: j.customer_company_name,
+          contact_person: null,
+          phone: null,
+          address: null,
         };
       }
 

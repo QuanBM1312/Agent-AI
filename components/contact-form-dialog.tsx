@@ -80,8 +80,9 @@ export function ContactFormDialog({ open, onOpenChange, contact, customerId, onS
 
             onSuccess()
             onOpenChange(false)
-        } catch (error: any) {
-            alert(error.message)
+        } catch (error: unknown) {
+            const message = error instanceof Error ? error.message : "Failed to save contact"
+            alert(message)
         } finally {
             setIsLoading(false)
         }

@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { Prisma } from "@prisma/client";
 
-export async function handleApiError(error: any, contextStr: string = "API Error") {
+export async function handleApiError(error: unknown, contextStr: string = "API Error") {
   console.error(`[${contextStr}]`, error);
 
   // Prisma Connection Error
@@ -22,8 +22,10 @@ export async function handleApiError(error: any, contextStr: string = "API Error
     }
   }
 
+  const details = error instanceof Error ? error.message : "Unknown error";
+
   return NextResponse.json(
-    { error: "Internal Server Error", details: error.message || "Unknown error" },
+    { error: "Internal Server Error", details },
     { status: 500 }
   );
 }

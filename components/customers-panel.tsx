@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { Search, Loader2, Plus, User, ChevronLeft, ChevronRight, Building, Phone, MapPin, Briefcase } from "lucide-react"
+import { Search, Loader2, Plus, User, ChevronLeft, ChevronRight, Building, MapPin } from "lucide-react"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
 import { ContactList } from "./contact-list"
 import { ProjectList } from "./projects/project-list"
@@ -137,8 +137,9 @@ export function CustomersPanel({ userRole }: CustomersPanelProps) {
                 fetchCustomers()
             }
 
-        } catch (error: any) {
-            alert(`Lỗi: ${error.message}`)
+        } catch (error: unknown) {
+            const message = error instanceof Error ? error.message : "Failed to create"
+            alert(`Lỗi: ${message}`)
         } finally {
             setIsSubmitting(false)
         }

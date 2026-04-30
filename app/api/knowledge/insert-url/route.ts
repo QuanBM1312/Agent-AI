@@ -1,8 +1,22 @@
 import { NextResponse } from "next/server";
 import { db as prisma } from "@/lib/db";
+import { getCurrentUserWithRole } from "@/lib/auth-utils";
 
 export async function POST(request: Request) {
   try {
+    const currentUser = await getCurrentUserWithRole();
+
+    if (!currentUser) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    if (!["Admin", "Manager"].includes(currentUser.role)) {
+      return NextResponse.json(
+        { error: "Forbidden: Only Admin and Manager can add knowledge sources" },
+        { status: 403 }
+      );
+    }
+
     const body = await request.json();
     const { source_url, source_name, refresh_frequency } = body;
 

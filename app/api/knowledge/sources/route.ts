@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { db as prisma } from "@/lib/db";
 import { Prisma } from "@prisma/client";
+import { getCurrentUserWithRole } from "@/lib/auth-utils";
 
 /**
  * @swagger
@@ -34,8 +35,25 @@ import { Prisma } from "@prisma/client";
  */
 import { getPaginationParams, formatPaginatedResponse } from "@/lib/pagination";
 
+type KnowledgeSourceRow = Record<string, unknown> & {
+  full_count: number | bigint | null;
+};
+
 export async function GET(req: Request) {
   try {
+    const currentUser = await getCurrentUserWithRole();
+
+    if (!currentUser) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    if (!["Admin", "Manager"].includes(currentUser.role)) {
+      return NextResponse.json(
+        { error: "Forbidden: Only Admin and Manager can view knowledge sources" },
+        { status: 403 }
+      );
+    }
+
     const { searchParams } = new URL(req.url);
     const type = searchParams.get('type');
     const paginationParams = getPaginationParams(req);
@@ -48,7 +66,7 @@ export async function GET(req: Request) {
       whereCondition = Prisma.sql`WHERE (sheet_name NOT IN ('WEB_URL', 'GOOGLE_SHEET') OR sheet_name IS NULL)`;
     }
 
-    const sourcesResult = await prisma.$queryRaw<any[]>`
+    const sourcesResult = await prisma.$queryRaw<KnowledgeSourceRow[]>`
       SELECT 
         *,
         COUNT(*) OVER() as full_count
@@ -59,7 +77,11 @@ export async function GET(req: Request) {
     `;
 
     const totalCount = Number(sourcesResult[0]?.full_count || 0);
-    const sources = sourcesResult.map(({ full_count: _, ...rest }) => rest);
+    const sources = sourcesResult.map((row) => {
+      const { full_count, ...rest } = row;
+      void full_count;
+      return rest;
+    });
 
     return NextResponse.json(formatPaginatedResponse(sources, totalCount, paginationParams));
   } catch (error) {
@@ -70,6 +92,19 @@ export async function GET(req: Request) {
 
 export async function POST(request: Request) {
   try {
+    const currentUser = await getCurrentUserWithRole();
+
+    if (!currentUser) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    if (!["Admin", "Manager"].includes(currentUser.role)) {
+      return NextResponse.json(
+        { error: "Forbidden: Only Admin and Manager can add knowledge sources" },
+        { status: 403 }
+      );
+    }
+
     const body = await request.json();
 
     let data: {
@@ -128,5 +163,3 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Failed to add source" }, { status: 500 });
   }
 }
-
-

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { getCurrentUserWithRole, canAssignToTechnician, requireRole } from "@/lib/auth-utils";
+import { canAssignToTechnician, requireRole } from "@/lib/auth-utils";
 
 /**
  * @swagger
@@ -83,13 +83,14 @@ export async function POST(req: NextRequest) {
       success: true,
       job: updatedJob,
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error("Error assigning job:", error);
 
-    if (error.message.includes("Unauthorized") || error.message.includes("Forbidden")) {
+    const message = error instanceof Error ? error.message : "";
+    if (message.includes("Unauthorized") || message.includes("Forbidden")) {
       return NextResponse.json(
-        { error: error.message },
-        { status: error.message.includes("Unauthorized") ? 401 : 403 }
+        { error: message },
+        { status: message.includes("Unauthorized") ? 401 : 403 }
       );
     }
 

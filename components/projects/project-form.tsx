@@ -7,8 +7,45 @@ import { Plus, Trash2, Package, Hash, Loader2, Users } from "lucide-react"
 
 interface ProjectFormProps {
   customerId: string
-  initialData?: any // Added for editing
+  initialData?: ProjectInitialData
   onSuccess: () => void
+}
+
+interface ProjectPersonnelRecord {
+  user_id: string
+}
+
+interface ProjectSerialRecord {
+  serial_number: string
+}
+
+interface ProjectItemRecord {
+  model_name: string
+  quantity: number
+  warranty_start_date?: string | null
+  warranty_end_date?: string | null
+  project_serials?: ProjectSerialRecord[]
+}
+
+interface ProjectInitialData {
+  id?: string
+  name?: string | null
+  address?: string | null
+  contact_person?: string | null
+  contact_position?: string | null
+  input_contract_no?: string | null
+  input_contract_date?: string | Date | null
+  output_contract_no?: string | null
+  output_contract_date?: string | Date | null
+  project_personnel?: ProjectPersonnelRecord[]
+  project_items?: ProjectItemRecord[]
+}
+
+interface ProjectUserOption {
+  id: string
+  full_name?: string | null
+  email?: string | null
+  role?: string | null
 }
 
 interface ItemForm {
@@ -21,9 +58,9 @@ interface ItemForm {
 
 export function ProjectForm({ customerId, initialData, onSuccess }: ProjectFormProps) {
   const [isSubmitting, setIsSubmitting] = useState(false)
-  const [allUsers, setAllUsers] = useState<any[]>([])
+  const [allUsers, setAllUsers] = useState<ProjectUserOption[]>([])
   const [selectedPersonnel, setSelectedPersonnel] = useState<string[]>(
-    initialData?.project_personnel?.map((p: any) => p.user_id) || []
+    initialData?.project_personnel?.map((p) => p.user_id) || []
   )
   const [projectData, setProjectData] = useState({
     name: initialData?.name || "",
@@ -37,12 +74,12 @@ export function ProjectForm({ customerId, initialData, onSuccess }: ProjectFormP
   })
 
   const [items, setItems] = useState<ItemForm[]>(
-    initialData?.project_items?.map((item: any) => ({
+    initialData?.project_items?.map((item) => ({
       model_name: item.model_name,
       quantity: item.quantity,
       warranty_start_date: item.warranty_start_date ? new Date(item.warranty_start_date).toISOString().split('T')[0] : "",
       warranty_end_date: item.warranty_end_date ? new Date(item.warranty_end_date).toISOString().split('T')[0] : "",
-      serials: item.project_serials?.map((s: any) => s.serial_number) || [""]
+      serials: item.project_serials?.map((s) => s.serial_number) || [""]
     })) || [
       { model_name: "", quantity: 1, warranty_start_date: "", warranty_end_date: "", serials: [""] }
     ]
@@ -71,7 +108,7 @@ export function ProjectForm({ customerId, initialData, onSuccess }: ProjectFormP
     setItems(items.filter((_, i) => i !== index))
   }
 
-  const updateItem = (index: number, field: keyof ItemForm, value: any) => {
+  const updateItem = <K extends keyof ItemForm>(index: number, field: K, value: ItemForm[K]) => {
     const newItems = [...items]
     newItems[index] = { ...newItems[index], [field]: value }
     setItems(newItems)
@@ -130,7 +167,7 @@ export function ProjectForm({ customerId, initialData, onSuccess }: ProjectFormP
         const err = await res.json()
         alert(`Lỗi: ${err.error}`)
       }
-    } catch (error) {
+    } catch {
       alert("Không thể " + (initialData ? "cập nhật" : "tạo") + " dự án")
     } finally {
       setIsSubmitting(false)

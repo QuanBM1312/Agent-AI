@@ -87,7 +87,7 @@ export function InventoryDialog({ isOpen, onClose, onSuccess, item }: InventoryD
         const data = await res.json()
         setError(data.error || "Có lỗi xảy ra")
       }
-    } catch (err) {
+    } catch {
       setError("Không thể kết nối với máy chủ")
     } finally {
       setIsLoading(false)

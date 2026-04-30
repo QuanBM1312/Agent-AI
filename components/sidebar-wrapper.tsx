@@ -9,7 +9,7 @@ export function SidebarWrapper({ userRole }: { userRole: string }) {
   const pathname = usePathname()
   const router = useRouter()
   const params = useParams()
-  const { sessions, isLoading, refreshSessions } = useChatSessions()
+  const { sessions, isLoading } = useChatSessions()
 
   // Derive activeTab from pathname
   // e.g., "/knowledge" -> "knowledge"

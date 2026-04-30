@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { clerkClient } from "@clerk/nextjs/server";
 import { requireRole } from "@/lib/auth-utils";
 import { db } from "@/lib/db";
+import type { users as UserRecord } from "@prisma/client";
 
 /**
  * @swagger
@@ -116,10 +117,11 @@ export async function POST(req: NextRequest) {
       },
       { status: 201 }
     );
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error("Error creating user:", error);
 
-    if (error.message?.includes("Forbidden") || error.message?.includes("Unauthorized")) {
+    const message = error instanceof Error ? error.message : "";
+    if (message.includes("Forbidden") || message.includes("Unauthorized")) {
       return NextResponse.json(
         { error: "Only Admin can create users" },
         { status: 403 }
@@ -127,9 +129,14 @@ export async function POST(req: NextRequest) {
     }
 
     // Clerk-specific errors
-    if (error.errors) {
+    const clerkError =
+      typeof error === "object" && error !== null && "errors" in error
+        ? (error as { errors?: Array<{ message?: string }> })
+        : null;
+
+    if (clerkError?.errors?.length) {
       return NextResponse.json(
-        { error: error.errors[0]?.message || "Failed to create user in Clerk" },
+        { error: clerkError.errors[0]?.message || "Failed to create user in Clerk" },
         { status: 400 }
       );
     }
@@ -157,13 +164,18 @@ export async function POST(req: NextRequest) {
  */
 import { getPaginationParams, formatPaginatedResponse } from "@/lib/pagination";
 
+type AdminUserRow = UserRecord & {
+  full_count: bigint | number;
+  department_name: string | null;
+};
+
 export async function GET(req: NextRequest) {
   try {
     await requireRole(["Admin"]);
 
     const paginationParams = getPaginationParams(req);
 
-    const usersResult = await db.$queryRaw<any[]>`
+    const usersResult = await db.$queryRaw<AdminUserRow[]>`
       SELECT 
         u.*,
         COUNT(*) OVER() as full_count,
@@ -176,13 +188,18 @@ export async function GET(req: NextRequest) {
 
     const totalCount = Number(usersResult[0]?.full_count || 0);
 
-    const users = usersResult.map(({ full_count: _, department_name, ...rest }) => ({
-      ...rest,
-      departments: rest.department_id ? {
-        id: rest.department_id,
-        name: department_name,
-      } : null,
-    }));
+    const users = usersResult.map((row) => {
+      const { full_count, department_name, ...rest } = row;
+      void full_count;
+
+      return {
+        ...rest,
+        departments: rest.department_id ? {
+          id: rest.department_id,
+          name: department_name,
+        } : null,
+      };
+    });
 
     return NextResponse.json(formatPaginatedResponse(users, totalCount, paginationParams));
   } catch (error: unknown) {

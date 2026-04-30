@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { db as prisma } from "@/lib/db";
+import { getCurrentUserWithRole } from "@/lib/auth-utils";
 
 /**
  * @swagger
@@ -26,11 +27,21 @@ import { db as prisma } from "@/lib/db";
  */
 import { getPaginationParams, formatPaginatedResponse } from "@/lib/pagination";
 
+type DepartmentRow = Record<string, unknown> & {
+  full_count: number | bigint | null;
+};
+
 export async function GET(req: Request) {
   try {
+    const currentUser = await getCurrentUserWithRole();
+
+    if (!currentUser) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
     const paginationParams = getPaginationParams(req, 20);
 
-    const departmentsResult = await prisma.$queryRaw<any[]>`
+    const departmentsResult = await prisma.$queryRaw<DepartmentRow[]>`
       SELECT 
         *,
         COUNT(*) OVER() as full_count
@@ -40,7 +51,11 @@ export async function GET(req: Request) {
     `;
 
     const totalCount = departmentsResult.length > 0 ? Number(departmentsResult[0].full_count) : 0;
-    const departments = departmentsResult.map(({ full_count: _, ...rest }) => rest);
+    const departments = departmentsResult.map((row) => {
+      const { full_count, ...rest } = row;
+      void full_count;
+      return rest;
+    });
 
     return NextResponse.json(formatPaginatedResponse(departments, totalCount, paginationParams));
   } catch (error) {
@@ -88,6 +103,19 @@ export async function GET(req: Request) {
  */
 export async function POST(request: Request) {
   try {
+    const currentUser = await getCurrentUserWithRole();
+
+    if (!currentUser) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    if (currentUser.role !== "Admin") {
+      return NextResponse.json(
+        { error: "Forbidden: Only Admin can create departments" },
+        { status: 403 }
+      );
+    }
+
     const body = await request.json();
     const { name } =
       body;

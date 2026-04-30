@@ -39,6 +39,14 @@ import { getCurrentUserWithRole } from "@/lib/auth-utils";
  */
 import { getPaginationParams, formatPaginatedResponse } from "@/lib/pagination";
 
+type UserRow = {
+  id: string;
+  department_id: string | null;
+  full_count: bigint | number;
+  department_name: string | null;
+  [key: string]: unknown;
+};
+
 export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
@@ -56,21 +64,6 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
-    const whereClause: any = {};
-
-    // Search filter
-    if (search) {
-      whereClause.OR = [
-        { full_name: { contains: search, mode: 'insensitive' } },
-        { email: { contains: search, mode: 'insensitive' } },
-      ];
-    }
-
-    // Filter by requested role (e.g., ?role=Technician)
-    if (roleFilter) {
-      whereClause.role = roleFilter;
-    }
-
     let departmentFilterId: string | null = null;
     // Manager Scope: Restrict to their own department
     if (currentUser.role === "Manager") {
@@ -85,7 +78,7 @@ export async function GET(req: NextRequest) {
     const currentDepartmentId = departmentFilterId || searchParams.get("departmentId");
 
     const usersResult = search
-      ? await prisma.$queryRaw<any[]>`
+      ? await prisma.$queryRaw<UserRow[]>`
           SELECT
             u.*,
             COUNT(*) OVER() as full_count,
@@ -98,7 +91,7 @@ export async function GET(req: NextRequest) {
           ORDER BY u.full_name ASC
           LIMIT ${paginationParams.limit} OFFSET ${paginationParams.skip}
         `
-      : await prisma.$queryRaw<any[]>`
+      : await prisma.$queryRaw<UserRow[]>`
           SELECT
             u.*,
             COUNT(*) OVER() as full_count,
@@ -114,13 +107,18 @@ export async function GET(req: NextRequest) {
 
     const totalCount = Number(usersResult[0]?.full_count || 0);
 
-    const users = usersResult.map(({ full_count: _, department_name, ...rest }) => ({
-      ...rest,
-      departments: rest.department_id ? {
-        id: rest.department_id,
-        name: department_name as string,
-      } : null,
-    }));
+    const users = usersResult.map((row) => {
+      const { full_count, department_name, ...rest } = row;
+      void full_count;
+
+      return {
+        ...rest,
+        departments: rest.department_id ? {
+          id: rest.department_id,
+          name: department_name as string,
+        } : null,
+      };
+    });
 
     return NextResponse.json(formatPaginatedResponse(users, totalCount, paginationParams));
   } catch (error) {

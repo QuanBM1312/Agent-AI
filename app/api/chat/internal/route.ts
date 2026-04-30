@@ -1,4 +1,14 @@
 import { NextResponse } from 'next/server';
+import { db as prisma } from "@/lib/db";
+import { getCurrentUserWithRole } from "@/lib/auth-utils";
+import {
+  createServerTimingHeader,
+  inferRouteHint,
+  serializeErrorForClient,
+} from "@/lib/chat-observability";
+import { isTenantDatabaseBoundaryError } from "@/lib/db-runtime";
+
+const N8N_TIMEOUT_MS = 25_000;
 
 /**
  * @swagger
@@ -34,15 +44,109 @@ import { NextResponse } from 'next/server';
  *         description: Server error, e.g., unable to connect to n8n.
  */
 export async function POST(request: Request) {
-  try {
-    const { chatInput, sessionId } = await request.json();
+  const requestId = crypto.randomUUID();
+  const startedAt = performance.now();
+  const serverTiming: Array<{ name: string; durationMs: number }> = [];
+  const mark = (name: string, sinceMs: number) => {
+    serverTiming.push({ name, durationMs: performance.now() - sinceMs });
+  };
+  const jsonWithMeta = (
+    body: Record<string, unknown>,
+    status: number,
+    routeHint: string,
+  ) => {
+    const durationMs = performance.now() - startedAt;
+    const response = NextResponse.json(
+      {
+        ...body,
+        _meta: {
+          ...(typeof body._meta === "object" && body._meta !== null
+            ? (body._meta as Record<string, unknown>)
+            : {}),
+          requestId,
+          durationMs,
+          routeHint,
+          serverTiming,
+        },
+      },
+      { status },
+    );
 
-    if (!chatInput || !sessionId) {
-      return NextResponse.json(
-        { message: 'Missing chatInput or sessionId' },
-        { status: 400 }
+    response.headers.set("x-chat-request-id", requestId);
+    response.headers.set("x-chat-duration-ms", durationMs.toFixed(1));
+    response.headers.set("x-chat-route-hint", routeHint);
+    response.headers.set("server-timing", createServerTimingHeader(serverTiming));
+
+    return response;
+  };
+
+  try {
+    const authStartedAt = performance.now();
+    const currentUser = await getCurrentUserWithRole();
+    mark("auth", authStartedAt);
+
+    if (!currentUser) {
+      return jsonWithMeta(
+        { message: 'Unauthorized', requestId },
+        401,
+        "auth_failed",
       );
     }
+
+    const parseStartedAt = performance.now();
+    const { chatInput, sessionId } = await request.json();
+    mark("parse_body", parseStartedAt);
+
+    if (!chatInput || !sessionId) {
+      return jsonWithMeta(
+        { message: 'Missing chatInput or sessionId', requestId },
+        400,
+        "invalid_request",
+      );
+    }
+
+    const sessionStartedAt = performance.now();
+    let session;
+
+    try {
+      session = await prisma.chat_sessions.findUnique({
+        where: { id: sessionId },
+        select: { id: true, user_id: true },
+      });
+
+      if (session && session.user_id !== currentUser.id) {
+        return jsonWithMeta(
+          { message: 'Forbidden: You do not own this chat session', requestId },
+          403,
+          "forbidden",
+        );
+      }
+
+      if (!session) {
+        await prisma.chat_sessions.create({
+          data: {
+            id: sessionId,
+            user_id: currentUser.id,
+            summary: chatInput.substring(0, 50),
+            created_at: new Date(),
+          },
+        });
+      }
+    } catch (error) {
+      if (!isTenantDatabaseBoundaryError(error)) {
+        throw error;
+      }
+
+      return jsonWithMeta(
+        {
+          message: "Chat session is temporarily unavailable",
+          details: serializeErrorForClient(error),
+        },
+        503,
+        "session_unavailable",
+      );
+    }
+    mark("session", sessionStartedAt);
 
     const n8nWebhookUrl = process.env.N8N_MAIN_RAG_WEBHOOK_URL;
 
@@ -50,49 +154,103 @@ export async function POST(request: Request) {
       throw new Error('N8N_MAIN_RAG_WEBHOOK_URL is not defined in environment variables');
     }
 
-    const response = await fetch(n8nWebhookUrl, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        chatInput,
-        sessionId,
-      }),
-    });
+    const n8nStartedAt = performance.now();
+    const abortController = new AbortController();
+    const timeoutId = setTimeout(() => {
+      abortController.abort();
+    }, N8N_TIMEOUT_MS);
+
+    let response: Response;
+
+    try {
+      response = await fetch(n8nWebhookUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-chat-request-id': requestId,
+        },
+        body: JSON.stringify({
+          chatInput,
+          sessionId,
+          userId: currentUser.id,
+        }),
+        signal: abortController.signal,
+      });
+    } catch (error) {
+      const routeHint =
+        error instanceof Error && error.name === "AbortError"
+          ? "n8n_timeout"
+          : "n8n_fetch_error";
+
+      return jsonWithMeta(
+        {
+          message:
+            routeHint === "n8n_timeout"
+              ? "n8n did not respond before the timeout"
+              : "Failed to call n8n agent",
+          details: serializeErrorForClient(error),
+        },
+        502,
+        routeHint,
+      );
+    } finally {
+      clearTimeout(timeoutId);
+      mark("n8n", n8nStartedAt);
+    }
 
     if (!response.ok) {
       const errorText = await response.text();
       console.error('Failed to call n8n agent:', errorText);
-      return NextResponse.json(
-        { message: 'Failed to call n8n agent' },
-        { status: response.status }
+      return jsonWithMeta(
+        {
+          message: 'Failed to call n8n agent',
+          details: errorText,
+        },
+        response.status,
+        "n8n_non_ok",
       );
     }
 
-    // Get raw response text first to see what n8n returns
     const responseText = await response.text();
-    console.log('n8n raw response:', responseText);
 
-    // Try to parse as JSON
-    let result;
     try {
-      result = JSON.parse(responseText);
+      const result = JSON.parse(responseText);
+      const routeHint =
+        typeof result === "object" && result !== null
+          ? inferRouteHint(result as Record<string, unknown>, {
+              type: "chat",
+              hasAttachment: false,
+            })
+          : "general";
+
+      return jsonWithMeta(
+        typeof result === "object" && result !== null
+          ? (result as Record<string, unknown>)
+          : { output: responseText },
+        200,
+        routeHint,
+      );
     } catch (parseError) {
       console.error('Failed to parse n8n response as JSON:', parseError);
-      return NextResponse.json(
-        { message: 'Invalid response format from n8n', rawResponse: responseText },
-        { status: 500 }
+      return jsonWithMeta(
+        { message: 'Invalid response format from n8n', rawResponse: responseText, requestId },
+        500,
+        "invalid_upstream_response",
       );
     }
-
-    return NextResponse.json(result);
-
   } catch (error) {
     console.error(error);
     if (error instanceof Error) {
-      return NextResponse.json({ message: error.message }, { status: 500 });
+      return jsonWithMeta(
+        { message: error.message, requestId },
+        500,
+        "failed",
+      );
     }
-    return NextResponse.json({ message: 'An unknown error occurred' }, { status: 500 });
+    return jsonWithMeta(
+      { message: 'An unknown error occurred', requestId },
+      500,
+      "failed",
+    );
   }
 }

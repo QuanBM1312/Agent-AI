@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { db as prisma } from "@/lib/db";
+import { getCurrentUserWithRole } from "@/lib/auth-utils";
 
 // Singleton db used
 
@@ -39,6 +40,12 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const currentUser = await getCurrentUserWithRole();
+
+    if (!currentUser) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
     const { id } = await params;
     const department = await prisma.departments.findUnique({
       where: {
@@ -106,19 +113,40 @@ export async function PATCH(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const body = await request.json();
-  const { id } = await params;
+  try {
+    const currentUser = await getCurrentUserWithRole();
 
-  const updatedDepartment = await prisma.departments.update({
-    where: { id },
-    data: body,
-  });
+    if (!currentUser) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
 
-  if (!updatedDepartment) {
-    return NextResponse.json({ error: "Department not found" }, { status: 404 });
+    if (currentUser.role !== "Admin") {
+      return NextResponse.json(
+        { error: "Forbidden: Only Admin can update departments" },
+        { status: 403 }
+      );
+    }
+
+    const body = await request.json();
+    const { id } = await params;
+
+    const updatedDepartment = await prisma.departments.update({
+      where: { id },
+      data: body,
+    });
+
+    if (!updatedDepartment) {
+      return NextResponse.json({ error: "Department not found" }, { status: 404 });
+    }
+
+    return NextResponse.json(updatedDepartment);
+  } catch (error) {
+    console.error("Error updating department:", error);
+    return NextResponse.json(
+      { error: "Failed to update department" },
+      { status: 500 }
+    );
   }
-
-  return NextResponse.json(updatedDepartment);
 }
 
 /**
@@ -146,14 +174,35 @@ export async function DELETE(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const { id } = await params;
-  const deletedDepartment = await prisma.departments.delete({
-    where: { id },
-  });
+  try {
+    const currentUser = await getCurrentUserWithRole();
 
-  if (!deletedDepartment) {
-    return NextResponse.json({ error: "Department not found" }, { status: 404 });
+    if (!currentUser) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    if (currentUser.role !== "Admin") {
+      return NextResponse.json(
+        { error: "Forbidden: Only Admin can delete departments" },
+        { status: 403 }
+      );
+    }
+
+    const { id } = await params;
+    const deletedDepartment = await prisma.departments.delete({
+      where: { id },
+    });
+
+    if (!deletedDepartment) {
+      return NextResponse.json({ error: "Department not found" }, { status: 404 });
+    }
+
+    return NextResponse.json(deletedDepartment, { status: 204 });
+  } catch (error) {
+    console.error("Error deleting department:", error);
+    return NextResponse.json(
+      { error: "Failed to delete department" },
+      { status: 500 }
+    );
   }
-
-  return NextResponse.json(deletedDepartment, { status: 204 });
 }

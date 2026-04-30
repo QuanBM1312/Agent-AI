@@ -3,7 +3,10 @@
  * @param webhookPath Đường dẫn webhook (phần sau domain), ví dụ: 'new-job-report'
  * @param payload Dữ liệu JSON cần gửi sang n8n
  */
-export async function triggerN8nWorkflow(webhookPath: string, payload: any) {
+export async function triggerN8nWorkflow(
+  webhookPath: string,
+  payload: unknown,
+) {
   // URL gốc của n8n (Lấy từ biến môi trường)
   const n8nHost = process.env.N8N_HOST;
 
@@ -42,5 +45,3 @@ export async function triggerN8nWorkflow(webhookPath: string, payload: any) {
     console.error("[N8N Exception] Error calling n8n:", error);
   }
 }
-
-

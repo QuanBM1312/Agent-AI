@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { getCurrentUserWithRole, sanitizeJobForTechnician } from "@/lib/auth-utils";
+import { canAssignToTechnician, getCurrentUserWithRole, sanitizeJobForTechnician } from "@/lib/auth-utils";
 
 /**
  * @swagger
@@ -190,11 +190,59 @@ export async function PATCH(
     // Fetch existing job to check current status
     const existingJob = await db.jobs.findUnique({
       where: { id },
-      select: { status: true }
+      select: {
+        status: true,
+        users_jobs_assigned_technician_idTousers: {
+          select: {
+            department_id: true,
+          },
+        },
+      }
     });
 
     if (!existingJob) {
       return NextResponse.json({ error: "Job not found" }, { status: 404 });
+    }
+
+    if (currentUser.role === "Manager") {
+      if (!currentUser.department_id) {
+        return NextResponse.json(
+          { error: "Manager must be assigned to a department to update jobs" },
+          { status: 403 }
+        );
+      }
+
+      const techDeptId = existingJob.users_jobs_assigned_technician_idTousers?.department_id;
+      const isReassigning = Array.isArray(assigned_technician_ids);
+
+      if (techDeptId && techDeptId !== currentUser.department_id) {
+        return NextResponse.json(
+          { error: "Forbidden: You can only update jobs in your department" },
+          { status: 403 }
+        );
+      }
+
+      if (!techDeptId && !isReassigning) {
+        return NextResponse.json(
+          {
+            error:
+              "Forbidden: Managers can only update jobs already assigned to their department, or reassign them to technicians in their department in the same request",
+          },
+          { status: 403 }
+        );
+      }
+    }
+
+    if (assigned_technician_ids !== undefined) {
+      for (const techId of assigned_technician_ids) {
+        const canAssign = await canAssignToTechnician(currentUser, techId);
+        if (!canAssign) {
+          return NextResponse.json(
+            { error: `Forbidden: You cannot assign jobs to technician ${techId}` },
+            { status: 403 }
+          );
+        }
+      }
     }
 
     // Update job in a transaction to handle technicians

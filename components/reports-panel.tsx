@@ -1,9 +1,9 @@
 "use client"
 
-import { useState, useEffect, useCallback, useRef, useMemo } from "react"
+import { useState, useEffect, useCallback, useRef } from "react"
 import Image from "next/image"
 import { Button } from "@/components/ui/button"
-import { Loader2, CheckCircle2, FileText, Mic, Image as ImageIcon, History, Send, X, Square, ChevronLeft, ChevronRight, FolderOpen, ChevronDown, CheckCircle } from "lucide-react"
+import { Loader2, CheckCircle2, FileText, Mic, Image as ImageIcon, Send, X, Square, ChevronLeft, ChevronRight, FolderOpen, ChevronDown, CheckCircle } from "lucide-react"
 import { useMediaRecorder } from "@/hooks/use-media-recorder"
 
 interface ReportsPanelProps {
@@ -45,7 +45,6 @@ interface Report {
 export function ReportsPanel({ userRole }: ReportsPanelProps) {
   const [activeTab, setActiveTab] = useState<"create" | "history" | "review">("create")
   const [jobs, setJobs] = useState<Job[]>([])
-  const [reports, setReports] = useState<Report[]>([]) // Keep for legacy or specific report view if needed, but mainly use jobs.job_reports
   const [isLoading, setIsLoading] = useState(false)
   const [isSubmitting, setIsSubmitting] = useState(false)
 
@@ -68,6 +67,10 @@ export function ReportsPanel({ userRole }: ReportsPanelProps) {
   // Check roles
   const isTechnician = userRole === "Technician"
   const isManagerOrAdmin = ["Manager", "Admin"].includes(userRole)
+  const pendingReviewCount = jobs.reduce(
+    (count, job) => count + (job.job_reports?.length ?? 0),
+    0
+  )
 
   // Determine default tab on load
   useEffect(() => {
@@ -224,7 +227,6 @@ export function ReportsPanel({ userRole }: ReportsPanelProps) {
 
       if (res.ok) {
         alert("Đã duyệt báo cáo thành công!")
-        alert("Đã duyệt báo cáo thành công!")
         fetchJobsWithReports() // Refresh list
       } else {
         const err = await res.json()
@@ -247,7 +249,6 @@ export function ReportsPanel({ userRole }: ReportsPanelProps) {
       })
 
       if (res.ok) {
-        alert("Hoàn tất đơn hàng thành công!")
         alert("Hoàn tất đơn hàng thành công!")
         fetchJobsWithReports() // Refresh list
       } else {
@@ -312,7 +313,7 @@ export function ReportsPanel({ userRole }: ReportsPanelProps) {
               : "border-transparent text-slate-500 hover:text-slate-700"
               }`}
           >
-            Duyệt báo cáo ({reports.length})
+            Duyệt báo cáo ({pendingReviewCount})
           </button>
         )}
       </div>

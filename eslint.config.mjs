@@ -12,6 +12,12 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Local clones, runtime state, and generated artifacts are not part of app linting.
+    ".external/**",
+    ".omc/**",
+    ".omx/**",
+    ".vercel/**",
+    "test-results/**",
   ]),
 ]);
 

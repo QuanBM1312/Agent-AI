@@ -4,7 +4,7 @@ import SwaggerUI from "swagger-ui-react";
 import "swagger-ui-react/swagger-ui.css";
 
 type Props = {
-  spec: Record<string, any>;
+  spec: object;
 };
 
 function SwaggerDocs({ spec }: Props) {

@@ -1,4 +1,5 @@
 import { getCurrentUserWithRole } from "@/lib/auth-utils";
+import { db } from "@/lib/db";
 import { NextResponse } from "next/server";
 
 export async function GET() {
@@ -12,14 +13,34 @@ export async function GET() {
       );
     }
 
+    let dbUser = null;
+    let dbLookupError = null;
+
+    try {
+      dbUser = await db.users.findUnique({
+        where: { id: user.id },
+        select: {
+          id: true,
+          email: true,
+          role: true,
+          department_id: true,
+        },
+      });
+    } catch (error) {
+      dbLookupError = error instanceof Error ? error.message : String(error);
+    }
+
     return NextResponse.json({
       success: true,
-      user: user,
+      user,
+      dbUserPresent: Boolean(dbUser),
+      dbUser,
+      dbLookupError,
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error("Error in test-auth:", error);
     return NextResponse.json(
-      { error: error.message || "Internal server error" },
+      { error: error instanceof Error ? error.message : "Internal server error" },
       { status: 500 }
     );
   }
