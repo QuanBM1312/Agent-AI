@@ -10,11 +10,11 @@ on:
         type: string
       email:
         description: "Clerk account email"
-        required: true
+        required: false
         type: string
       password:
         description: "Clerk account password"
-        required: true
+        required: false
         type: string
 
 permissions:
@@ -26,8 +26,8 @@ jobs:
     timeout-minutes: 20
     env:
       E2E_BASE_URL: ${{ inputs.base_url }}
-      E2E_EMAIL: ${{ inputs.email }}
-      E2E_PASSWORD: ${{ inputs.password }}
+      E2E_EMAIL: ${{ inputs.email || secrets.E2E_PRODUCTION_EMAIL }}
+      E2E_PASSWORD: ${{ inputs.password || secrets.E2E_PRODUCTION_PASSWORD }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
