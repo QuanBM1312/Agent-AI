@@ -1,0 +1,59 @@
+name: Production E2E Dispatch
+
+on:
+  workflow_dispatch:
+    inputs:
+      base_url:
+        description: "Production base URL"
+        required: false
+        default: "https://aioperation.dieuhoathanglong.com.vn"
+        type: string
+      email:
+        description: "Clerk account email"
+        required: true
+        type: string
+      password:
+        description: "Clerk account password"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  production-e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      E2E_BASE_URL: ${{ inputs.base_url }}
+      E2E_EMAIL: ${{ inputs.email }}
+      E2E_PASSWORD: ${{ inputs.password }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install app deps
+        run: npm ci
+
+      - name: Install Playwright runtime
+        run: |
+          npm install --no-save playwright@1.59.1
+          npx playwright install --with-deps chromium
+
+      - name: Run production browser smoke
+        run: node .github/workflows/scripts/prod-e2e-dispatch.mjs
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: production-e2e-dispatch
+          path: |
+            /tmp/prod-e2e-dispatch
+          if-no-files-found: ignore
