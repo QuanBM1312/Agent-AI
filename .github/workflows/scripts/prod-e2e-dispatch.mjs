@@ -110,6 +110,39 @@ const artifact = {
   account: email,
 };
 
+async function writeStepSummary(result) {
+  const summaryPath = process.env.GITHUB_STEP_SUMMARY;
+  if (!summaryPath) {
+    return;
+  }
+
+  const lines = [
+    "## Production E2E Summary",
+    "",
+    `- Base URL: \`${result.baseUrl}\``,
+    `- Account: \`${result.account}\``,
+    `- Final URL: \`${result.finalPageUrl || "n/a"}\``,
+    `- Auth probe: \`${result.authProbe?.status ?? "n/a"}\``,
+    `- Sessions probe: \`${result.sessionsProbe?.status ?? "n/a"}\``,
+    `- Chat probe: \`${result.chatProbe?.status ?? "n/a"}\``,
+    "",
+    "### Assertions",
+  ];
+
+  for (const [name, value] of Object.entries(result.assertions || {})) {
+    lines.push(`- ${name}: \`${value ? "pass" : "fail"}\``);
+  }
+
+  if (result.error) {
+    lines.push("");
+    lines.push("### Error");
+    lines.push("");
+    lines.push(`\`${String(result.error)}\``);
+  }
+
+  await fs.appendFile(summaryPath, `${lines.join("\n")}\n`);
+}
+
 try {
   await page.goto(`${baseUrl}/sign-in`, {
     waitUntil: "networkidle",
@@ -173,12 +206,14 @@ try {
     path.join(artifactDir, "result.json"),
     JSON.stringify(artifact, null, 2),
   );
+  await writeStepSummary(artifact);
 } catch (error) {
   artifact.error = error instanceof Error ? error.message : String(error);
   await fs.writeFile(
     path.join(artifactDir, "result.json"),
     JSON.stringify(artifact, null, 2),
   );
+  await writeStepSummary(artifact);
   throw error;
 } finally {
   await browser.close();
