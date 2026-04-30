@@ -109,7 +109,81 @@ const artifact = {
   baseUrl,
   account: email,
 };
+const sidebarTabs = [
+  {
+    label: "Nạp Tri thức",
+    pathPattern: /\/knowledge(\/|$)/,
+    readyText: /Cổng Nạp Tri thức/i,
+    secondaryText: /Nguồn dữ liệu kết nối/i,
+  },
+  {
+    label: "Lịch hẹn",
+    pathPattern: /\/scheduling(\/|$)/,
+    readyText: /Đã phân công/i,
+  },
+  {
+    label: "Báo cáo",
+    pathPattern: /\/reports(\/|$)/,
+    readyText: /Quản lý Báo cáo/i,
+  },
+  {
+    label: "Tồn kho",
+    pathPattern: /\/storage(\/|$)/,
+    readyText: /Quản lý Tồn kho/i,
+  },
+  {
+    label: "Khách hàng",
+    pathPattern: /\/customers(\/|$)/,
+    readyText: /Quản lý Khách hàng/i,
+  },
+  {
+    label: "Nhân sự",
+    pathPattern: /\/users(\/|$)/,
+    readyText: /Quản lý Nhân sự/i,
+  },
+];
 
+async function ensureSidebarButton(label) {
+  const button = page.getByRole("button", { name: new RegExp(label, "i") });
+  await ensureVisible(button);
+  return button;
+}
+
+async function verifySidebarFlow() {
+  await ensureVisible(page.getByPlaceholder("Nhập tin nhắn..."));
+  await ensureSidebarButton("Trợ lý AI");
+
+  for (const tab of sidebarTabs) {
+    await ensureSidebarButton(tab.label);
+  }
+
+  const result = {
+    buttonsVisible: true,
+  };
+
+  await (await ensureSidebarButton("Nạp Tri thức")).click();
+  await page.waitForURL(/\/knowledge(\/|$)/, { timeout: 30_000 });
+  await ensureVisible(page.getByText(/Cổng Nạp Tri thức/i).first());
+  await ensureVisible(page.getByText(/Nguồn dữ liệu kết nối/i).first());
+  result.knowledgeVisible = true;
+
+  await (await ensureSidebarButton("Trợ lý AI")).click();
+  await page.waitForURL(/\/chat\/[^/]+$/, { timeout: 30_000 });
+  await ensureVisible(page.getByPlaceholder("Nhập tin nhắn..."));
+  result.chatReturnOk = true;
+
+  for (const tab of sidebarTabs.slice(1)) {
+    await (await ensureSidebarButton(tab.label)).click();
+    await page.waitForURL(tab.pathPattern, { timeout: 30_000 });
+    await ensureVisible(page.getByText(tab.readyText).first());
+
+    if (tab.secondaryText) {
+      await ensureVisible(page.getByText(tab.secondaryText).first());
+    }
+  }
+
+  return result;
+}
 async function writeStepSummary(result) {
   const summaryPath = process.env.GITHUB_STEP_SUMMARY;
   if (!summaryPath) {
@@ -164,6 +238,9 @@ try {
   artifact.signInAfterPasswordScreenshot = await screenshot("signin-after-password.png");
   artifact.finalPageUrl = page.url();
   artifact.pageTitle = await page.title();
+  const landedOnChatAfterSignIn = /\/chat(\/|$)/.test(page.url());
+  artifact.sidebarProbe = await verifySidebarFlow();
+  artifact.sidebarScreenshot = await screenshot("sidebar-smoke.png");
 
   const authProbe = await probe("/api/test-auth");
   const sessionsProbe = await probe("/api/chat/sessions");
@@ -191,11 +268,14 @@ try {
     );
 
   artifact.assertions = {
-    redirectedToChat: /\/chat(\/|$)/.test(page.url()),
+    redirectedToChat: landedOnChatAfterSignIn,
     authOk: authProbe.status === 200 && authProbe.body?.success === true,
     sessionsOk: sessionsProbe.status === 200 && Array.isArray(sessionsProbe.body?.data),
     chatOk: chatProbe.status === 200,
     assistantMatched,
+    sidebarButtonsVisible: artifact.sidebarProbe?.buttonsVisible === true,
+    knowledgeVisible: artifact.sidebarProbe?.knowledgeVisible === true,
+    chatReturnOk: artifact.sidebarProbe?.chatReturnOk === true,
   };
 
   if (!Object.values(artifact.assertions).every(Boolean)) {

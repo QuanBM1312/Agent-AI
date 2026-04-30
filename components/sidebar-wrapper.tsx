@@ -28,8 +28,11 @@ export function SidebarWrapper({ userRole }: { userRole: string }) {
 
   const handleTabChange = (tabId: string) => {
     if (tabId === "chat") {
-      // Just toggle expand in sidebar, handled internally by Sidebar usually
-      // But we can also suggest a default behavior if needed
+      const nextSessionId =
+        activeSessionId ||
+        sessions[0]?.id ||
+        uuidv4()
+      router.push(`/chat/${nextSessionId}`)
     } else {
       router.push(`/${tabId}`)
     }
