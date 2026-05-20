@@ -373,7 +373,11 @@ function parseGoogleServiceAccountCredentials() {
 
 function buildGoogleDriveReadonlyAuth() {
   const serviceAccount = parseGoogleServiceAccountCredentials();
-  const impersonatedUser = process.env.GOOGLE_DRIVE_IMPERSONATED_USER_EMAIL;
+  const useDomainWideDelegation =
+    process.env.GOOGLE_SERVICE_ACCOUNT_USE_DOMAIN_WIDE_DELEGATION === "1";
+  const impersonatedUser = useDomainWideDelegation
+    ? process.env.GOOGLE_DRIVE_IMPERSONATED_USER_EMAIL
+    : undefined;
 
   if (serviceAccount?.client_email && serviceAccount?.private_key) {
     return new google.auth.JWT({
