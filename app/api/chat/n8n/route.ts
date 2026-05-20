@@ -318,6 +318,233 @@ function buildCalculationDriveContext(candidates: Awaited<ReturnType<typeof reso
   ].join("\n");
 }
 
+function parsePriceThreshold(prompt: string) {
+  const normalized = normalizeIntentText(prompt);
+  const match = normalized.match(/\b(?:tren|lon hon|>=|>)\s*(\d+(?:[.,]\d+)?)\s*(tr|trieu|m|million)?\b/);
+  if (!match) {
+    return null;
+  }
+
+  const value = Number.parseFloat(match[1].replace(",", "."));
+  if (!Number.isFinite(value)) {
+    return null;
+  }
+
+  return match[2] ? value * 1_000_000 : value;
+}
+
+function parseMoneyValue(value: unknown) {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+
+  const text = String(value ?? "").trim();
+  if (!text) {
+    return null;
+  }
+
+  const normalized = normalizeIntentText(text);
+  const millionMatch = normalized.match(/(\d+(?:[.,]\d+)?)\s*(tr|trieu|m|million)\b/);
+  if (millionMatch) {
+    const amount = Number.parseFloat(millionMatch[1].replace(",", "."));
+    return Number.isFinite(amount) ? amount * 1_000_000 : null;
+  }
+
+  const digits = text.replace(/[^\d,.-]/g, "");
+  if (!digits) {
+    return null;
+  }
+
+  const compact =
+    digits.includes(",") && !digits.includes(".")
+      ? digits.replace(",", ".")
+      : digits.replace(/[,.](?=\d{3}\b)/g, "");
+  const amount = Number.parseFloat(compact);
+  return Number.isFinite(amount) ? amount : null;
+}
+
+function formatVnd(value: number) {
+  return new Intl.NumberFormat("vi-VN").format(Math.round(value));
+}
+
+function findHeaderRow(rows: unknown[][]) {
+  let bestIndex = -1;
+  let bestScore = 0;
+
+  for (let index = 0; index < Math.min(rows.length, 25); index += 1) {
+    const cells = rows[index] ?? [];
+    const labels = cells.map((cell) => normalizeIntentText(String(cell ?? "")));
+    const priceScore = labels.filter((label) =>
+      /\b(don gia|gia ban|gia niem yet|bang gia|bao gia|price|gia)\b/.test(label)
+    ).length * 4;
+    const textScore = labels.filter((label) => /[a-z]/.test(label)).length;
+    const score = priceScore + textScore;
+    if (score > bestScore) {
+      bestScore = score;
+      bestIndex = index;
+    }
+  }
+
+  return bestIndex >= 0 ? bestIndex : null;
+}
+
+function resolveRowsOverUnitPriceThreshold(params: {
+  fileName: string;
+  buffer: Buffer;
+  threshold: number;
+}) {
+  const workbook = XLSX.read(params.buffer, {
+    type: "buffer",
+    cellFormula: false,
+    cellHTML: false,
+    cellStyles: false,
+    cellNF: false,
+    cellText: false,
+    WTF: false,
+  });
+  const matches: Array<{
+    sheetName: string;
+    item: string;
+    price: number;
+    rowNumber: number;
+  }> = [];
+  const inspectedSheets: string[] = [];
+
+  for (const sheetName of workbook.SheetNames.slice(0, 8)) {
+    const sheet = workbook.Sheets[sheetName];
+    if (!sheet) {
+      continue;
+    }
+
+    const rows = XLSX.utils
+      .sheet_to_json<unknown[]>(sheet, {
+        header: 1,
+        raw: true,
+        blankrows: false,
+        defval: "",
+      })
+      .filter((row) => row.some((cell) => String(cell ?? "").trim() !== ""));
+    const headerIndex = findHeaderRow(rows);
+    if (headerIndex === null) {
+      continue;
+    }
+
+    const headers = (rows[headerIndex] ?? []).map((cell) => String(cell ?? "").trim());
+    const normalizedHeaders = headers.map(normalizeIntentText);
+    const priceIndexes = normalizedHeaders
+      .map((header, index) => ({ header, index }))
+      .filter(({ header }) =>
+        /\b(don gia|gia ban|gia niem yet|price)\b/.test(header) ||
+        (/\bgia\b/.test(header) && !/\bthanh tien\b/.test(header))
+      )
+      .map(({ index }) => index);
+    if (priceIndexes.length === 0) {
+      continue;
+    }
+
+    inspectedSheets.push(sheetName);
+    const itemIndexes = normalizedHeaders
+      .map((header, index) => ({ header, index }))
+      .filter(({ header }) => /\b(ten hang|ten san pham|hang hoa|noi dung|model|ma hang)\b/.test(header))
+      .map(({ index }) => index);
+
+    for (let rowIndex = headerIndex + 1; rowIndex < rows.length; rowIndex += 1) {
+      const row = rows[rowIndex] ?? [];
+      const priceValues = priceIndexes
+        .map((index) => parseMoneyValue(row[index]))
+        .filter((value): value is number => value !== null);
+      const price = Math.max(...priceValues);
+      if (!Number.isFinite(price) || price <= params.threshold) {
+        continue;
+      }
+
+      const item =
+        itemIndexes
+          .map((index) => String(row[index] ?? "").trim())
+          .find(Boolean) ||
+        row.map((cell) => String(cell ?? "").trim()).find(Boolean) ||
+        "(không rõ tên hàng)";
+      matches.push({
+        sheetName,
+        item,
+        price,
+        rowNumber: rowIndex + 1,
+      });
+    }
+  }
+
+  if (matches.length === 0) {
+    return {
+      fileName: params.fileName,
+      inspectedSheets,
+      matches,
+    };
+  }
+
+  matches.sort((a, b) => b.price - a.price);
+  return {
+    fileName: params.fileName,
+    inspectedSheets,
+    matches,
+  };
+}
+
+async function resolveDriveUnitPriceThresholdCalculation(params: {
+  prompt: string;
+  candidates: Awaited<ReturnType<typeof resolveCalculationDriveCandidates>>;
+}): Promise<LocalChatResolution | null> {
+  const threshold = parsePriceThreshold(params.prompt);
+  if (threshold === null) {
+    return null;
+  }
+
+  for (const candidate of params.candidates.slice(0, 3)) {
+    if (candidate.driveFileId.startsWith("local::") || candidate.driveFileId.startsWith("surrogate-")) {
+      continue;
+    }
+
+    try {
+      const file = await downloadDriveFileForPreview(candidate.driveFileId);
+      const fileName = file.metadata.name || candidate.driveName || "unknown";
+      const result = resolveRowsOverUnitPriceThreshold({
+        fileName,
+        buffer: file.buffer,
+        threshold,
+      });
+      if (result.matches.length === 0) {
+        continue;
+      }
+
+      const shown = result.matches.slice(0, 60);
+      const lines = shown.map((match, index) =>
+        `${index + 1}. ${match.item} — ${formatVnd(match.price)} đ (${match.sheetName}, dòng ${match.rowNumber})`
+      );
+      const omitted = result.matches.length > shown.length
+        ? `\n\nCòn ${result.matches.length - shown.length} dòng khác vượt ngưỡng nhưng tôi chỉ hiển thị 60 dòng đầu để giữ câu trả lời gọn.`
+        : "";
+
+      return {
+        routeHint: "drive_spreadsheet_price_filter",
+        output: [
+          `Tôi tìm thấy ${result.matches.length} dòng có đơn giá/giá bán lớn hơn ${formatVnd(threshold)} đ trong file "${fileName}".`,
+          "",
+          ...lines,
+          omitted,
+        ].join("\n"),
+        citations: file.metadata.webViewLink ? [file.metadata.webViewLink] : undefined,
+      };
+    } catch (error) {
+      console.warn("[chat-drive-price-filter-failed]", {
+        driveFileId: candidate.driveFileId,
+        driveName: candidate.driveName,
+        error: serializeErrorForClient(error),
+      });
+    }
+  }
+
+  return null;
+}
+
 async function resolveFallbackFileSearchStoreNames() {
   const rows = await prisma.file_search_storage.findMany({
     where: {
@@ -1377,6 +1604,20 @@ export async function POST(req: NextRequest) {
       try {
         const candidates = await resolveCalculationDriveCandidates(userContent);
         calculationDriveCandidates = candidates;
+        const priceFilterResolution = await resolveDriveUnitPriceThresholdCalculation({
+          prompt: userContent,
+          candidates,
+        });
+        if (priceFilterResolution) {
+          return await persistAndReturnResolution(
+            priceFilterResolution,
+            {
+              spreadsheetCalculationUsed: true,
+              webSearchUsed: false,
+              webSearchProvider: "drive_spreadsheet_parser",
+            },
+          );
+        }
         calculationDriveContext = [
           buildCalculationDriveContext(candidates),
           await buildCalculationRawDriveContext(candidates),
