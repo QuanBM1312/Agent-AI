@@ -600,7 +600,8 @@ function parseGoogleServiceAccountCredentials() {
   return null;
 }
 
-function buildGoogleDriveReadonlyAuth() {
+function buildGoogleDriveReadonlyAuthCandidates() {
+  const authCandidates = [];
   const serviceAccount = parseGoogleServiceAccountCredentials();
   const useDomainWideDelegation =
     process.env.GOOGLE_SERVICE_ACCOUNT_USE_DOMAIN_WIDE_DELEGATION === "1";
@@ -609,53 +610,66 @@ function buildGoogleDriveReadonlyAuth() {
     : undefined;
 
   if (serviceAccount?.client_email && serviceAccount?.private_key) {
-    return new google.auth.JWT({
+    authCandidates.push(new google.auth.JWT({
       email: serviceAccount.client_email,
       key: serviceAccount.private_key,
       scopes: DRIVE_SCOPES,
       subject: impersonatedUser,
-    });
+    }));
   }
 
   const clientId = process.env.GOOGLE_OAUTH_CLIENT_ID;
   const clientSecret = process.env.GOOGLE_OAUTH_CLIENT_SECRET;
   const refreshToken = process.env.GOOGLE_OAUTH_REFRESH_TOKEN;
 
-  if (!clientId || !clientSecret || !refreshToken) {
+  if (clientId && clientSecret && refreshToken) {
+    const auth = new google.auth.OAuth2(
+      clientId,
+      clientSecret,
+      "https://developers.google.com/oauthplayground",
+    );
+    auth.setCredentials({ refresh_token: refreshToken });
+    authCandidates.push(auth);
+  }
+
+  if (authCandidates.length === 0) {
     throw new Error("Missing Google Drive readonly credentials");
   }
 
-  const auth = new google.auth.OAuth2(
-    clientId,
-    clientSecret,
-    "https://developers.google.com/oauthplayground",
-  );
-  auth.setCredentials({ refresh_token: refreshToken });
-  return auth;
+  return authCandidates;
 }
 
 async function downloadDriveFileForPreview(driveFileId: string) {
-  const auth = buildGoogleDriveReadonlyAuth();
-  const drive = google.drive({ version: "v3", auth });
-  const metadata = await drive.files.get({
-    fileId: driveFileId,
-    fields: "id,name,mimeType,webViewLink,modifiedTime",
-  });
-  const mimeType = metadata.data.mimeType || "";
-  const response = mimeType === "application/vnd.google-apps.spreadsheet"
-    ? await drive.files.export(
-        { fileId: driveFileId, mimeType: GOOGLE_SHEET_XLSX_MIME },
-        { responseType: "arraybuffer" },
-      )
-    : await drive.files.get(
-        { fileId: driveFileId, alt: "media" },
-        { responseType: "arraybuffer" },
-      );
+  let lastError: unknown = null;
 
-  return {
-    metadata: metadata.data,
-    buffer: Buffer.from(response.data as ArrayBuffer),
-  };
+  for (const auth of buildGoogleDriveReadonlyAuthCandidates()) {
+    try {
+      const drive = google.drive({ version: "v3", auth });
+      const metadata = await drive.files.get({
+        fileId: driveFileId,
+        fields: "id,name,mimeType,webViewLink,modifiedTime",
+      });
+      const mimeType = metadata.data.mimeType || "";
+      const response = mimeType === "application/vnd.google-apps.spreadsheet"
+        ? await drive.files.export(
+            { fileId: driveFileId, mimeType: GOOGLE_SHEET_XLSX_MIME },
+            { responseType: "arraybuffer" },
+          )
+        : await drive.files.get(
+            { fileId: driveFileId, alt: "media" },
+            { responseType: "arraybuffer" },
+          );
+
+      return {
+        metadata: metadata.data,
+        buffer: Buffer.from(response.data as ArrayBuffer),
+      };
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
+  throw lastError instanceof Error ? lastError : new Error(String(lastError));
 }
 
 function formatSheetPreviewRows(rows: unknown[][], maxChars: number) {
