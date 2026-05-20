@@ -160,11 +160,128 @@ function isCalculationPrompt(value: string) {
       normalized,
     );
   const dataSignal =
-    /\b(file|excel|xls|xlsx|bang|sheet|bao cao|saleadmin|kho|hang hoa|doanh so|bang gia)\b/.test(
+    /\b(file|excel|xls|xlsx|bang|sheet|bao cao|saleadmin|kho|hang hoa|mat hang|san pham|doanh so|bang gia|gia|don vi|don vi tinh)\b/.test(
       normalized,
     );
 
   return calculationSignal && dataSignal;
+}
+
+function buildCalculationFileSearchTerms(value: string) {
+  const normalized = normalizeIntentText(value);
+  const terms = new Set<string>();
+
+  if (/\b(kho|ton kho|hang|hang hoa|mat hang|san pham|don vi)\b/.test(normalized)) {
+    terms.add("kho");
+    terms.add("hang");
+  }
+
+  if (/\b(gia|don gia|bang gia|bao gia|tren|duoi)\b/.test(normalized)) {
+    terms.add("gia");
+  }
+
+  if (/\b(saleadmin|sale admin|doanh thu|lai lo|loi nhuan)\b/.test(normalized)) {
+    terms.add("sale");
+  }
+
+  for (const term of normalized.split(" ")) {
+    if (term.length >= 4 && !/^(tinh|toan|toan bo|nhung|tren|duoi|don|vi|dong)$/.test(term)) {
+      terms.add(term);
+    }
+  }
+
+  return [...terms].slice(0, 8);
+}
+
+async function resolveCalculationDriveCandidates(chatInput: string) {
+  const terms = buildCalculationFileSearchTerms(chatInput);
+  if (terms.length === 0) {
+    return [];
+  }
+
+  const rows = await prisma.file_search_storage.findMany({
+    where: {
+      drive_file_id: {
+        not: null,
+      },
+      OR: terms.flatMap((term) => [
+        {
+          drive_name: {
+            contains: term,
+            mode: "insensitive" as const,
+          },
+        },
+        {
+          file_search_name: {
+            contains: term,
+            mode: "insensitive" as const,
+          },
+        },
+      ]),
+    },
+    select: {
+      drive_file_id: true,
+      drive_name: true,
+      file_search_name: true,
+    },
+    take: 12,
+  });
+
+  const scored = rows
+    .filter((row) => row.drive_file_id)
+    .map((row) => {
+      const haystack = normalizeIntentText(`${row.drive_name ?? ""} ${row.file_search_name ?? ""}`);
+      const score = terms.reduce((total, term) => total + (haystack.includes(term) ? 1 : 0), 0);
+      return { row, score };
+    })
+    .sort((a, b) => b.score - a.score);
+
+  const seen = new Set<string>();
+  const candidates: Array<{
+    driveFileId: string;
+    driveName: string | null;
+    fileSearchName: string | null;
+  }> = [];
+
+  for (const item of scored) {
+    const driveFileId = item.row.drive_file_id;
+    if (!driveFileId || seen.has(driveFileId)) {
+      continue;
+    }
+    seen.add(driveFileId);
+    candidates.push({
+      driveFileId,
+      driveName: item.row.drive_name,
+      fileSearchName: item.row.file_search_name,
+    });
+    if (candidates.length >= 5) {
+      break;
+    }
+  }
+
+  return candidates;
+}
+
+function buildCalculationDriveContext(candidates: Awaited<ReturnType<typeof resolveCalculationDriveCandidates>>) {
+  if (candidates.length === 0) {
+    return "";
+  }
+
+  const lines = candidates.map((candidate, index) => {
+    return [
+      `${index + 1}. file="${candidate.driveName || candidate.fileSearchName || "unknown"}"`,
+      `drive_file_id="${candidate.driveFileId}"`,
+      candidate.fileSearchName ? `search_name="${candidate.fileSearchName}"` : "",
+    ].filter(Boolean).join(" | ");
+  });
+
+  return [
+    "[INTERNAL_DRIVE_FILE_CANDIDATES_BEGIN]",
+    "The app resolved these likely Google Drive source files for this spreadsheet calculation. Use these IDs before trying Supabase discovery.",
+    ...lines,
+    "Agent0 instruction: run `python3 /a0/tools/read_drive_file.py --file-id \"<drive_file_id>\" --format markdown --max-rows 120 --max-sheets 8` on the most relevant candidate, then calculate from the returned rows. If several candidates are plausible, inspect the top 2 before answering.",
+    "[INTERNAL_DRIVE_FILE_CANDIDATES_END]",
+  ].join("\n");
 }
 
 function hasNoResultSignal(value: string) {
@@ -978,10 +1095,32 @@ export async function POST(req: NextRequest) {
             .join("\n\n")
         : chatInput;
 
+    let calculationDriveContext = "";
+    if (requestType === "chat" && !hasAttachment && isCalculationPrompt(userContent)) {
+      const fileResolveStartedAt = performance.now();
+      try {
+        const candidates = await resolveCalculationDriveCandidates(userContent);
+        calculationDriveContext = buildCalculationDriveContext(candidates);
+      } catch (error) {
+        if (!isTenantDatabaseBoundaryError(error)) {
+          console.warn("[chat-calculation-drive-context-failed]", {
+            requestId,
+            sessionId,
+            error: serializeErrorForClient(error),
+          });
+        }
+      }
+      mark("calculation_drive_context", fileResolveStartedAt);
+    }
+
     const effectiveChatInput =
-      inlinedAttachmentText.length > 0
-        ? `${semanticChatInput || "Đây là nội dung file đính kèm cần xử lý."}\n\n[ATTACHED_FILE_TEXT_BEGIN]\n${inlinedAttachmentText}\n[ATTACHED_FILE_TEXT_END]`
-        : semanticChatInput;
+      [
+        semanticChatInput || (inlinedAttachmentText.length > 0 ? "Đây là nội dung file đính kèm cần xử lý." : ""),
+        calculationDriveContext,
+        inlinedAttachmentText.length > 0
+          ? `[ATTACHED_FILE_TEXT_BEGIN]\n${inlinedAttachmentText}\n[ATTACHED_FILE_TEXT_END]`
+          : "",
+      ].filter(Boolean).join("\n\n");
 
     const outgoingFormData = new FormData();
     outgoingFormData.append("sessionId", sessionId);
