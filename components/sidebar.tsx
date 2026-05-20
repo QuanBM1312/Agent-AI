@@ -1,6 +1,6 @@
 "use client"
 
-import { MessageSquare, BookOpen, Calendar, Archive, LogOut, X, ChevronDown, ChevronRight, Plus, Loader2, FileText, Users, UserCog } from "lucide-react"
+import { MessageSquare, BookOpen, Calendar, Archive, LogOut, X, ChevronDown, ChevronRight, Plus, Loader2, FileText, Users, UserCog, Sparkles } from "lucide-react"
 import { useMobileMenu } from "./mobile-menu-context"
 import { ChatSession } from "@/lib/types"
 import { useState } from "react"
@@ -42,6 +42,12 @@ export function Sidebar({
       label: "Nạp Tri thức",
       icon: BookOpen,
       roles: ["Admin", "Manager"] // Only Admin and Manager can upload knowledge
+    },
+    {
+      id: "skills",
+      label: "Kỹ năng",
+      icon: Sparkles,
+      roles: ["Admin", "Manager", "Sales", "Technician"]
     },
     {
       id: "scheduling",

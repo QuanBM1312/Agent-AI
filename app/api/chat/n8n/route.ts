@@ -13,6 +13,10 @@ import {
   isGeminiWebSearchConfigured,
   runGeminiWebSearch,
 } from "@/lib/gemini-web-search";
+import {
+  isGroqTranscriptionConfigured,
+  transcribeVoiceWithGroq,
+} from "@/lib/groq-transcription";
 import { getSupabaseAdmin } from "@/lib/supabase";
 
 const N8N_TIMEOUT_MS = 25_000;
@@ -139,6 +143,30 @@ function isGeminiWebSearchConsent(value: string) {
   );
 }
 
+function isCalculationPrompt(value: string) {
+  const normalized = normalizeIntentText(value);
+  if (!normalized) {
+    return false;
+  }
+
+  const calculationSignal =
+    /\b(tinh|tinh toan|lai lo|lai|lo|loi nhuan|doanh thu|chi phi|tong|chenh lech|bien loi nhuan|margin|cong no|ton kho|nhap xuat ton|so luong|don gia|thanh tien)\b/.test(
+      normalized,
+    );
+  const dataSignal =
+    /\b(file|excel|xls|xlsx|bang|sheet|bao cao|saleadmin|kho|hang hoa|doanh so|bang gia)\b/.test(
+      normalized,
+    );
+
+  return calculationSignal && dataSignal;
+}
+
+function hasNoResultSignal(value: string) {
+  return /\b(khong tim thay|khong co thong tin|chua the xac minh|khong the khang dinh|khong co du lieu|du lieu noi bo khong co|khong co ban ghi|khong nam ro|khong ro)\b/.test(
+    normalizeIntentText(value),
+  );
+}
+
 function shouldOfferGeminiAfterNoResult(chatInput: string, aiContent: string) {
   const normalizedPrompt = normalizeIntentText(chatInput);
   const normalizedAnswer = normalizeIntentText(aiContent);
@@ -147,16 +175,12 @@ function shouldOfferGeminiAfterNoResult(chatInput: string, aiContent: string) {
     return false;
   }
 
-  const noResultSignal =
-    /\b(khong tim thay|khong co thong tin|chua the xac minh|khong the khang dinh|khong co du lieu|du lieu noi bo khong co|khong co ban ghi)\b/.test(
-      normalizedAnswer,
-    );
   const strongInternalPrompt =
     /\b(noi bo|he thong|khach hang|du an|serial|ma thiet bi|ma hang|ton kho|nhan vien|bao gia)\b/.test(
       normalizedPrompt,
     );
 
-  return noResultSignal && !strongInternalPrompt;
+  return hasNoResultSignal(normalizedAnswer) && !strongInternalPrompt && !isCalculationPrompt(chatInput);
 }
 
 function buildGeminiWebOfferResolution(): LocalChatResolution {
@@ -189,6 +213,14 @@ function buildMissingDataResolution(): LocalChatResolution {
     output:
       "Tôi không thể cung cấp số serial cho một thiết bị không tồn tại trong hệ thống. Nếu dữ liệu nội bộ không có bản ghi tương ứng thì câu trả lời đúng phải là không tìm thấy, và tôi sẽ không bịa ra một serial.",
     routeHint: "local_missing_data",
+  };
+}
+
+function buildCalculationNeedsDataResolution(): LocalChatResolution {
+  return {
+    output:
+      "Đây là câu hỏi tính toán nên tôi cần xác định đúng bảng dữ liệu trước khi tính. Hãy gửi rõ tên file/sheet hoặc upload file Excel liên quan, ví dụ: `tính lãi lỗ trong file TLE-BC BP SALEADMINS 2026, sheet Tổng Hợp`. Khi có đúng bảng nguồn, tôi sẽ tính theo số liệu trong file thay vì đoán.",
+    routeHint: "calculation_needs_data",
   };
 }
 
@@ -231,6 +263,10 @@ function resolveLocalFailureFallback(params: {
   const shortcut = resolveLocalShortcut(params);
   if (shortcut) {
     return shortcut;
+  }
+
+  if (isCalculationPrompt(params.chatInput)) {
+    return buildCalculationNeedsDataResolution();
   }
 
   return buildInternalUnavailableResolution();
@@ -589,6 +625,7 @@ export async function POST(req: NextRequest) {
     const file = formData.get("file") as File | null;
     let fileBuffer: Buffer | null = null;
     let inlinedAttachmentText = "";
+    let voiceTranscript = "";
 
     if (file && canInlineAttachmentText(file)) {
       try {
@@ -646,8 +683,36 @@ export async function POST(req: NextRequest) {
       mark("upload", uploadStartedAt);
     }
 
+    if (type === "voice" && file && isGroqTranscriptionConfigured()) {
+      const voiceTranscriptionStartedAt = performance.now();
+      try {
+        if (!fileBuffer) {
+          const bytes = await file.arrayBuffer();
+          fileBuffer = Buffer.from(bytes);
+        }
+
+        voiceTranscript = await transcribeVoiceWithGroq({
+          buffer: fileBuffer,
+          fileName: file.name || "recording.webm",
+          mimeType: file.type || "audio/webm",
+        });
+      } catch (error) {
+        console.warn("[chat-voice-transcription-failed]", {
+          requestId,
+          sessionId,
+          error: serializeErrorForClient(error),
+        });
+      }
+      mark("voice_transcription", voiceTranscriptionStartedAt);
+    }
+
     userContent = chatInput || "";
-    if (type === "voice") userContent = userContent || "[Voice Message]";
+    if (type === "voice") {
+      userContent = [chatInput, voiceTranscript ? `Transcript: ${voiceTranscript}` : ""]
+        .filter(Boolean)
+        .join("\n")
+        .trim() || "[Voice Message]";
+    }
     if (type === "image") userContent = userContent || "[Image Upload]";
 
     if (persistenceAvailable) {
@@ -705,6 +770,7 @@ export async function POST(req: NextRequest) {
               stage: "completed",
               durationMs: performance.now() - startedAt,
               citations: resolution.citations ?? [],
+              ...(voiceTranscript ? { voiceTranscript } : {}),
               ...extraContext,
             },
           }
@@ -865,10 +931,17 @@ export async function POST(req: NextRequest) {
       throw new Error("N8N Webhook URL not configured");
     }
 
+    const semanticChatInput =
+      type === "voice" && voiceTranscript
+        ? [chatInput, `[VOICE_TRANSCRIPT_BEGIN]\n${voiceTranscript}\n[VOICE_TRANSCRIPT_END]`]
+            .filter(Boolean)
+            .join("\n\n")
+        : chatInput;
+
     const effectiveChatInput =
       inlinedAttachmentText.length > 0
-        ? `${chatInput || "Đây là nội dung file đính kèm cần xử lý."}\n\n[ATTACHED_FILE_TEXT_BEGIN]\n${inlinedAttachmentText}\n[ATTACHED_FILE_TEXT_END]`
-        : chatInput;
+        ? `${semanticChatInput || "Đây là nội dung file đính kèm cần xử lý."}\n\n[ATTACHED_FILE_TEXT_BEGIN]\n${inlinedAttachmentText}\n[ATTACHED_FILE_TEXT_END]`
+        : semanticChatInput;
 
     const outgoingFormData = new FormData();
     outgoingFormData.append("sessionId", sessionId);
@@ -1014,6 +1087,17 @@ export async function POST(req: NextRequest) {
           webSearchProvider: "gemini_google_search",
         },
       );
+    }
+
+    if (
+      requestType === "chat" &&
+      !hasAttachment &&
+      isCalculationPrompt(userContent) &&
+      hasNoResultSignal(aiContent)
+    ) {
+      return await persistAndReturnResolution(buildCalculationNeedsDataResolution(), {
+        degradedFrom: "calculation_no_structured_source",
+      });
     }
 
     if (persistenceAvailable) {

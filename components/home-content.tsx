@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from "react"
 import { Sidebar } from "@/components/sidebar"
 import { ChatInterface } from "@/components/chat-interface"
 import { KnowledgePortal } from "@/components/knowledge-portal"
+import { SkillsPanel } from "@/components/skills-panel"
 import { SchedulingPanel } from "@/components/scheduling-panel"
 import { StoragePanel } from "@/components/storage-panel"
 import { ReportsPanel } from "@/components/reports-panel"
@@ -118,6 +119,7 @@ export function HomeContent({ user: serverUser }: { user: Awaited<ReturnType<typ
               />
             )}
             {activeTab === "knowledge" && <KnowledgePortal />}
+            {activeTab === "skills" && <SkillsPanel />}
             {activeTab === "scheduling" && <SchedulingPanel userRole={userRole} />}
             {activeTab === "reports" && <ReportsPanel userRole={userRole} />}
             {activeTab === "storage" && <StoragePanel />}
