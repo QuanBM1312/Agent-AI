@@ -183,13 +183,19 @@ function buildCalculationFileSearchTerms(value: string) {
   const normalized = normalizeIntentText(value);
   const terms = new Set<string>();
 
+  const pricePrompt = /\b(gia|don gia|bang gia|bao gia|niem yet|price|tren|duoi)\b/.test(normalized);
+
   if (/\b(kho|ton kho|hang|hang hoa|mat hang|san pham|don vi)\b/.test(normalized)) {
     terms.add("kho");
     terms.add("hang");
   }
 
-  if (/\b(gia|don gia|bang gia|bao gia|tren|duoi)\b/.test(normalized)) {
+  if (pricePrompt) {
     terms.add("gia");
+    terms.add("bang gia");
+    terms.add("bao gia");
+    terms.add("niem yet");
+    terms.add("price");
   }
 
   if (/\b(saleadmin|sale admin|doanh thu|lai lo|loi nhuan)\b/.test(normalized)) {
@@ -207,6 +213,8 @@ function buildCalculationFileSearchTerms(value: string) {
 
 async function resolveCalculationDriveCandidates(chatInput: string) {
   const terms = buildCalculationFileSearchTerms(chatInput);
+  const normalized = normalizeIntentText(chatInput);
+  const pricePrompt = /\b(gia|don gia|bang gia|bao gia|niem yet|price|tren|duoi)\b/.test(normalized);
   if (terms.length === 0) {
     return [];
   }
@@ -236,14 +244,16 @@ async function resolveCalculationDriveCandidates(chatInput: string) {
       drive_name: true,
       file_search_name: true,
     },
-    take: 12,
+    take: 20,
   });
 
   const scored = rows
     .filter((row) => row.drive_file_id)
     .map((row) => {
       const haystack = normalizeIntentText(`${row.drive_name ?? ""} ${row.file_search_name ?? ""}`);
-      const score = terms.reduce((total, term) => total + (haystack.includes(term) ? 1 : 0), 0);
+      const score =
+        terms.reduce((total, term) => total + (haystack.includes(term) ? 1 : 0), 0) +
+        (pricePrompt && /\b(bang gia|bao gia|niem yet|price)\b/.test(haystack) ? 4 : 0);
       return { row, score };
     })
     .sort((a, b) => b.score - a.score);
@@ -262,7 +272,7 @@ async function resolveCalculationDriveCandidates(chatInput: string) {
       driveName: item.row.drive_name,
       fileSearchName: item.row.file_search_name,
     });
-    if (candidates.length >= 5) {
+    if (candidates.length >= 8) {
       break;
     }
   }
