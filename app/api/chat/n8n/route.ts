@@ -233,6 +233,36 @@ async function resolveCalculationDriveCandidates(chatInput: string) {
     return [];
   }
 
+  const priceRows = pricePrompt
+    ? await prisma.file_search_storage.findMany({
+        where: {
+          drive_file_id: {
+            not: null,
+          },
+          OR: ["bảng giá", "báo giá", "niêm yết", "đơn giá"].flatMap((term) => [
+            {
+              drive_name: {
+                contains: term,
+                mode: "insensitive" as const,
+              },
+            },
+            {
+              file_search_name: {
+                contains: term,
+                mode: "insensitive" as const,
+              },
+            },
+          ]),
+        },
+        select: {
+          drive_file_id: true,
+          drive_name: true,
+          file_search_name: true,
+        },
+        take: 20,
+      })
+    : [];
+
   const rows = await prisma.file_search_storage.findMany({
     where: {
       drive_file_id: {
@@ -260,8 +290,9 @@ async function resolveCalculationDriveCandidates(chatInput: string) {
     },
     take: 20,
   });
+  const orderedRows = [...priceRows, ...rows];
 
-  const scored = rows
+  const scored = orderedRows
     .filter((row) => row.drive_file_id)
     .map((row) => {
       const haystack = normalizeIntentText(`${row.drive_name ?? ""} ${row.file_search_name ?? ""}`);
