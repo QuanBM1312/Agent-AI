@@ -17,6 +17,7 @@ import {
   isGroqTranscriptionConfigured,
   transcribeVoiceWithGroq,
 } from "@/lib/groq-transcription";
+import { resolveSpreadsheetCalculation } from "@/lib/spreadsheet-calculation";
 import { getSupabaseAdmin } from "@/lib/supabase";
 
 const N8N_TIMEOUT_MS = 25_000;
@@ -884,6 +885,40 @@ export async function POST(req: NextRequest) {
 
     if (localShortcut) {
       return await persistAndReturnResolution(localShortcut);
+    }
+
+    if (file && fileBuffer && isCalculationPrompt(userContent)) {
+      const spreadsheetStartedAt = performance.now();
+      try {
+        const spreadsheetResolution = resolveSpreadsheetCalculation({
+          prompt: userContent,
+          fileName: file.name,
+          buffer: fileBuffer,
+        });
+        mark("spreadsheet_calculation", spreadsheetStartedAt);
+
+        if (spreadsheetResolution) {
+          return await persistAndReturnResolution(
+            {
+              output: spreadsheetResolution.output,
+              routeHint: spreadsheetResolution.routeHint,
+              citations: spreadsheetResolution.citations,
+            },
+            {
+              ...spreadsheetResolution.meta,
+              spreadsheetCalculationUsed: true,
+            },
+          );
+        }
+      } catch (error) {
+        mark("spreadsheet_calculation", spreadsheetStartedAt);
+        console.warn("[chat-spreadsheet-calculation-failed]", {
+          requestId,
+          sessionId,
+          fileName: file.name,
+          error: serializeErrorForClient(error),
+        });
+      }
     }
 
     // 5. Forward to n8n

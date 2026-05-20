@@ -69,13 +69,13 @@ export async function GET() {
       {
         id: "excel_calculation",
         name: "Tính toán từ Excel",
-        status: excelSourceCount > 0 ? "partial" : "blocked",
-        statusLabel: statusLabel(excelSourceCount > 0 ? "partial" : "blocked"),
-        description: "Dùng khi hỏi lãi/lỗ, tổng doanh thu, tồn kho hoặc bảng số liệu.",
+        status: "ready",
+        statusLabel: statusLabel("ready"),
+        description: "Tính nhanh file CSV/XLS/XLSX đính kèm khi hỏi lãi/lỗ, tổng doanh thu, tồn kho hoặc bảng số liệu.",
         evidence:
           excelSourceCount > 0
-            ? `${excelSourceCount} nguồn Excel/CSV đã có metadata; cần hỏi rõ file/sheet nếu câu hỏi mơ hồ`
-            : "Chưa thấy nguồn Excel/CSV trong metadata",
+            ? `${excelSourceCount} nguồn Excel/CSV đã có metadata; file đính kèm có thể tính trực tiếp, file trong kho cần raw workbook để tính deterministic`
+            : "File đính kèm CSV/XLS/XLSX có thể tính trực tiếp; chưa thấy nguồn Excel/CSV trong metadata",
       },
       {
         id: "structured_ops_lookup",
