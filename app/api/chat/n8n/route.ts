@@ -20,6 +20,8 @@ import {
 import { resolveSpreadsheetCalculation } from "@/lib/spreadsheet-calculation";
 import { getSupabaseAdmin } from "@/lib/supabase";
 
+export const maxDuration = 120;
+
 const configuredN8nTimeoutMs = Number(process.env.N8N_TIMEOUT_MS);
 const N8N_TIMEOUT_MS = Number.isFinite(configuredN8nTimeoutMs) && configuredN8nTimeoutMs > 0
   ? configuredN8nTimeoutMs
