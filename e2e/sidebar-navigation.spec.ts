@@ -32,6 +32,11 @@ const adminTabs = [
     path: "/users",
     readyText: /Quản lý Nhân sự/i,
   },
+  {
+    label: "Kỹ năng",
+    path: "/skills",
+    readyText: /Trạng thái các năng lực/i,
+  },
 ] as const;
 
 test("sidebar shows expected admin items and can route back to chat", async ({ page }) => {
