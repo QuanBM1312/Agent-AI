@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
+import { google } from "googleapis";
+import * as XLSX from "xlsx";
 import { db as prisma } from "@/lib/db";
 import { getCurrentUserWithRole } from "@/lib/auth-utils";
 import {
@@ -26,6 +28,8 @@ const configuredN8nTimeoutMs = Number(process.env.N8N_TIMEOUT_MS);
 const N8N_TIMEOUT_MS = Number.isFinite(configuredN8nTimeoutMs) && configuredN8nTimeoutMs > 0
   ? configuredN8nTimeoutMs
   : 120_000;
+const DRIVE_SCOPES = ["https://www.googleapis.com/auth/drive.readonly"];
+const GOOGLE_SHEET_XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 
 interface LocalChatResolution {
   output: string;
@@ -282,6 +286,203 @@ function buildCalculationDriveContext(candidates: Awaited<ReturnType<typeof reso
     "Agent0 instruction: run `python3 /a0/tools/read_drive_file.py --file-id \"<drive_file_id>\" --format markdown --max-rows 120 --max-sheets 8` on the most relevant candidate, then calculate from the returned rows. If several candidates are plausible, inspect the top 2 before answering.",
     "[INTERNAL_DRIVE_FILE_CANDIDATES_END]",
   ].join("\n");
+}
+
+function parseGoogleServiceAccountCredentials() {
+  const rawJson = process.env.GOOGLE_SERVICE_ACCOUNT_JSON || process.env.GDRIVE_JSON;
+  const base64Json = process.env.GOOGLE_SERVICE_ACCOUNT_BASE64;
+
+  if (rawJson) {
+    return JSON.parse(rawJson);
+  }
+
+  if (base64Json) {
+    return JSON.parse(Buffer.from(base64Json, "base64").toString("utf8"));
+  }
+
+  return null;
+}
+
+function buildGoogleDriveReadonlyAuth() {
+  const serviceAccount = parseGoogleServiceAccountCredentials();
+  const impersonatedUser = process.env.GOOGLE_DRIVE_IMPERSONATED_USER_EMAIL;
+
+  if (serviceAccount?.client_email && serviceAccount?.private_key) {
+    return new google.auth.JWT({
+      email: serviceAccount.client_email,
+      key: serviceAccount.private_key,
+      scopes: DRIVE_SCOPES,
+      subject: impersonatedUser,
+    });
+  }
+
+  const clientId = process.env.GOOGLE_OAUTH_CLIENT_ID;
+  const clientSecret = process.env.GOOGLE_OAUTH_CLIENT_SECRET;
+  const refreshToken = process.env.GOOGLE_OAUTH_REFRESH_TOKEN;
+
+  if (!clientId || !clientSecret || !refreshToken) {
+    throw new Error("Missing Google Drive readonly credentials");
+  }
+
+  const auth = new google.auth.OAuth2(
+    clientId,
+    clientSecret,
+    "https://developers.google.com/oauthplayground",
+  );
+  auth.setCredentials({ refresh_token: refreshToken });
+  return auth;
+}
+
+async function downloadDriveFileForPreview(driveFileId: string) {
+  const auth = buildGoogleDriveReadonlyAuth();
+  const drive = google.drive({ version: "v3", auth });
+  const metadata = await drive.files.get({
+    fileId: driveFileId,
+    fields: "id,name,mimeType,webViewLink,modifiedTime",
+  });
+  const mimeType = metadata.data.mimeType || "";
+  const response = mimeType === "application/vnd.google-apps.spreadsheet"
+    ? await drive.files.export(
+        { fileId: driveFileId, mimeType: GOOGLE_SHEET_XLSX_MIME },
+        { responseType: "arraybuffer" },
+      )
+    : await drive.files.get(
+        { fileId: driveFileId, alt: "media" },
+        { responseType: "arraybuffer" },
+      );
+
+  return {
+    metadata: metadata.data,
+    buffer: Buffer.from(response.data as ArrayBuffer),
+  };
+}
+
+function formatSheetPreviewRows(rows: unknown[][], maxChars: number) {
+  const lines: string[] = [];
+  let usedChars = 0;
+
+  for (const row of rows) {
+    const line = row
+      .map((cell) => String(cell ?? "").replace(/\s+/g, " ").trim())
+      .join(" | ");
+    usedChars += line.length + 1;
+    if (usedChars > maxChars) {
+      lines.push("[TRUNCATED]");
+      break;
+    }
+    lines.push(line);
+  }
+
+  return lines.join("\n");
+}
+
+function buildSpreadsheetPreview(params: {
+  fileName: string;
+  buffer: Buffer;
+  maxRowsPerSheet?: number;
+  maxSheets?: number;
+  maxChars?: number;
+}) {
+  const workbook = XLSX.read(params.buffer, {
+    type: "buffer",
+    cellFormula: false,
+    cellHTML: false,
+    cellStyles: false,
+    cellNF: false,
+    cellText: false,
+    WTF: false,
+  });
+  const maxRowsPerSheet = params.maxRowsPerSheet ?? 260;
+  const maxSheets = params.maxSheets ?? 4;
+  const maxChars = params.maxChars ?? 70_000;
+  const chunks: string[] = [];
+  let remainingChars = maxChars;
+
+  for (const sheetName of workbook.SheetNames.slice(0, maxSheets)) {
+    const sheet = workbook.Sheets[sheetName];
+    if (!sheet) {
+      continue;
+    }
+    const rows = XLSX.utils
+      .sheet_to_json<unknown[]>(sheet, {
+        header: 1,
+        raw: true,
+        blankrows: false,
+        defval: "",
+      })
+      .slice(0, maxRowsPerSheet)
+      .filter((row) => row.some((cell) => String(cell ?? "").trim() !== ""));
+    const preview = formatSheetPreviewRows(rows, remainingChars);
+    remainingChars -= preview.length;
+    chunks.push([
+      `Sheet: ${sheetName}`,
+      `Rows included: ${rows.length}`,
+      preview,
+    ].join("\n"));
+    if (remainingChars <= 0) {
+      break;
+    }
+  }
+
+  return [
+    `File: ${params.fileName}`,
+    "Raw spreadsheet preview for LLM calculation:",
+    ...chunks,
+  ].join("\n\n");
+}
+
+async function buildCalculationRawDriveContext(
+  candidates: Awaited<ReturnType<typeof resolveCalculationDriveCandidates>>,
+) {
+  const chunks: string[] = [];
+
+  for (const candidate of candidates.slice(0, 2)) {
+    if (candidate.driveFileId.startsWith("local::")) {
+      continue;
+    }
+
+    try {
+      const file = await downloadDriveFileForPreview(candidate.driveFileId);
+      const fileName = file.metadata.name || candidate.driveName || "unknown";
+      const mimeType = file.metadata.mimeType || "";
+      const isSpreadsheet =
+        mimeType === "application/vnd.google-apps.spreadsheet" ||
+        [".xlsx", ".xls", ".csv"].some((extension) =>
+          fileName.toLowerCase().endsWith(extension)
+        );
+
+      if (!isSpreadsheet) {
+        continue;
+      }
+
+      chunks.push([
+        "[RAW_DRIVE_SPREADSHEET_CONTEXT_BEGIN]",
+        `drive_file_id="${candidate.driveFileId}"`,
+        `web_view_link="${file.metadata.webViewLink || ""}"`,
+        buildSpreadsheetPreview({
+          fileName,
+          buffer: file.buffer,
+        }),
+        "[RAW_DRIVE_SPREADSHEET_CONTEXT_END]",
+      ].join("\n"));
+    } catch (error) {
+      console.warn("[chat-calculation-drive-preview-failed]", {
+        driveFileId: candidate.driveFileId,
+        driveName: candidate.driveName,
+        error: serializeErrorForClient(error),
+      });
+    }
+  }
+
+  if (chunks.length === 0) {
+    return "";
+  }
+
+  return [
+    "The app already downloaded the likely raw spreadsheet source below. Use this raw context for the calculation before trying external tools.",
+    "If the requested calculation needs rows not included in the preview, say so clearly instead of guessing.",
+    ...chunks,
+  ].join("\n\n");
 }
 
 function hasNoResultSignal(value: string) {
@@ -1100,7 +1301,10 @@ export async function POST(req: NextRequest) {
       const fileResolveStartedAt = performance.now();
       try {
         const candidates = await resolveCalculationDriveCandidates(userContent);
-        calculationDriveContext = buildCalculationDriveContext(candidates);
+        calculationDriveContext = [
+          buildCalculationDriveContext(candidates),
+          await buildCalculationRawDriveContext(candidates),
+        ].filter(Boolean).join("\n\n");
       } catch (error) {
         if (!isTenantDatabaseBoundaryError(error)) {
           console.warn("[chat-calculation-drive-context-failed]", {
