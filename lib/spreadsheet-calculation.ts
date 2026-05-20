@@ -83,6 +83,43 @@ function formatNumber(value: number) {
   }).format(value);
 }
 
+function parseCsvLine(line: string) {
+  const values: string[] = [];
+  let current = "";
+  let quoted = false;
+
+  for (let index = 0; index < line.length; index += 1) {
+    const char = line[index];
+    if (char === "\"" && line[index + 1] === "\"") {
+      current += "\"";
+      index += 1;
+    } else if (char === "\"") {
+      quoted = !quoted;
+    } else if (char === "," && !quoted) {
+      values.push(current.trim());
+      current = "";
+    } else {
+      current += char;
+    }
+  }
+
+  values.push(current.trim());
+  return values;
+}
+
+function parseCsv(buffer: Buffer, fileName: string): ParsedSpreadsheet {
+  const text = buffer.toString("utf8").replace(/^\uFEFF/, "");
+  const rows = text
+    .split(/\r?\n/)
+    .map(parseCsvLine)
+    .filter((row) => row.some((cell) => cell.trim() !== ""));
+
+  return {
+    fileName,
+    sheets: rows.length > 0 ? [{ name: "CSV", rows }] : [],
+  };
+}
+
 function parseSpreadsheet(buffer: Buffer, fileName: string): ParsedSpreadsheet | null {
   const extension = fileName.split(".").pop()?.toLowerCase();
   if (!extension || !["csv", "xls", "xlsx"].includes(extension)) {
@@ -91,6 +128,10 @@ function parseSpreadsheet(buffer: Buffer, fileName: string): ParsedSpreadsheet |
 
   if (buffer.byteLength > MAX_SPREADSHEET_BYTES) {
     throw new Error(`Spreadsheet is too large for inline calculation (${buffer.byteLength} bytes)`);
+  }
+
+  if (extension === "csv") {
+    return parseCsv(buffer, fileName);
   }
 
   const workbook = XLSX.read(buffer, {
