@@ -464,9 +464,9 @@ function buildSpreadsheetPreview(params: {
     cellText: false,
     WTF: false,
   });
-  const maxRowsPerSheet = params.maxRowsPerSheet ?? 260;
-  const maxSheets = params.maxSheets ?? 4;
-  const maxChars = params.maxChars ?? 70_000;
+  const maxRowsPerSheet = params.maxRowsPerSheet ?? 140;
+  const maxSheets = params.maxSheets ?? 3;
+  const maxChars = params.maxChars ?? 28_000;
   const chunks: string[] = [];
   let remainingChars = maxChars;
 
@@ -508,7 +508,7 @@ async function buildCalculationRawDriveContext(
 ) {
   const chunks: string[] = [];
 
-  for (const candidate of candidates.slice(0, 2)) {
+  for (const candidate of candidates.slice(0, 1)) {
     if (candidate.driveFileId.startsWith("local::")) {
       continue;
     }
