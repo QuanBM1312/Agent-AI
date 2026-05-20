@@ -878,15 +878,6 @@ export async function POST(req: NextRequest) {
       return await persistAndReturnResolution(buildExternalLimitResolution());
     }
 
-    const localShortcut = resolveLocalShortcut({
-      chatInput: userContent,
-      inlinedAttachmentText,
-    });
-
-    if (localShortcut) {
-      return await persistAndReturnResolution(localShortcut);
-    }
-
     if (file && fileBuffer && isCalculationPrompt(userContent)) {
       const spreadsheetStartedAt = performance.now();
       try {
@@ -919,6 +910,15 @@ export async function POST(req: NextRequest) {
           error: serializeErrorForClient(error),
         });
       }
+    }
+
+    const localShortcut = resolveLocalShortcut({
+      chatInput: userContent,
+      inlinedAttachmentText,
+    });
+
+    if (localShortcut) {
+      return await persistAndReturnResolution(localShortcut);
     }
 
     // 5. Forward to n8n
