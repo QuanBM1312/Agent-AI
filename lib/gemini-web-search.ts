@@ -1,4 +1,5 @@
 const DEFAULT_GEMINI_MODEL = "gemini-3.5-flash";
+const DEFAULT_GEMINI_FILE_SEARCH_MODEL = "gemini-2.5-flash";
 const GEMINI_API_HOST = "https://generativelanguage.googleapis.com";
 
 export interface GeminiWebCitation {
@@ -15,6 +16,12 @@ export interface GeminiWebSearchResult {
 }
 
 export interface GeminiSpreadsheetCalculationResult {
+  output: string;
+  citations: string[];
+  model: string;
+}
+
+export interface GeminiFileSearchCalculationResult {
   output: string;
   citations: string[];
   model: string;
@@ -276,4 +283,106 @@ export async function runGeminiSpreadsheetCalculation(
   }
 
   throw lastError ?? new Error("Gemini spreadsheet calculation failed without a usable API key");
+}
+
+export async function runGeminiFileSearchCalculation(params: {
+  prompt: string;
+  fileSearchStoreNames: string[];
+}): Promise<GeminiFileSearchCalculationResult> {
+  const apiKeys = readGeminiApiKeys();
+  if (apiKeys.length === 0) {
+    throw new Error("Gemini file search calculation is not configured");
+  }
+
+  const fileSearchStoreNames = Array.from(new Set(params.fileSearchStoreNames))
+    .map((value) => value.trim())
+    .filter(Boolean);
+
+  if (fileSearchStoreNames.length === 0) {
+    throw new Error("Gemini file search calculation has no file search stores");
+  }
+
+  const model = process.env.GEMINI_FILE_SEARCH_MODEL || DEFAULT_GEMINI_FILE_SEARCH_MODEL;
+  let lastError: Error | null = null;
+
+  for (const apiKey of apiKeys) {
+    const response = await fetch(
+      `${GEMINI_API_HOST}/v1beta/models/${model}:generateContent`,
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-goog-api-key": apiKey,
+        },
+        body: JSON.stringify({
+          systemInstruction: {
+            parts: [
+              {
+                text:
+                  "Bạn là trợ lý phân tích file nội bộ bằng Gemini File Search. Chỉ trả lời từ nội dung file được truy xuất. Với câu hỏi tính toán bảng tính, hãy tìm đúng file/sheet/cột liên quan rồi tính bằng LLM. Nếu File Search chỉ có summary hoặc không có cột cần thiết như Giá bán/Đơn giá/Số lượng, nói rõ giới hạn thay vì bịa. Trả lời tiếng Việt, ngắn gọn, có tên file/sheet/cột đã dùng nếu có.",
+              },
+            ],
+          },
+          contents: [
+            {
+              role: "user",
+              parts: [
+                {
+                  text: params.prompt,
+                },
+              ],
+            },
+          ],
+          tools: [
+            {
+              fileSearch: {
+                fileSearchStoreNames,
+              },
+            },
+          ],
+          generationConfig: {
+            temperature: 0,
+            maxOutputTokens: 1800,
+          },
+        }),
+      },
+    );
+
+    if (!response.ok) {
+      const retryable = response.status === 401 || response.status === 403 || response.status === 429;
+      lastError = new Error(`Gemini file search calculation failed with status ${response.status}`);
+      if (retryable) {
+        continue;
+      }
+      throw lastError;
+    }
+
+    const payload = (await response.json()) as Record<string, unknown>;
+    const candidate = Array.isArray(payload.candidates) && payload.candidates.length > 0
+      ? (payload.candidates[0] as Record<string, unknown>)
+      : null;
+    const finishReason = typeof candidate?.finishReason === "string" ? candidate.finishReason : "";
+    const content =
+      candidate && typeof candidate.content === "object"
+        ? (candidate.content as Record<string, unknown>)
+        : null;
+    const output = readTextPart(content?.parts);
+
+    if (!output) {
+      lastError = new Error(
+        finishReason
+          ? `Gemini file search calculation returned no answer text (${finishReason})`
+          : "Gemini file search calculation returned no answer text",
+      );
+      continue;
+    }
+
+    return {
+      output,
+      citations: fileSearchStoreNames,
+      model,
+    };
+  }
+
+  throw lastError ?? new Error("Gemini file search calculation failed without a usable API key");
 }

@@ -13,6 +13,7 @@ import {
 import { isTenantDatabaseBoundaryError } from "@/lib/db-runtime";
 import {
   isGeminiWebSearchConfigured,
+  runGeminiFileSearchCalculation,
   runGeminiSpreadsheetCalculation,
   runGeminiWebSearch,
 } from "@/lib/gemini-web-search";
@@ -37,6 +38,12 @@ interface LocalChatResolution {
   routeHint: string;
   citations?: string[];
 }
+
+type CalculationDriveCandidate = {
+  driveFileId: string;
+  driveName: string | null;
+  fileSearchName: string | null;
+};
 
 type RequestResolutionMeta = Record<string, unknown> & {
   webSearchPendingPrompt?: string;
@@ -242,11 +249,7 @@ async function resolveCalculationDriveCandidates(chatInput: string) {
     .sort((a, b) => b.score - a.score);
 
   const seen = new Set<string>();
-  const candidates: Array<{
-    driveFileId: string;
-    driveName: string | null;
-    fileSearchName: string | null;
-  }> = [];
+  const candidates: CalculationDriveCandidate[] = [];
 
   for (const item of scored) {
     const driveFileId = item.row.drive_file_id;
@@ -287,6 +290,17 @@ function buildCalculationDriveContext(candidates: Awaited<ReturnType<typeof reso
     "Agent0 instruction: run `python3 /a0/tools/read_drive_file.py --file-id \"<drive_file_id>\" --format markdown --max-rows 120 --max-sheets 8` on the most relevant candidate, then calculate from the returned rows. If several candidates are plausible, inspect the top 2 before answering.",
     "[INTERNAL_DRIVE_FILE_CANDIDATES_END]",
   ].join("\n");
+}
+
+function buildCalculationFileSearchStoreNames(candidates: CalculationDriveCandidate[]) {
+  return candidates
+    .map((candidate) => candidate.fileSearchName)
+    .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+    .map((value) => {
+      const documentIndex = value.indexOf("/documents/");
+      return documentIndex > 0 ? value.slice(0, documentIndex) : value;
+    })
+    .filter((value) => value.startsWith("fileSearchStores/"));
 }
 
 function parseGoogleServiceAccountCredentials() {
@@ -1298,10 +1312,12 @@ export async function POST(req: NextRequest) {
         : chatInput;
 
     let calculationDriveContext = "";
+    let calculationDriveCandidates: CalculationDriveCandidate[] = [];
     if (requestType === "chat" && !hasAttachment && isCalculationPrompt(userContent)) {
       const fileResolveStartedAt = performance.now();
       try {
         const candidates = await resolveCalculationDriveCandidates(userContent);
+        calculationDriveCandidates = candidates;
         calculationDriveContext = [
           buildCalculationDriveContext(candidates),
           await buildCalculationRawDriveContext(candidates),
@@ -1317,6 +1333,8 @@ export async function POST(req: NextRequest) {
       }
       mark("calculation_drive_context", fileResolveStartedAt);
     }
+
+    const calculationFileSearchStoreNames = buildCalculationFileSearchStoreNames(calculationDriveCandidates);
 
     const effectiveChatInput =
       [
@@ -1354,6 +1372,43 @@ export async function POST(req: NextRequest) {
       } catch (error) {
         mark("gemini_spreadsheet_calculation", geminiSpreadsheetStartedAt);
         console.warn("[chat-gemini-spreadsheet-calculation-failed]", {
+          requestId,
+          sessionId,
+          error: serializeErrorForClient(error),
+        });
+      }
+    }
+
+    if (
+      requestType === "chat" &&
+      !hasAttachment &&
+      calculationFileSearchStoreNames.length > 0 &&
+      geminiWebSearchEnabled
+    ) {
+      const geminiFileSearchStartedAt = performance.now();
+      try {
+        const calculationResult = await runGeminiFileSearchCalculation({
+          prompt: effectiveChatInput,
+          fileSearchStoreNames: calculationFileSearchStoreNames,
+        });
+        mark("gemini_file_search_calculation", geminiFileSearchStartedAt);
+
+        return await persistAndReturnResolution(
+          {
+            output: calculationResult.output,
+            routeHint: "gemini_file_search_calculation",
+            citations: calculationResult.citations,
+          },
+          {
+            spreadsheetCalculationUsed: true,
+            webSearchUsed: false,
+            webSearchProvider: "gemini_file_search",
+            webSearchModel: calculationResult.model,
+          },
+        );
+      } catch (error) {
+        mark("gemini_file_search_calculation", geminiFileSearchStartedAt);
+        console.warn("[chat-gemini-file-search-calculation-failed]", {
           requestId,
           sessionId,
           error: serializeErrorForClient(error),
