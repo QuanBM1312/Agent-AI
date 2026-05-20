@@ -1618,9 +1618,10 @@ export async function POST(req: NextRequest) {
             },
           );
         }
+        const shouldSkipRawDriveContext = parsePriceThreshold(userContent) !== null;
         calculationDriveContext = [
           buildCalculationDriveContext(candidates),
-          await buildCalculationRawDriveContext(candidates),
+          shouldSkipRawDriveContext ? "" : await buildCalculationRawDriveContext(candidates),
         ].filter(Boolean).join("\n\n");
       } catch (error) {
         if (!isTenantDatabaseBoundaryError(error)) {
