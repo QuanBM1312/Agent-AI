@@ -141,6 +141,11 @@ const sidebarTabs = [
     pathPattern: /\/users(\/|$)/,
     readyText: /Quản lý Nhân sự/i,
   },
+  {
+    label: "Kỹ năng",
+    pathPattern: /\/skills(\/|$)/,
+    readyText: /Trạng thái các năng lực/i,
+  },
 ];
 
 async function ensureSidebarButton(label) {
