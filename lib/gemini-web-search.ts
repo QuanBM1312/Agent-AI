@@ -14,6 +14,12 @@ export interface GeminiWebSearchResult {
   model: string;
 }
 
+export interface GeminiSpreadsheetCalculationResult {
+  output: string;
+  citations: string[];
+  model: string;
+}
+
 function readGeminiApiKeys() {
   const rawKeys = [
     process.env.GEMINI_API_KEYS,
@@ -189,4 +195,85 @@ export async function runGeminiWebSearch(prompt: string): Promise<GeminiWebSearc
   }
 
   throw lastError ?? new Error("Gemini web search failed without a usable API key");
+}
+
+export async function runGeminiSpreadsheetCalculation(
+  prompt: string,
+): Promise<GeminiSpreadsheetCalculationResult> {
+  const apiKeys = readGeminiApiKeys();
+  if (apiKeys.length === 0) {
+    throw new Error("Gemini spreadsheet calculation is not configured");
+  }
+
+  const model = process.env.GEMINI_INTERNAL_MODEL || process.env.GEMINI_WEB_MODEL || DEFAULT_GEMINI_MODEL;
+  let lastError: Error | null = null;
+
+  for (const apiKey of apiKeys) {
+    const response = await fetch(
+      `${GEMINI_API_HOST}/v1beta/models/${model}:generateContent`,
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-goog-api-key": apiKey,
+        },
+        body: JSON.stringify({
+          systemInstruction: {
+            parts: [
+              {
+                text:
+                  "Bạn là trợ lý phân tích bảng tính nội bộ. Chỉ tính từ RAW_DRIVE_SPREADSHEET_CONTEXT được cung cấp trong prompt. Không được dùng web. Không được bịa dữ liệu ngoài bảng. Nếu dữ liệu bị cắt hoặc thiếu cột cần thiết, nói rõ giới hạn. Trả lời tiếng Việt, ngắn gọn, có tên file/sheet/cột đã dùng.",
+              },
+            ],
+          },
+          contents: [
+            {
+              role: "user",
+              parts: [
+                {
+                  text: prompt,
+                },
+              ],
+            },
+          ],
+          generationConfig: {
+            temperature: 0,
+            maxOutputTokens: 1600,
+          },
+        }),
+      },
+    );
+
+    if (!response.ok) {
+      const retryable = response.status === 401 || response.status === 403 || response.status === 429;
+      lastError = new Error(`Gemini spreadsheet calculation failed with status ${response.status}`);
+      if (retryable) {
+        continue;
+      }
+      throw lastError;
+    }
+
+    const payload = (await response.json()) as Record<string, unknown>;
+    const candidate = Array.isArray(payload.candidates) && payload.candidates.length > 0
+      ? (payload.candidates[0] as Record<string, unknown>)
+      : null;
+    const content =
+      candidate && typeof candidate.content === "object"
+        ? (candidate.content as Record<string, unknown>)
+        : null;
+    const output = readTextPart(content?.parts);
+
+    if (!output) {
+      lastError = new Error("Gemini spreadsheet calculation returned no answer text");
+      continue;
+    }
+
+    return {
+      output,
+      citations: [],
+      model,
+    };
+  }
+
+  throw lastError ?? new Error("Gemini spreadsheet calculation failed without a usable API key");
 }

@@ -13,6 +13,7 @@ import {
 import { isTenantDatabaseBoundaryError } from "@/lib/db-runtime";
 import {
   isGeminiWebSearchConfigured,
+  runGeminiSpreadsheetCalculation,
   runGeminiWebSearch,
 } from "@/lib/gemini-web-search";
 import {
@@ -1325,6 +1326,40 @@ export async function POST(req: NextRequest) {
           ? `[ATTACHED_FILE_TEXT_BEGIN]\n${inlinedAttachmentText}\n[ATTACHED_FILE_TEXT_END]`
           : "",
       ].filter(Boolean).join("\n\n");
+
+    if (
+      requestType === "chat" &&
+      !hasAttachment &&
+      calculationDriveContext.includes("[RAW_DRIVE_SPREADSHEET_CONTEXT_BEGIN]") &&
+      geminiWebSearchEnabled
+    ) {
+      const geminiSpreadsheetStartedAt = performance.now();
+      try {
+        const calculationResult = await runGeminiSpreadsheetCalculation(effectiveChatInput);
+        mark("gemini_spreadsheet_calculation", geminiSpreadsheetStartedAt);
+
+        return await persistAndReturnResolution(
+          {
+            output: calculationResult.output,
+            routeHint: "gemini_spreadsheet_calculation",
+            citations: calculationResult.citations,
+          },
+          {
+            spreadsheetCalculationUsed: true,
+            webSearchUsed: false,
+            webSearchProvider: "gemini_internal_spreadsheet",
+            webSearchModel: calculationResult.model,
+          },
+        );
+      } catch (error) {
+        mark("gemini_spreadsheet_calculation", geminiSpreadsheetStartedAt);
+        console.warn("[chat-gemini-spreadsheet-calculation-failed]", {
+          requestId,
+          sessionId,
+          error: serializeErrorForClient(error),
+        });
+      }
+    }
 
     const outgoingFormData = new FormData();
     outgoingFormData.append("sessionId", sessionId);
