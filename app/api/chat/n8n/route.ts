@@ -265,9 +265,11 @@ async function resolveCalculationDriveCandidates(chatInput: string) {
     .filter((row) => row.drive_file_id)
     .map((row) => {
       const haystack = normalizeIntentText(`${row.drive_name ?? ""} ${row.file_search_name ?? ""}`);
+      const hasPriceMarker = /\b(bang gia|bao gia|niem yet|don gia|price)\b/.test(haystack);
       const score =
         terms.reduce((total, term) => total + (haystack.includes(term) ? 1 : 0), 0) +
-        (pricePrompt && /\b(bang gia|bao gia|niem yet|price)\b/.test(haystack) ? 4 : 0);
+        (pricePrompt && hasPriceMarker ? 20 : 0) -
+        (pricePrompt && !hasPriceMarker ? 6 : 0);
       return { row, score };
     })
     .sort((a, b) => b.score - a.score);
