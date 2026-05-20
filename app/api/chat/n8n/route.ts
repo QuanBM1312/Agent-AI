@@ -168,11 +168,11 @@ function isCalculationPrompt(value: string) {
   }
 
   const calculationSignal =
-    /\b(tinh|tinh toan|lai lo|lai|lo|loi nhuan|doanh thu|chi phi|tong|chenh lech|bien loi nhuan|margin|cong no|ton kho|nhap xuat ton|so luong|don gia|thanh tien)\b/.test(
+    /\b(tinh|tinh toan|phan tich|loc|tim|dem|bao nhieu|liet ke|danh sach|so sanh|doi chieu|xep hang|top|cao nhat|thap nhat|lon nhat|nho nhat|vuot|tren|duoi|lai lo|lai|lo|loi nhuan|doanh thu|chi phi|tong|trung binh|chenh lech|bien loi nhuan|margin|cong no|ton kho|nhap xuat ton|so luong|don gia|thanh tien|tieu chi|dieu kien)\b/.test(
       normalized,
     );
   const dataSignal =
-    /\b(file|excel|xls|xlsx|bang|sheet|bao cao|saleadmin|kho|hang hoa|mat hang|san pham|doanh so|bang gia|gia|don vi|don vi tinh)\b/.test(
+    /\b(file|excel|xls|xlsx|bang|sheet|bao cao|saleadmin|hop dong|du an|kho|hang hoa|mat hang|san pham|khach hang|nhan vien|doanh so|bang gia|gia|don vi|don vi tinh)\b/.test(
       normalized,
     );
 
@@ -200,15 +200,29 @@ function buildCalculationFileSearchTerms(value: string) {
 
   if (/\b(saleadmin|sale admin|doanh thu|lai lo|loi nhuan)\b/.test(normalized)) {
     terms.add("sale");
+    terms.add("doanh");
+  }
+
+  if (/\b(so luong|sl|ton kho|nhap xuat ton|ton|nhap|xuat)\b/.test(normalized)) {
+    terms.add("kho");
+    terms.add("ton");
+  }
+
+  if (/\b(hop dong|du an|cong trinh|thanh toan|cong no)\b/.test(normalized)) {
+    terms.add("hop dong");
+    terms.add("du an");
   }
 
   for (const term of normalized.split(" ")) {
-    if (term.length >= 4 && !/^(tinh|toan|toan bo|nhung|tren|duoi|don|vi|dong)$/.test(term)) {
+    if (
+      term.length >= 4 &&
+      !/^(tinh|toan|toan bo|nhung|cac|theo|tieu|chi|dieu|kien|tren|duoi|don|vi|dong|file|bang|sheet|excel)$/.test(term)
+    ) {
       terms.add(term);
     }
   }
 
-  return [...terms].slice(0, 8);
+  return [...terms].slice(0, 14);
 }
 
 async function resolveCalculationDriveCandidates(chatInput: string) {
@@ -295,22 +309,51 @@ function buildCalculationDriveContext(candidates: Awaited<ReturnType<typeof reso
 
   return [
     "[INTERNAL_DRIVE_FILE_CANDIDATES_BEGIN]",
-    "The app resolved these likely Google Drive source files for this spreadsheet calculation. Use these IDs before trying Supabase discovery.",
+    "The app resolved these likely Google Drive source files for this internal file analysis/calculation. Use these IDs before trying Supabase discovery.",
     ...lines,
-    "Agent0 instruction: run `python3 /a0/tools/read_drive_file.py --file-id \"<drive_file_id>\" --format markdown --max-rows 120 --max-sheets 8` on the most relevant candidate, then calculate from the returned rows. If several candidates are plausible, inspect the top 2 before answering.",
+    "Agent0 instruction: run `python3 /a0/tools/read_drive_file.py --file-id \"<drive_file_id>\" --format markdown --max-rows 120 --max-sheets 8` on the most relevant candidate, then analyze/filter/count/compare/calculate from the returned rows. If several candidates are plausible, inspect the top 2 before answering.",
     "[INTERNAL_DRIVE_FILE_CANDIDATES_END]",
   ].join("\n");
 }
 
-function buildCalculationFileSearchStoreNames(candidates: CalculationDriveCandidate[]) {
-  return candidates
+async function resolveFallbackFileSearchStoreNames() {
+  const rows = await prisma.file_search_storage.findMany({
+    where: {
+      file_search_name: {
+        startsWith: "fileSearchStores/",
+      },
+    },
+    select: {
+      file_search_name: true,
+    },
+    take: 20,
+  });
+
+  return rows
+    .map((row) => row.file_search_name)
+    .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+    .map(extractFileSearchStoreName)
+    .filter(Boolean);
+}
+
+function extractFileSearchStoreName(value: string) {
+  const documentIndex = value.indexOf("/documents/");
+  const storeName = documentIndex > 0 ? value.slice(0, documentIndex) : value;
+  return storeName.startsWith("fileSearchStores/") ? storeName : "";
+}
+
+async function buildCalculationFileSearchStoreNames(candidates: CalculationDriveCandidate[]) {
+  const storeNames = candidates
     .map((candidate) => candidate.fileSearchName)
     .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
-    .map((value) => {
-      const documentIndex = value.indexOf("/documents/");
-      return documentIndex > 0 ? value.slice(0, documentIndex) : value;
-    })
+    .map(extractFileSearchStoreName)
     .filter((value) => value.startsWith("fileSearchStores/"));
+
+  if (storeNames.length > 0) {
+    return Array.from(new Set(storeNames));
+  }
+
+  return Array.from(new Set(await resolveFallbackFileSearchStoreNames()));
 }
 
 function parseGoogleServiceAccountCredentials() {
@@ -1344,7 +1387,20 @@ export async function POST(req: NextRequest) {
       mark("calculation_drive_context", fileResolveStartedAt);
     }
 
-    const calculationFileSearchStoreNames = buildCalculationFileSearchStoreNames(calculationDriveCandidates);
+    let calculationFileSearchStoreNames: string[] = [];
+    if (requestType === "chat" && !hasAttachment && isCalculationPrompt(userContent)) {
+      const fileSearchStoreStartedAt = performance.now();
+      try {
+        calculationFileSearchStoreNames = await buildCalculationFileSearchStoreNames(calculationDriveCandidates);
+      } catch (error) {
+        console.warn("[chat-calculation-file-search-store-failed]", {
+          requestId,
+          sessionId,
+          error: serializeErrorForClient(error),
+        });
+      }
+      mark("calculation_file_search_store", fileSearchStoreStartedAt);
+    }
 
     const effectiveChatInput =
       [
