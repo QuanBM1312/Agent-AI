@@ -206,16 +206,23 @@ export async function POST(request: Request) {
 
     // Step 3: Trigger the n8n vectorization workflow
     const n8nWebhookUrl = process.env.N8N_INGESTION_WEBHOOK_URL;
+    let ingestionStatus: {
+      triggered: boolean;
+      status?: number;
+      ok?: boolean;
+      error?: string;
+    } = { triggered: false };
+
     if (!n8nWebhookUrl) {
       console.warn('N8N_INGESTION_WEBHOOK_URL is not defined. Skipping direct n8n trigger.');
     } else {
       try {
-        // Fire and forget
-        fetch(n8nWebhookUrl, {
+        const ingestionResponse = await fetch(n8nWebhookUrl, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
           },
+          signal: AbortSignal.timeout(10_000),
           body: JSON.stringify({
             id: uploadedFile.id,
             name: uploadedFile.name,
@@ -224,8 +231,17 @@ export async function POST(request: Request) {
             dataBase64: fileBuffer.toString("base64"),
           }),
         });
+        ingestionStatus = {
+          triggered: true,
+          status: ingestionResponse.status,
+          ok: ingestionResponse.ok,
+        };
       } catch (n8nError) {
         console.error('Failed to trigger n8n ingestion webhook:', n8nError);
+        ingestionStatus = {
+          triggered: true,
+          error: n8nError instanceof Error ? n8nError.message : String(n8nError),
+        };
       }
     }
 
@@ -234,6 +250,7 @@ export async function POST(request: Request) {
       message: 'File uploaded successfully. Processing has been initiated.',
       fileId: uploadedFile.id,
       fileName: uploadedFile.name,
+      ingestion: ingestionStatus,
     });
 
   } catch (error: unknown) {
