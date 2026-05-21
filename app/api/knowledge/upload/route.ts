@@ -25,7 +25,11 @@ function parseServiceAccountCredentials() {
 
 function buildGoogleDriveAuth() {
   const serviceAccount = parseServiceAccountCredentials();
-  const impersonatedUser = process.env.GOOGLE_DRIVE_IMPERSONATED_USER_EMAIL;
+  const useDomainWideDelegation =
+    process.env.GOOGLE_SERVICE_ACCOUNT_USE_DOMAIN_WIDE_DELEGATION === "1";
+  const impersonatedUser = useDomainWideDelegation
+    ? process.env.GOOGLE_DRIVE_IMPERSONATED_USER_EMAIL
+    : undefined;
 
   if (serviceAccount?.client_email && serviceAccount?.private_key) {
     return new google.auth.JWT({
@@ -173,6 +177,25 @@ export async function POST(request: Request) {
         hash: sizeString,
       }
     });
+
+    const existingSearchStorage = await prisma.file_search_storage.findFirst({
+      where: {
+        drive_file_id: uploadedFile.id,
+      },
+      select: {
+        id: true,
+      },
+    });
+
+    if (!existingSearchStorage) {
+      await prisma.file_search_storage.create({
+        data: {
+          drive_file_id: uploadedFile.id,
+          drive_name: uploadedFile.name,
+          hash: sizeString,
+        },
+      });
+    }
 
     // Step 3: Trigger the n8n vectorization workflow
     const n8nWebhookUrl = process.env.N8N_INGESTION_WEBHOOK_URL;
