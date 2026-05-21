@@ -308,6 +308,8 @@ async function resolveCalculationDriveCandidates(chatInput: string) {
   const seen = new Set<string>();
   const candidates: CalculationDriveCandidate[] = [];
 
+  const maxCandidates = pricePrompt ? 20 : 8;
+
   for (const item of scored) {
     const driveFileId = item.row.drive_file_id;
     if (!driveFileId || seen.has(driveFileId)) {
@@ -319,7 +321,7 @@ async function resolveCalculationDriveCandidates(chatInput: string) {
       driveName: item.row.drive_name,
       fileSearchName: item.row.file_search_name,
     });
-    if (candidates.length >= 8) {
+    if (candidates.length >= maxCandidates) {
       break;
     }
   }
@@ -529,7 +531,7 @@ async function resolveDriveUnitPriceThresholdCalculation(params: {
     return null;
   }
 
-  for (const candidate of params.candidates.slice(0, 3)) {
+  for (const candidate of params.candidates.slice(0, 20)) {
     if (candidate.driveFileId.startsWith("local::") || candidate.driveFileId.startsWith("surrogate-")) {
       continue;
     }
