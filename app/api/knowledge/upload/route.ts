@@ -62,7 +62,7 @@ function buildGoogleDriveAuth() {
 
 async function uploadToGoogleDrive(
   file: File
-): Promise<drive_v3.Schema$File> {
+): Promise<{ fileData: drive_v3.Schema$File; fileBuffer: Buffer }> {
   const folderId = process.env.GOOGLE_DRIVE_FOLDER_ID;
 
   if (!folderId) {
@@ -94,7 +94,7 @@ async function uploadToGoogleDrive(
   const fileData = response.data;
   console.log(`Successfully uploaded. File ID: ${fileData.id}`);
 
-  return fileData;
+  return { fileData, fileBuffer };
 }
 
 
@@ -157,7 +157,7 @@ export async function POST(request: Request) {
     }
 
     // Step 1: Upload the file to Google Drive
-    const uploadedFile = await uploadToGoogleDrive(file);
+    const { fileData: uploadedFile, fileBuffer } = await uploadToGoogleDrive(file);
 
     if (!uploadedFile.id) {
       throw new Error("Failed to get file ID from Google Drive");
@@ -213,6 +213,8 @@ export async function POST(request: Request) {
             id: uploadedFile.id,
             name: uploadedFile.name,
             mimeType: file.type,
+            size: file.size,
+            dataBase64: fileBuffer.toString("base64"),
           }),
         });
       } catch (n8nError) {
