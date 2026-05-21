@@ -28,6 +28,13 @@ interface TableProfile {
   columns: ColumnProfile[];
 }
 
+interface RowFilter {
+  column: ColumnProfile;
+  operator: "gt" | "gte" | "lt" | "lte";
+  threshold: number;
+  description: string;
+}
+
 export interface SpreadsheetCalculationResolution {
   output: string;
   routeHint: "spreadsheet_calculation" | "spreadsheet_calculation_needs_columns";
@@ -81,6 +88,26 @@ function formatNumber(value: number) {
   return new Intl.NumberFormat("vi-VN", {
     maximumFractionDigits: Number.isInteger(value) ? 0 : 2,
   }).format(value);
+}
+
+function parsePromptAmount(valueText: string, unitText?: string) {
+  const amount = Number.parseFloat(valueText.replace(",", "."));
+  if (!Number.isFinite(amount)) {
+    return null;
+  }
+
+  const unit = normalizeText(unitText ?? "");
+  if (/\b(ty|ti|billion)\b/.test(unit)) {
+    return amount * 1_000_000_000;
+  }
+  if (/\b(tr|trieu|m|million)\b/.test(unit)) {
+    return amount * 1_000_000;
+  }
+  if (/\b(k|nghin|ngan|thousand)\b/.test(unit)) {
+    return amount * 1_000;
+  }
+
+  return amount;
 }
 
 function parseCsvLine(line: string) {
@@ -259,6 +286,137 @@ function chooseBestTable(tables: TableProfile[], prompt: string) {
   })[0];
 }
 
+function compareNumber(value: number, operator: RowFilter["operator"], threshold: number) {
+  if (operator === "gt") return value > threshold;
+  if (operator === "gte") return value >= threshold;
+  if (operator === "lt") return value < threshold;
+  return value <= threshold;
+}
+
+function formatOperator(operator: RowFilter["operator"]) {
+  if (operator === "gt") return ">";
+  if (operator === "gte") return ">=";
+  if (operator === "lt") return "<";
+  return "<=";
+}
+
+function detectPromptThreshold(prompt: string) {
+  const normalized = normalizeText(prompt);
+  const patterns: Array<{ operator: RowFilter["operator"]; regex: RegExp }> = [
+    { operator: "gte", regex: /\b(?:tu|toi thieu|it nhat|>=)\s*(\d+(?:[.,]\d+)?)\s*(ty|ti|trieu|tr|m|million|nghin|ngan|k)?\b/ },
+    { operator: "gt", regex: /\b(?:tren|hon|lon hon|cao hon|vuot qua|>)\s*(\d+(?:[.,]\d+)?)\s*(ty|ti|trieu|tr|m|million|nghin|ngan|k)?\b/ },
+    { operator: "lte", regex: /\b(?:khong qua|toi da|<=)\s*(\d+(?:[.,]\d+)?)\s*(ty|ti|trieu|tr|m|million|nghin|ngan|k)?\b/ },
+    { operator: "lt", regex: /\b(?:duoi|nho hon|thap hon|<)\s*(\d+(?:[.,]\d+)?)\s*(ty|ti|trieu|tr|m|million|nghin|ngan|k)?\b/ },
+  ];
+
+  for (const pattern of patterns) {
+    const match = normalized.match(pattern.regex);
+    if (!match) {
+      continue;
+    }
+
+    const threshold = parsePromptAmount(match[1], match[2]);
+    if (threshold !== null) {
+      return {
+        operator: pattern.operator,
+        threshold,
+      };
+    }
+  }
+
+  return null;
+}
+
+function pickFilterColumns(table: TableProfile, prompt: string) {
+  const normalizedPrompt = normalizeText(prompt);
+
+  if (/\b(don gia|gia ban|gia niem yet|price|unit price)\b/.test(normalizedPrompt)) {
+    return pickColumns(table, [
+      /\bdon gia\b/,
+      /\bgia ban\b/,
+      /\bgia niem yet\b/,
+      /\bprice\b/,
+      /\bunit price\b/,
+    ]);
+  }
+
+  if (/\b(gia|bao gia)\b/.test(normalizedPrompt)) {
+    return pickColumns(table, [
+      /\bdon gia\b/,
+      /\bgia ban\b/,
+      /\bgia niem yet\b/,
+      /\bgia\b/,
+      /\bprice\b/,
+    ]);
+  }
+
+  if (/\b(so luong|ton kho|sl|quantity|qty)\b/.test(normalizedPrompt)) {
+    return pickColumns(table, [
+      /\bso luong\b/,
+      /\bton kho\b/,
+      /\bsl\b/,
+      /\bquantity\b/,
+      /\bqty\b/,
+    ]);
+  }
+
+  if (/\b(doanh thu|thanh tien|so tien|gia tri|amount|total)\b/.test(normalizedPrompt)) {
+    return pickColumns(table, [
+      /\bdoanh thu\b/,
+      /\bthanh tien\b/,
+      /\bso tien\b/,
+      /\bgia tri\b/,
+      /\bamount\b/,
+      /\btotal\b/,
+    ]);
+  }
+
+  return [];
+}
+
+function buildRowFilter(table: TableProfile, prompt: string): RowFilter | null {
+  const threshold = detectPromptThreshold(prompt);
+  if (!threshold) {
+    return null;
+  }
+
+  const column = pickFilterColumns(table, prompt)[0];
+  if (!column) {
+    return null;
+  }
+
+  return {
+    column,
+    operator: threshold.operator,
+    threshold: threshold.threshold,
+    description: `${column.name} ${formatOperator(threshold.operator)} ${formatNumber(threshold.threshold)}`,
+  };
+}
+
+function applyRowFilter(table: TableProfile, filter: RowFilter): TableProfile {
+  const dataRows = table.dataRows.filter((row) => {
+    const value = parseNumber(row[filter.column.index]);
+    return value !== null && compareNumber(value, filter.operator, filter.threshold);
+  });
+
+  const columns = table.headers.map((header, index) => {
+    const values = dataRows.map((row) => parseNumber(row[index])).filter((value) => value !== null);
+    return {
+      index,
+      name: header,
+      normalizedName: normalizeText(header),
+      numericCount: values.length,
+      sum: values.reduce((total, value) => total + (value ?? 0), 0),
+    };
+  });
+
+  return {
+    ...table,
+    dataRows,
+    columns,
+  };
+}
+
 function buildNeedsColumnsResolution(params: {
   spreadsheet: ParsedSpreadsheet;
   tables: TableProfile[];
@@ -295,6 +453,8 @@ function buildAggregateResolution(params: {
   columns: ColumnProfile[];
   prompt: string;
   operationLabel: string;
+  rowFilter: RowFilter | null;
+  originalRowCount: number;
 }): SpreadsheetCalculationResolution {
   const lines = params.columns.slice(0, 6).map((column) => {
     return `- ${column.name}: ${formatNumber(column.sum)} (${column.numericCount} dòng số)`;
@@ -307,13 +467,16 @@ function buildAggregateResolution(params: {
   return {
     output: [
       `Tôi đã tính từ file "${params.spreadsheet.fileName}", sheet "${params.table.sheetName}".`,
+      params.rowFilter
+        ? `Điều kiện lọc: ${params.rowFilter.description}. Giữ ${params.table.dataRows.length}/${params.originalRowCount} dòng dữ liệu.`
+        : "",
       shouldShowGrandTotal
         ? `${params.operationLabel}: ${formatNumber(total)}`
         : `${params.operationLabel} theo từng cột liên quan (không cộng chéo vì có thể là các chỉ tiêu khác nhau):`,
       "Chi tiết cột:",
       ...lines,
       `Nguồn: header dòng ${params.table.headerRowIndex + 1}, ${params.table.dataRows.length} dòng dữ liệu có nội dung.`,
-    ].join("\n"),
+    ].filter(Boolean).join("\n"),
     routeHint: "spreadsheet_calculation",
     citations: [`${params.spreadsheet.fileName} / ${params.table.sheetName}`],
     meta: {
@@ -322,6 +485,9 @@ function buildAggregateResolution(params: {
       headerRow: params.table.headerRowIndex + 1,
       columns: params.columns.map((column) => column.name),
       operation: "aggregate",
+      rowFilter: params.rowFilter?.description ?? null,
+      originalRowCount: params.originalRowCount,
+      filteredRowCount: params.table.dataRows.length,
     },
   };
 }
@@ -331,6 +497,8 @@ function buildProfitResolution(params: {
   table: TableProfile;
   revenue: ColumnProfile;
   cost: ColumnProfile;
+  rowFilter: RowFilter | null;
+  originalRowCount: number;
 }): SpreadsheetCalculationResolution {
   const profit = params.revenue.sum - params.cost.sum;
   const margin = params.revenue.sum !== 0 ? profit / params.revenue.sum : null;
@@ -338,6 +506,9 @@ function buildProfitResolution(params: {
   return {
     output: [
       `Tôi đã tính lãi/lỗ từ file "${params.spreadsheet.fileName}", sheet "${params.table.sheetName}".`,
+      params.rowFilter
+        ? `Điều kiện lọc: ${params.rowFilter.description}. Giữ ${params.table.dataRows.length}/${params.originalRowCount} dòng dữ liệu.`
+        : "",
       `Doanh thu (${params.revenue.name}): ${formatNumber(params.revenue.sum)}`,
       `Chi phí/giá vốn (${params.cost.name}): ${formatNumber(params.cost.sum)}`,
       `Lãi/lỗ = Doanh thu - Chi phí = ${formatNumber(profit)}`,
@@ -353,6 +524,9 @@ function buildProfitResolution(params: {
       revenueColumn: params.revenue.name,
       costColumn: params.cost.name,
       operation: "profit",
+      rowFilter: params.rowFilter?.description ?? null,
+      originalRowCount: params.originalRowCount,
+      filteredRowCount: params.table.dataRows.length,
     },
   };
 }
@@ -378,7 +552,11 @@ export function resolveSpreadsheetCalculation(params: {
     return buildNeedsColumnsResolution({ spreadsheet, tables });
   }
 
-  const revenueColumns = pickColumns(table, [
+  const rowFilter = buildRowFilter(table, params.prompt);
+  const originalRowCount = table.dataRows.length;
+  const calculationTable = rowFilter ? applyRowFilter(table, rowFilter) : table;
+
+  const revenueColumns = pickColumns(calculationTable, [
     /\bdoanh thu\b/,
     /\bthanh tien\b/,
     /\btien ban\b/,
@@ -387,7 +565,7 @@ export function resolveSpreadsheetCalculation(params: {
     /\bamount\b/,
     /\brevenue\b/,
   ]);
-  const costColumns = pickColumns(table, [
+  const costColumns = pickColumns(calculationTable, [
     /\bchi phi\b/,
     /\bgia von\b/,
     /\bgia nhap\b/,
@@ -395,7 +573,7 @@ export function resolveSpreadsheetCalculation(params: {
     /\bcost\b/,
     /\bexpense\b/,
   ]);
-  const inventoryColumns = pickColumns(table, [
+  const inventoryColumns = pickColumns(calculationTable, [
     /\bton cuoi\b/,
     /\bton kho\b/,
     /\bsl con lai\b/,
@@ -404,7 +582,7 @@ export function resolveSpreadsheetCalculation(params: {
     /\bquantity\b/,
     /\bqty\b/,
   ]);
-  const amountColumns = pickColumns(table, [
+  const amountColumns = pickColumns(calculationTable, [
     /\btong\b/,
     /\bthanh tien\b/,
     /\bso tien\b/,
@@ -417,7 +595,14 @@ export function resolveSpreadsheetCalculation(params: {
     const revenue = revenueColumns[0];
     const cost = costColumns[0];
     if (revenue && cost) {
-      return buildProfitResolution({ spreadsheet, table, revenue, cost });
+      return buildProfitResolution({
+        spreadsheet,
+        table: calculationTable,
+        revenue,
+        cost,
+        rowFilter,
+        originalRowCount,
+      });
     }
     return buildNeedsColumnsResolution({ spreadsheet, tables });
   }
@@ -426,10 +611,12 @@ export function resolveSpreadsheetCalculation(params: {
     if (inventoryColumns.length > 0) {
       return buildAggregateResolution({
         spreadsheet,
-        table,
+        table: calculationTable,
         columns: inventoryColumns,
         prompt: params.prompt,
         operationLabel: "Tổng số lượng/tồn kho",
+        rowFilter,
+        originalRowCount,
       });
     }
   }
@@ -439,10 +626,12 @@ export function resolveSpreadsheetCalculation(params: {
     if (columns.length > 0) {
       return buildAggregateResolution({
         spreadsheet,
-        table,
+        table: calculationTable,
         columns,
         prompt: params.prompt,
         operationLabel: "Tổng",
+        rowFilter,
+        originalRowCount,
       });
     }
   }
