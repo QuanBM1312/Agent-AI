@@ -23,7 +23,8 @@ function parseServiceAccountCredentials() {
   return null;
 }
 
-function buildGoogleDriveAuth() {
+function buildGoogleDriveUploadAuthCandidates() {
+  const authCandidates = [];
   const serviceAccount = parseServiceAccountCredentials();
   const useDomainWideDelegation =
     process.env.GOOGLE_SERVICE_ACCOUNT_USE_DOMAIN_WIDE_DELEGATION === "1";
@@ -32,32 +33,30 @@ function buildGoogleDriveAuth() {
     : undefined;
 
   if (serviceAccount?.client_email && serviceAccount?.private_key) {
-    return new google.auth.JWT({
+    authCandidates.push(new google.auth.JWT({
       email: serviceAccount.client_email,
       key: serviceAccount.private_key,
       scopes: DRIVE_SCOPES,
       subject: impersonatedUser,
-    });
+    }));
   }
 
   const clientId = process.env.GOOGLE_OAUTH_CLIENT_ID;
   const clientSecret = process.env.GOOGLE_OAUTH_CLIENT_SECRET;
   const refreshToken = process.env.GOOGLE_OAUTH_REFRESH_TOKEN;
 
-  if (!clientId || !clientSecret || !refreshToken) {
-    throw new Error(
-      "Missing Google Drive credentials. Provide GOOGLE_SERVICE_ACCOUNT_BASE64 / GOOGLE_SERVICE_ACCOUNT_JSON / GDRIVE_JSON, or the OAuth fallback env vars."
+  if (clientId && clientSecret && refreshToken) {
+    const auth = new google.auth.OAuth2(
+      clientId,
+      clientSecret,
+      "https://developers.google.com/oauthplayground" // redirect URI
     );
+
+    auth.setCredentials({ refresh_token: refreshToken });
+    authCandidates.push(auth);
   }
 
-  const auth = new google.auth.OAuth2(
-    clientId,
-    clientSecret,
-    "https://developers.google.com/oauthplayground" // redirect URI
-  );
-
-  auth.setCredentials({ refresh_token: refreshToken });
-  return auth;
+  return authCandidates;
 }
 
 async function uploadToGoogleDrive(
@@ -69,32 +68,40 @@ async function uploadToGoogleDrive(
     throw new Error("Missing GOOGLE_DRIVE_FOLDER_ID");
   }
 
-  const auth = buildGoogleDriveAuth();
-  const drive = google.drive({ version: 'v3', auth });
-
   console.log(`Starting upload to Google Drive for file: ${file.name}`);
 
   // 3. Prepare content
   const fileBuffer = Buffer.from(await file.arrayBuffer());
-  const media = {
-    mimeType: file.type,
-    body: Readable.from(fileBuffer),
-  };
+  let lastError: unknown = null;
 
-  // 4. Send file
-  const response = await drive.files.create({
-    media: media,
-    requestBody: {
-      name: file.name,
-      parents: [folderId],
-    },
-    fields: 'id, name, webViewLink, webContentLink',
-  });
+  for (const auth of buildGoogleDriveUploadAuthCandidates()) {
+    try {
+      const drive = google.drive({ version: 'v3', auth });
+      const media = {
+        mimeType: file.type,
+        body: Readable.from(fileBuffer),
+      };
+      const response = await drive.files.create({
+        media,
+        requestBody: {
+          name: file.name,
+          parents: [folderId],
+        },
+        fields: 'id, name, webViewLink, webContentLink',
+        supportsAllDrives: true,
+      });
 
-  const fileData = response.data;
-  console.log(`Successfully uploaded. File ID: ${fileData.id}`);
+      const fileData = response.data;
+      console.log(`Successfully uploaded. File ID: ${fileData.id}`);
 
-  return { fileData, fileBuffer };
+      return { fileData, fileBuffer };
+    } catch (error) {
+      lastError = error;
+      console.warn("Google Drive upload auth candidate failed", error);
+    }
+  }
+
+  throw lastError instanceof Error ? lastError : new Error(String(lastError));
 }
 
 
