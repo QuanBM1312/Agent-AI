@@ -45,6 +45,8 @@ type CalculationDriveCandidate = {
   fileSearchName: string | null;
 };
 
+const DRIVE_FOLDER_MIME_TYPE = "application/vnd.google-apps.folder";
+
 type RequestResolutionMeta = Record<string, unknown> & {
   webSearchPendingPrompt?: string;
   webSearchUsed?: boolean;
@@ -58,6 +60,9 @@ function normalizeIntentText(value: string) {
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
     .toLowerCase()
+    // NFD leaves \u0111/\u0110 intact, so map it explicitly \u2014 otherwise intent keywords
+    // like "\u0111\u1ebfm" (\u2192 \u0111em) and "\u0111\u01a1n gi\u00e1" (\u2192 \u0111on gia) never match their regexes.
+    .replace(/\u0111/g, "d")
     .replace(/\s+/g, " ")
     .trim();
 }
@@ -225,83 +230,116 @@ function buildCalculationFileSearchTerms(value: string) {
   return [...terms].slice(0, 14);
 }
 
+function isInventoryCalculationPrompt(value: string) {
+  const normalized = normalizeIntentText(value);
+  return /\b(kho|ton kho|nhap xuat ton|ton|hang hoa|mat hang)\b/.test(normalized);
+}
+
+function hasInventoryFileMarker(value: string) {
+  return /\b(kho|ton kho|ton hang|hang hoa|nhap xuat ton)\b/.test(normalizeIntentText(value));
+}
+
 async function resolveCalculationDriveCandidates(chatInput: string) {
   const terms = buildCalculationFileSearchTerms(chatInput);
   const normalized = normalizeIntentText(chatInput);
   const pricePrompt = /\b(gia|don gia|bang gia|bao gia|niem yet|price|tren|duoi)\b/.test(normalized);
+  const inventoryPrompt = isInventoryCalculationPrompt(chatInput);
   if (terms.length === 0) {
     return [];
   }
 
-  const priceRows = pricePrompt
-    ? await prisma.file_search_storage.findMany({
-        where: {
-          drive_file_id: {
-            not: null,
-          },
-          OR: ["bảng giá", "báo giá", "niêm yết", "đơn giá"].flatMap((term) => [
-            {
-              drive_name: {
-                contains: term,
-                mode: "insensitive" as const,
-              },
-            },
-            {
-              file_search_name: {
-                contains: term,
-                mode: "insensitive" as const,
-              },
-            },
-          ]),
-        },
-        select: {
-          drive_file_id: true,
-          drive_name: true,
-          file_search_name: true,
-        },
-        take: 20,
-      })
-    : [];
+  let orderedRows: Array<{
+    drive_file_id: string | null;
+    drive_name: string | null;
+    file_search_name: string | null;
+  }> = [];
 
-  const rows = await prisma.file_search_storage.findMany({
-    where: {
-      drive_file_id: {
-        not: null,
+  try {
+    const priceRows = pricePrompt
+      ? await prisma.file_search_storage.findMany({
+          where: {
+            drive_file_id: {
+              not: null,
+            },
+            OR: ["bảng giá", "báo giá", "niêm yết", "đơn giá"].flatMap((term) => [
+              {
+                drive_name: {
+                  contains: term,
+                  mode: "insensitive" as const,
+                },
+              },
+              {
+                file_search_name: {
+                  contains: term,
+                  mode: "insensitive" as const,
+                },
+              },
+            ]),
+          },
+          select: {
+            drive_file_id: true,
+            drive_name: true,
+            file_search_name: true,
+          },
+          take: 20,
+        })
+      : [];
+
+    const rows = await prisma.file_search_storage.findMany({
+      where: {
+        drive_file_id: {
+          not: null,
+        },
+        OR: terms.flatMap((term) => [
+          {
+            drive_name: {
+              contains: term,
+              mode: "insensitive" as const,
+            },
+          },
+          {
+            file_search_name: {
+              contains: term,
+              mode: "insensitive" as const,
+            },
+          },
+        ]),
       },
-      OR: terms.flatMap((term) => [
-        {
-          drive_name: {
-            contains: term,
-            mode: "insensitive" as const,
-          },
-        },
-        {
-          file_search_name: {
-            contains: term,
-            mode: "insensitive" as const,
-          },
-        },
-      ]),
-    },
-    select: {
-      drive_file_id: true,
-      drive_name: true,
-      file_search_name: true,
-    },
-    take: 20,
-  });
-  const orderedRows = [...priceRows, ...rows];
+      select: {
+        drive_file_id: true,
+        drive_name: true,
+        file_search_name: true,
+      },
+      take: 20,
+    });
+    orderedRows = [...priceRows, ...rows];
+  } catch (error) {
+    console.warn("[chat-calculation-db-candidates-unavailable]", {
+      error: serializeErrorForClient(error),
+    });
+    orderedRows = await resolveDriveFolderCalculationRows();
+  }
 
   const scored = orderedRows
     .filter((row) => row.drive_file_id)
     .map((row) => {
       const haystack = normalizeIntentText(`${row.drive_name ?? ""} ${row.file_search_name ?? ""}`);
       const hasPriceMarker = /\b(bang gia|bao gia|niem yet|don gia|price)\b/.test(haystack);
+      const hasInventoryMarker = hasInventoryFileMarker(haystack);
       const score =
         terms.reduce((total, term) => total + (haystack.includes(term) ? 1 : 0), 0) +
         (pricePrompt && hasPriceMarker ? 20 : 0) -
-        (pricePrompt && !hasPriceMarker ? 6 : 0);
+        (pricePrompt && !hasPriceMarker ? 6 : 0) +
+        (inventoryPrompt && hasInventoryMarker ? 20 : 0) -
+        (inventoryPrompt && !hasInventoryMarker ? 20 : 0);
       return { row, score };
+    })
+    .filter((item) => {
+      if (inventoryPrompt) {
+        return item.score > 0 && hasInventoryFileMarker(`${item.row.drive_name ?? ""} ${item.row.file_search_name ?? ""}`);
+      }
+
+      return item.score > 0 || pricePrompt;
     })
     .sort((a, b) => b.score - a.score);
 
@@ -327,6 +365,95 @@ async function resolveCalculationDriveCandidates(chatInput: string) {
   }
 
   return candidates;
+}
+
+async function resolveDriveFolderCalculationRows() {
+  const folderId = process.env.GOOGLE_DRIVE_FOLDER_ID;
+  if (!folderId) {
+    return [];
+  }
+
+  let lastError: unknown = null;
+
+  for (const auth of buildGoogleDriveReadonlyAuthCandidates()) {
+    try {
+      const drive = google.drive({ version: "v3", auth });
+      const files: Array<{
+        id?: string | null;
+        name?: string | null;
+        path?: string | null;
+        mimeType?: string | null;
+      }> = [];
+      const queue: Array<{ folderId: string; depth: number; path: string }> = [
+        { folderId, depth: 0, path: "" },
+      ];
+
+      while (queue.length > 0 && files.length < 200) {
+        const current = queue.shift();
+        if (!current) {
+          break;
+        }
+
+        const response = await drive.files.list({
+          q: `'${current.folderId}' in parents and trashed = false`,
+          fields: "files(id,name,mimeType)",
+          pageSize: 100,
+          supportsAllDrives: true,
+          includeItemsFromAllDrives: true,
+        });
+
+        for (const file of response.data.files || []) {
+          if (file.mimeType === DRIVE_FOLDER_MIME_TYPE) {
+            if (file.id && current.depth < 3) {
+              queue.push({
+                folderId: file.id,
+                depth: current.depth + 1,
+                path: current.path ? `${current.path}/${file.name}` : file.name || "",
+              });
+            }
+            continue;
+          }
+
+          const fileName = file.name || "";
+          if (!isUserVisibleDriveFile(fileName)) {
+            continue;
+          }
+
+          const filePath = current.path ? `${current.path}/${fileName}` : fileName;
+          const isSpreadsheet =
+            file.mimeType === "application/vnd.google-apps.spreadsheet" ||
+            /\.(xlsx|xls|csv)$/i.test(fileName);
+
+          if (file.id && isSpreadsheet) {
+            files.push({
+              id: file.id,
+              name: file.name,
+              path: filePath,
+              mimeType: file.mimeType,
+            });
+          }
+        }
+      }
+
+      return files.map((file) => ({
+        drive_file_id: file.id || null,
+        drive_name: file.path || file.name || null,
+        file_search_name: file.path || file.name || null,
+      }));
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
+  console.warn("[chat-calculation-drive-folder-candidates-unavailable]", {
+    error: serializeErrorForClient(lastError),
+  });
+  return [];
+}
+
+function isUserVisibleDriveFile(fileName?: string | null) {
+  const name = (fileName || "").trim();
+  return Boolean(name) && !name.startsWith(".") && !/^upload-probe-/i.test(name);
 }
 
 function buildCalculationDriveContext(candidates: Awaited<ReturnType<typeof resolveCalculationDriveCandidates>>) {
@@ -576,6 +703,66 @@ async function resolveDriveUnitPriceThresholdCalculation(params: {
   }
 
   return null;
+}
+
+async function resolveDriveSpreadsheetCalculation(params: {
+  prompt: string;
+  candidates: Awaited<ReturnType<typeof resolveCalculationDriveCandidates>>;
+}): Promise<LocalChatResolution | null> {
+  let needsColumnsResolution: LocalChatResolution | null = null;
+
+  for (const candidate of params.candidates.slice(0, 8)) {
+    if (candidate.driveFileId.startsWith("local::") || candidate.driveFileId.startsWith("surrogate-")) {
+      continue;
+    }
+
+    try {
+      const file = await downloadDriveFileForPreview(candidate.driveFileId);
+      const fileName = file.metadata.name || candidate.driveName || "unknown";
+      const mimeType = file.metadata.mimeType || "";
+      const isSpreadsheet =
+        mimeType === "application/vnd.google-apps.spreadsheet" ||
+        [".xlsx", ".xls", ".csv"].some((extension) =>
+          fileName.toLowerCase().endsWith(extension)
+        );
+
+      if (!isSpreadsheet) {
+        continue;
+      }
+
+      const resolution = resolveSpreadsheetCalculation({
+        prompt: params.prompt,
+        fileName,
+        buffer: file.buffer,
+      });
+
+      if (!resolution) {
+        continue;
+      }
+
+      const candidateResolution = {
+        routeHint: resolution.routeHint,
+        output: resolution.output,
+        citations: file.metadata.webViewLink
+          ? [file.metadata.webViewLink, ...resolution.citations]
+          : resolution.citations,
+      };
+
+      if (resolution.routeHint === "spreadsheet_calculation") {
+        return candidateResolution;
+      }
+
+      needsColumnsResolution ||= candidateResolution;
+    } catch (error) {
+      console.warn("[chat-drive-spreadsheet-calculation-failed]", {
+        driveFileId: candidate.driveFileId,
+        driveName: candidate.driveName,
+        error: serializeErrorForClient(error),
+      });
+    }
+  }
+
+  return needsColumnsResolution;
 }
 
 async function resolveFallbackFileSearchStoreNames() {
@@ -1166,19 +1353,11 @@ export async function POST(req: NextRequest) {
         });
       }
     } catch (error) {
-      if (!isTenantDatabaseBoundaryError(error)) {
-        console.error("Failed to create session:", error);
-        return jsonWithTelemetry(
-          { error: "Failed to create session. Ensure userId is valid." },
-          500,
-          "session_create_failed"
-        );
-      }
-
       persistenceAvailable = false;
       console.warn("[chat-persistence-degraded] session bootstrap unavailable", {
         requestId,
         sessionId,
+        reason: serializeErrorForClient(error),
       });
     }
 
@@ -1651,6 +1830,20 @@ export async function POST(req: NextRequest) {
       try {
         const candidates = await resolveCalculationDriveCandidates(userContent);
         calculationDriveCandidates = candidates;
+        const driveSpreadsheetResolution = await resolveDriveSpreadsheetCalculation({
+          prompt: userContent,
+          candidates,
+        });
+        if (driveSpreadsheetResolution?.routeHint === "spreadsheet_calculation") {
+          return await persistAndReturnResolution(
+            driveSpreadsheetResolution,
+            {
+              spreadsheetCalculationUsed: true,
+              webSearchUsed: false,
+              webSearchProvider: "drive_spreadsheet_parser",
+            },
+          );
+        }
         const priceFilterResolution = await resolveDriveUnitPriceThresholdCalculation({
           prompt: userContent,
           candidates,

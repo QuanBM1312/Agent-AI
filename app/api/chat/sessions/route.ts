@@ -3,7 +3,6 @@ import { v4 as uuidv4 } from 'uuid';
 import { handleApiError } from "@/lib/api-helper";
 import { db as prisma } from "@/lib/db";
 import { getCurrentUserWithRole } from "@/lib/auth-utils";
-import { isTenantDatabaseBoundaryError } from "@/lib/db-runtime";
 
 /**
  * @swagger
@@ -94,14 +93,9 @@ export async function GET(request: Request) {
         }),
       ]);
     } catch (error) {
-      if (!isTenantDatabaseBoundaryError(error)) {
-        throw error;
-      }
-
-      return NextResponse.json(
-        { error: "Chat sessions are temporarily unavailable" },
-        { status: 503 }
-      );
+      console.warn("Chat sessions unavailable, returning degraded empty list:", error);
+      sessions = [];
+      totalCount = 0;
     }
 
     const formattedSessions = sessions.map((session) => ({
@@ -139,10 +133,7 @@ export async function POST(request: Request) {
         }
       });
     } catch (error) {
-      if (!isTenantDatabaseBoundaryError(error)) {
-        throw error;
-      }
-
+      console.warn("Failed to persist chat session, returning degraded session:", error);
       newSession = {
         id: uuidv4(),
         user_id: currentUser.id,

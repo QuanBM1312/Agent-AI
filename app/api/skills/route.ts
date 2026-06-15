@@ -11,11 +11,16 @@ type CountRow = {
 };
 
 async function countRows(table: string, where = "") {
-  const result = await prisma.$queryRawUnsafe<CountRow[]>(
-    `SELECT COUNT(*)::int AS count FROM public.${table} ${where}`,
-  );
+  try {
+    const result = await prisma.$queryRawUnsafe<CountRow[]>(
+      `SELECT COUNT(*)::int AS count FROM public.${table} ${where}`,
+    );
 
-  return Number(result[0]?.count || 0);
+    return Number(result[0]?.count || 0);
+  } catch (error) {
+    console.warn("[skills-count-unavailable]", { table, error });
+    return 0;
+  }
 }
 
 function statusLabel(status: SkillStatus) {

@@ -52,36 +52,88 @@ function normalizeText(value: string) {
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
     .toLowerCase()
+    // NFD does not decompose \u0111/\u0110 (U+0111), so map it explicitly. Without this,
+    // "\u0111\u01a1n gi\u00e1" \u2192 "\u0111on gia" and "\u0111\u1ebfm" \u2192 "\u0111em", and every \u0111-keyword regex
+    // (don gia, dem, dong, \u2026) silently misses.
+    .replace(/\u0111/g, "d")
+    .replace(/[_-]+/g, " ")
     .replace(/\s+/g, " ")
     .trim();
 }
 
-function parseNumber(value: CellValue) {
-  if (typeof value === "number" && Number.isFinite(value)) {
-    return value;
+// Parse a spreadsheet cell into a number, handling the number formats that
+// actually show up in Vietnamese business spreadsheets:
+//   "12.000.000"      → 12000000   (dot = thousands separator, the VN default)
+//   "12,000,000"      → 12000000   (US thousands)
+//   "1.234.567,89"    → 1234567.89 (VN: dot thousands, comma decimal)
+//   "1,234,567.89"    → 1234567.89 (US: comma thousands, dot decimal)
+//   "8.000.000 ₫"     → 8000000    (currency + spaces stripped)
+//   "(1.000)"         → -1000      (accounting negative)
+// The previous implementation ran Number("12.000.000") → NaN, so every
+// dot-grouped Vietnamese price silently dropped out of the calculation.
+export function parseNumber(value: CellValue): number | null {
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? value : null;
   }
 
   if (typeof value !== "string") {
     return null;
   }
 
-  const cleaned = value
-    .replace(/\s/g, "")
-    .replace(/[₫đ,%]/gi, "")
-    .replace(/\(([-+]?\d)/, "-$1")
-    .replace(/\)$/g, "");
-
-  if (!cleaned || !/[0-9]/.test(cleaned)) {
+  let text = value.trim();
+  if (!text) {
     return null;
   }
 
-  const normalized =
-    cleaned.includes(",") && cleaned.includes(".")
-      ? cleaned.replace(/,/g, "")
-      : cleaned.replace(/,/g, ".");
-  const parsed = Number(normalized);
+  let sign = 1;
+  if (/^\(.*\)$/.test(text)) {
+    sign = -1;
+    text = text.slice(1, -1);
+  }
 
-  return Number.isFinite(parsed) ? parsed : null;
+  text = text
+    .replace(/\s/g, "")
+    .replace(/[₫%]/g, "")
+    .replace(/đ/gi, "");
+
+  if (text.startsWith("-")) {
+    sign = -sign;
+    text = text.slice(1);
+  } else if (text.startsWith("+")) {
+    text = text.slice(1);
+  }
+
+  if (!/[0-9]/.test(text) || !/^[0-9.,]+$/.test(text)) {
+    return null;
+  }
+
+  const hasDot = text.includes(".");
+  const hasComma = text.includes(",");
+  let normalized: string;
+
+  if (hasDot && hasComma) {
+    // Right-most separator is the decimal point; the other groups thousands.
+    const decimalSep = text.lastIndexOf(",") > text.lastIndexOf(".") ? "," : ".";
+    const thousandsSep = decimalSep === "," ? "." : ",";
+    normalized = text.split(thousandsSep).join("").replace(decimalSep, ".");
+  } else if (hasComma) {
+    const parts = text.split(",");
+    // "12,5" / "12,50" → decimal comma; "12,500" / "1,234,567" → thousands.
+    normalized =
+      parts.length === 2 && parts[1].length !== 3
+        ? `${parts[0]}.${parts[1]}`
+        : parts.join("");
+  } else if (hasDot) {
+    const parts = text.split(".");
+    // "12.5" → decimal; "12.000" / "12.000.000" → VN thousands grouping.
+    normalized =
+      parts.length === 2 && parts[1].length !== 3 ? text : parts.join("");
+  } else {
+    normalized = text;
+  }
+
+  const parsed = Number(normalized);
+  return Number.isFinite(parsed) ? sign * parsed : null;
 }
 
 function formatNumber(value: number) {
@@ -337,6 +389,7 @@ function pickFilterColumns(table: TableProfile, prompt: string) {
       /\bgia niem yet\b/,
       /\bprice\b/,
       /\bunit price\b/,
+      /\bunit cost\b/,
     ]);
   }
 
@@ -492,6 +545,39 @@ function buildAggregateResolution(params: {
   };
 }
 
+function buildCountResolution(params: {
+  spreadsheet: ParsedSpreadsheet;
+  table: TableProfile;
+  rowFilter: RowFilter | null;
+  originalRowCount: number;
+}): SpreadsheetCalculationResolution {
+  const count = params.table.dataRows.length;
+
+  return {
+    output: [
+      `Tôi đã đếm từ file "${params.spreadsheet.fileName}", sheet "${params.table.sheetName}".`,
+      params.rowFilter ? `Điều kiện lọc: ${params.rowFilter.description}.` : "",
+      params.rowFilter
+        ? `Số dòng thỏa điều kiện: ${formatNumber(count)}/${params.originalRowCount}`
+        : `Tổng số dòng dữ liệu: ${formatNumber(count)}`,
+      `Nguồn: header dòng ${params.table.headerRowIndex + 1}, ${params.originalRowCount} dòng dữ liệu có nội dung.`,
+    ]
+      .filter(Boolean)
+      .join("\n"),
+    routeHint: "spreadsheet_calculation",
+    citations: [`${params.spreadsheet.fileName} / ${params.table.sheetName}`],
+    meta: {
+      spreadsheetFile: params.spreadsheet.fileName,
+      sheet: params.table.sheetName,
+      headerRow: params.table.headerRowIndex + 1,
+      operation: "count",
+      rowFilter: params.rowFilter?.description ?? null,
+      originalRowCount: params.originalRowCount,
+      matchedRowCount: count,
+    },
+  };
+}
+
 function buildProfitResolution(params: {
   spreadsheet: ParsedSpreadsheet;
   table: TableProfile;
@@ -605,6 +691,15 @@ export function resolveSpreadsheetCalculation(params: {
       });
     }
     return buildNeedsColumnsResolution({ spreadsheet, tables });
+  }
+
+  if (/\b(dem|bao nhieu|co bao nhieu|co may|may mat hang|how many|count)\b/.test(prompt)) {
+    return buildCountResolution({
+      spreadsheet,
+      table: calculationTable,
+      rowFilter,
+      originalRowCount,
+    });
   }
 
   if (/\b(ton kho|nhap xuat ton|sl con lai|so luong|khoi luong|quantity|qty)\b/.test(prompt)) {

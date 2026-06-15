@@ -10,7 +10,6 @@ interface KnowledgeItem {
   id: string
   name: string
   type: "pdf" | "word" | "excel" | "sheet"
-  size: string
   uploadedAt: string
 }
 
@@ -58,14 +57,6 @@ export function KnowledgePortal() {
     if (['xls', 'xlsx', 'csv'].includes(ext || '')) return 'excel'
     if (['doc', 'docx'].includes(ext || '')) return 'word'
     return 'pdf'
-  }
-
-  const formatFileSize = (bytes: number) => {
-    if (bytes === 0) return '0 Bytes'
-    const k = 1024
-    const sizes = ['Bytes', 'KB', 'MB', 'GB']
-    const i = Math.floor(Math.log(bytes) / Math.log(k))
-    return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i]
   }
 
   const fetchSources = useCallback(async () => {
@@ -122,7 +113,6 @@ export function KnowledgePortal() {
           id: item.id,
           name: item.drive_name || "Unknown File",
           type: getFileType(item.drive_name || ""),
-          size: formatFileSize(Number(item.hash) || 0),
           uploadedAt: item.created_at ? new Date(item.created_at).toISOString().split('T')[0] : ""
         }))
 
@@ -461,7 +451,7 @@ export function KnowledgePortal() {
                     <div className="flex-1">
                       <p className="font-medium text-foreground text-sm">{item.name}</p>
                       <p className="text-xs text-muted-foreground">
-                        {item.size} • Tải lên {item.uploadedAt}
+                        Tải lên {item.uploadedAt}
                       </p>
                     </div>
                   </div>
