@@ -41,6 +41,7 @@ type KnowledgeSourceRow = Record<string, unknown> & {
 };
 
 const DRIVE_FOLDER_MIME_TYPE = "application/vnd.google-apps.folder";
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function parseDriveServiceAccountCredentials() {
   const rawJson = process.env.GOOGLE_SERVICE_ACCOUNT_JSON || process.env.GDRIVE_JSON;
@@ -328,5 +329,70 @@ export async function POST(request: Request) {
   } catch (error) {
     console.error("Failed to add source:", error);
     return NextResponse.json({ error: "Failed to add source" }, { status: 500 });
+  }
+}
+
+export async function DELETE(request: Request) {
+  try {
+    const currentUser = await getCurrentUserWithRole();
+
+    if (!currentUser) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    if (!["Admin", "Manager"].includes(currentUser.role)) {
+      return NextResponse.json(
+        { error: "Forbidden: Only Admin and Manager can delete knowledge sources" },
+        { status: 403 },
+      );
+    }
+
+    const { searchParams } = new URL(request.url);
+    const id = searchParams.get("id");
+
+    if (!id) {
+      return NextResponse.json({ error: "Missing source id" }, { status: 400 });
+    }
+
+    if (!UUID_PATTERN.test(id)) {
+      return NextResponse.json(
+        {
+          error:
+            "This item is listed directly from Google Drive fallback. Delete it in Drive, or sync it into the database before deleting from the app.",
+        },
+        { status: 409 },
+      );
+    }
+
+    const source = await prisma.knowledge_sources.findUnique({
+      where: { id },
+    });
+
+    if (!source) {
+      return NextResponse.json({ error: "Knowledge source not found" }, { status: 404 });
+    }
+
+    const fileSearchDeleteConditions = [
+      source.drive_file_id ? { drive_file_id: source.drive_file_id } : null,
+      source.drive_name ? { drive_name: source.drive_name } : null,
+    ].filter(Boolean) as Array<{ drive_file_id: string } | { drive_name: string }>;
+
+    await prisma.$transaction([
+      ...(fileSearchDeleteConditions.length > 0
+        ? [
+            prisma.file_search_storage.deleteMany({
+              where: { OR: fileSearchDeleteConditions },
+            }),
+          ]
+        : []),
+      prisma.knowledge_sources.delete({
+        where: { id },
+      }),
+    ]);
+
+    return NextResponse.json({ success: true });
+  } catch (error) {
+    console.error("Failed to delete source:", error);
+    return NextResponse.json({ error: "Failed to delete source" }, { status: 500 });
   }
 }

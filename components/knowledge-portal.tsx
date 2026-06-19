@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useRef, useEffect, useCallback } from "react"
-import { Upload, File, FileText, Sheet as Sheet3, Trash2, Plus, Loader2, Globe, Link as LinkIcon, X, ChevronLeft, ChevronRight } from "lucide-react"
+import { Upload, File, FileText, Sheet as Sheet3, Trash2, Plus, Loader2, Globe, Link as LinkIcon, X, ChevronLeft, ChevronRight, AlertCircle, RefreshCw } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { MobileMenuButton } from "@/components/mobile-menu-button"
@@ -28,6 +28,7 @@ interface KnowledgeApiItem {
   sheet_name?: string | null
   hash?: string | number | null
   created_at?: string | null
+  source?: string | null
 }
 
 export function KnowledgePortal() {
@@ -37,6 +38,8 @@ export function KnowledgePortal() {
   // Documents State
   const [items, setItems] = useState<KnowledgeItem[]>([])
   const [isDocumentsLoading, setIsDocumentsLoading] = useState(true)
+  const [documentsError, setDocumentsError] = useState<string | null>(null)
+  const [deletingItemId, setDeletingItemId] = useState<string | null>(null)
   const [documentsPage, setDocumentsPage] = useState(1)
   const [documentsTotalPages, setDocumentsTotalPages] = useState(1)
   const documentsLimit = 10
@@ -44,6 +47,7 @@ export function KnowledgePortal() {
   // Sources State
   const [sources, setSources] = useState<SourceItem[]>([])
   const [isSourcesLoading, setIsSourcesLoading] = useState(true)
+  const [sourcesError, setSourcesError] = useState<string | null>(null)
   const [isAddingSource, setIsAddingSource] = useState(false)
   const [newSourceUrl, setNewSourceUrl] = useState("")
   const [isAddingSourceLoading, setIsAddingSourceLoading] = useState(false)
@@ -61,11 +65,15 @@ export function KnowledgePortal() {
 
   const fetchSources = useCallback(async () => {
     setIsSourcesLoading(true)
+    setSourcesError(null)
     try {
       // Fetch recent sources (limit 20 for now)
       const response = await fetch(`/api/knowledge/sources?type=source&page=${sourcesPage}&limit=${sourcesLimit}`)
-      if (response.ok) {
-        const data = await response.json()
+      if (!response.ok) {
+        throw new Error(`Không thể tải nguồn dữ liệu (${response.status})`)
+      }
+
+      const data = await response.json()
         const rawItems = (data.data || []) as KnowledgeApiItem[]
 
         if (data.pagination) {
@@ -84,14 +92,15 @@ export function KnowledgePortal() {
             id: item.id,
             name: item.drive_name || item.drive_file_id || "",
             type: item.sheet_name === 'GOOGLE_SHEET' ? 'GOOGLE_SHEET' : 'WEB_URL',
-            status: "Đang đồng bộ",
+            status: item.source === "google_drive_fallback" ? "Đã kết nối từ Drive" : "Đã kết nối",
             url: url || ""
           }
         })
         setSources(validSources)
-      }
     } catch (error) {
       console.error("Failed to fetch sources:", error)
+      setSources([])
+      setSourcesError(error instanceof Error ? error.message : "Không thể tải nguồn dữ liệu")
     } finally {
       setIsSourcesLoading(false)
     }
@@ -99,10 +108,14 @@ export function KnowledgePortal() {
 
   const fetchDocuments = useCallback(async () => {
     setIsDocumentsLoading(true)
+    setDocumentsError(null)
     try {
       const response = await fetch(`/api/knowledge/sources?type=document&page=${documentsPage}&limit=${documentsLimit}`)
-      if (response.ok) {
-        const data = await response.json()
+      if (!response.ok) {
+        throw new Error(`Không thể tải tài liệu (${response.status})`)
+      }
+
+      const data = await response.json()
         const rawItems = (data.data || []) as KnowledgeApiItem[]
 
         if (data.pagination) {
@@ -117,9 +130,10 @@ export function KnowledgePortal() {
         }))
 
         setItems(validItems)
-      }
     } catch (error) {
       console.error("Failed to fetch documents:", error)
+      setItems([])
+      setDocumentsError(error instanceof Error ? error.message : "Không thể tải tài liệu")
     } finally {
       setIsDocumentsLoading(false)
     }
@@ -233,6 +247,33 @@ export function KnowledgePortal() {
       alert("Không thể thêm nguồn dữ liệu. Vui lòng thử lại.")
     } finally {
       setIsAddingSourceLoading(false)
+    }
+  }
+
+  const handleDeleteDocument = async (item: KnowledgeItem) => {
+    const confirmed = window.confirm(`Xóa tài liệu "${item.name}" khỏi danh sách tri thức?`)
+    if (!confirmed) return
+
+    setDeletingItemId(item.id)
+    setDocumentsError(null)
+    try {
+      const response = await fetch(`/api/knowledge/sources?id=${encodeURIComponent(item.id)}`, {
+        method: "DELETE",
+        headers: { accept: "application/json" },
+      })
+
+      if (!response.ok) {
+        const body = await response.json().catch(() => null) as { error?: string } | null
+        throw new Error(body?.error || `Không thể xóa tài liệu (${response.status})`)
+      }
+
+      setItems((current) => current.filter((entry) => entry.id !== item.id))
+      fetchDocuments()
+    } catch (error) {
+      console.error("Failed to delete document:", error)
+      setDocumentsError(error instanceof Error ? error.message : "Không thể xóa tài liệu")
+    } finally {
+      setDeletingItemId(null)
     }
   }
 
@@ -364,6 +405,19 @@ export function KnowledgePortal() {
                   <div className="w-16 h-8 bg-muted rounded"></div>
                 </div>
               ))
+            ) : sourcesError ? (
+              <div className="flex items-start justify-between gap-3 rounded-lg border border-destructive/30 bg-destructive/5 p-4">
+                <div className="flex gap-3">
+                  <AlertCircle className="mt-0.5 h-5 w-5 text-destructive" />
+                  <div>
+                    <p className="text-sm font-medium text-foreground">Không tải được nguồn dữ liệu</p>
+                    <p className="text-xs text-muted-foreground">{sourcesError}</p>
+                  </div>
+                </div>
+                <Button variant="outline" size="sm" onClick={fetchSources} className="gap-2">
+                  <RefreshCw className="h-3.5 w-3.5" /> Thử lại
+                </Button>
+              </div>
             ) : sources.length === 0 ? (
               <p className="text-sm text-muted-foreground text-center py-8">Chưa có nguồn dữ liệu nào được kết nối.</p>
             ) : (
@@ -438,6 +492,19 @@ export function KnowledgePortal() {
                   <div className="w-8 h-8 bg-muted rounded"></div>
                 </div>
               ))
+            ) : documentsError ? (
+              <div className="flex items-start justify-between gap-3 rounded-lg border border-destructive/30 bg-destructive/5 p-4">
+                <div className="flex gap-3">
+                  <AlertCircle className="mt-0.5 h-5 w-5 text-destructive" />
+                  <div>
+                    <p className="text-sm font-medium text-foreground">Không tải được tài liệu</p>
+                    <p className="text-xs text-muted-foreground">{documentsError}</p>
+                  </div>
+                </div>
+                <Button variant="outline" size="sm" onClick={fetchDocuments} className="gap-2">
+                  <RefreshCw className="h-3.5 w-3.5" /> Thử lại
+                </Button>
+              </div>
             ) : items.length === 0 ? (
               <p className="text-sm text-muted-foreground text-center py-8">Chưa có tài liệu nào được tải lên.</p>
             ) : (
@@ -455,8 +522,19 @@ export function KnowledgePortal() {
                       </p>
                     </div>
                   </div>
-                  <button className="p-2 hover:bg-muted rounded transition-colors">
-                    <Trash2 className="w-4 h-4 text-muted-foreground" />
+                  <button
+                    type="button"
+                    onClick={() => handleDeleteDocument(item)}
+                    disabled={deletingItemId === item.id}
+                    className="p-2 hover:bg-muted rounded transition-colors disabled:opacity-50"
+                    aria-label={`Xóa ${item.name}`}
+                    title="Xóa tài liệu"
+                  >
+                    {deletingItemId === item.id ? (
+                      <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />
+                    ) : (
+                      <Trash2 className="w-4 h-4 text-muted-foreground" />
+                    )}
                   </button>
                 </div>
               ))

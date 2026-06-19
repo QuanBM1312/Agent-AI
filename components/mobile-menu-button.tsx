@@ -1,18 +1,17 @@
 "use client"
 
+import { useMobileMenu } from "./mobile-menu-context"
+
 interface MobileMenuButtonProps {
   className?: string
 }
 
 export function MobileMenuButton({ className = "" }: MobileMenuButtonProps) {
-  const handleClick = () => {
-    const event = new CustomEvent('toggleMobileMenu')
-    window.dispatchEvent(event)
-  }
+  const { toggle } = useMobileMenu()
 
   return (
     <button
-      onClick={handleClick}
+      onClick={toggle}
       className={`md:hidden p-2 hover:bg-muted rounded-lg transition-colors shrink-0 ${className}`}
       aria-label="Open menu"
     >

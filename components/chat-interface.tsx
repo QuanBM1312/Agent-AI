@@ -38,6 +38,7 @@ interface MessageRequestMeta {
   webSearchUsed?: boolean
   webSearchProvider?: string
   webSearchPendingPrompt?: string
+  degradedFrom?: string
 }
 
 interface Message {
@@ -75,6 +76,13 @@ function MessageItem({ message }: { message: Message }) {
   const usedGeminiWebSearch = isAI && message.requestMeta?.webSearchUsed
   const offeredGeminiWebSearch =
     isAI && message.requestMeta?.routeHint === "gemini_web_offer"
+  const routeHint = message.requestMeta?.routeHint || ""
+  const needsData =
+    isAI &&
+    (Boolean(message.requestMeta?.degradedFrom) ||
+      routeHint === "calculation_needs_data" ||
+      routeHint === "local_internal_unavailable" ||
+      routeHint === "local_business_data_boundary")
 
   // Cấu hình màu sắc khác nhau cho AI (nền sáng) và User (nền màu)
   const components: Components = {
@@ -129,6 +137,11 @@ function MessageItem({ message }: { message: Message }) {
           {offeredGeminiWebSearch && (
             <span className="rounded-full border border-sky-300 bg-sky-50 px-2 py-0.5 text-[10px] font-medium text-sky-700">
               Có thể tìm web
+            </span>
+          )}
+          {needsData && (
+            <span className="rounded-full border border-orange-300 bg-orange-50 px-2 py-0.5 text-[10px] font-medium text-orange-700">
+              Cần dữ liệu xác minh
             </span>
           )}
           <span className={`text-[10px] ${isAI ? "opacity-50" : "opacity-70"}`}>
@@ -210,6 +223,8 @@ export function ChatInterface({ activeSessionId, onMessageSent }: ChatInterfaceP
 
   // Image Upload State
   const [selectedImage, setSelectedImage] = useState<File | null>(null)
+  const [selectedImagePreviewUrl, setSelectedImagePreviewUrl] = useState<string | null>(null)
+  const [voicePreviewUrl, setVoicePreviewUrl] = useState<string | null>(null)
   const imageInputRef = useRef<HTMLInputElement>(null)
 
   // INIT MESSAGE
@@ -222,6 +237,8 @@ export function ChatInterface({ activeSessionId, onMessageSent }: ChatInterfaceP
   const [telemetryEnabled, setTelemetryEnabled] = useState(false)
   const [sessionAgent0ContextIds, setSessionAgent0ContextIds] = useState<Record<string, string>>({})
   const messagesEndRef = useRef<HTMLDivElement>(null)
+  const activeRequestControllerRef = useRef<AbortController | null>(null)
+  const messageObjectUrlsRef = useRef<Set<string>>(new Set())
 
   // Flag to trigger send after recording stops
   const shouldSendAfterStop = useRef(false)
@@ -320,6 +337,10 @@ export function ChatInterface({ activeSessionId, onMessageSent }: ChatInterfaceP
                         typeof (messageLike.requestMeta as Record<string, unknown>).webSearchPendingPrompt === "string"
                           ? ((messageLike.requestMeta as Record<string, unknown>).webSearchPendingPrompt as string)
                           : undefined,
+                      degradedFrom:
+                        typeof (messageLike.requestMeta as Record<string, unknown>).degradedFrom === "string"
+                          ? ((messageLike.requestMeta as Record<string, unknown>).degradedFrom as string)
+                          : undefined,
                     }
                   : undefined,
             } satisfies Message
@@ -399,6 +420,39 @@ export function ChatInterface({ activeSessionId, onMessageSent }: ChatInterfaceP
   }, [activeSessionId])
 
   useEffect(() => {
+    if (!mediaBlob) {
+      setVoicePreviewUrl(null)
+      return
+    }
+
+    const url = URL.createObjectURL(mediaBlob)
+    setVoicePreviewUrl(url)
+    return () => URL.revokeObjectURL(url)
+  }, [mediaBlob])
+
+  useEffect(() => {
+    if (!selectedImage) {
+      setSelectedImagePreviewUrl(null)
+      return
+    }
+
+    const url = URL.createObjectURL(selectedImage)
+    setSelectedImagePreviewUrl(url)
+    return () => URL.revokeObjectURL(url)
+  }, [selectedImage])
+
+  useEffect(() => {
+    const messageObjectUrls = messageObjectUrlsRef.current
+    return () => {
+      activeRequestControllerRef.current?.abort()
+      for (const url of messageObjectUrls) {
+        URL.revokeObjectURL(url)
+      }
+      messageObjectUrls.clear()
+    }
+  }, [])
+
+  useEffect(() => {
     const loadingRequestId = loadingState?.requestId
     if (!loadingRequestId) return
 
@@ -439,6 +493,16 @@ export function ChatInterface({ activeSessionId, onMessageSent }: ChatInterfaceP
     if (imageInputRef.current) imageInputRef.current.value = ""
   }
 
+  const createMessageObjectUrl = (blob: Blob) => {
+    const url = URL.createObjectURL(blob)
+    messageObjectUrlsRef.current.add(url)
+    return url
+  }
+
+  const handleCancelRequest = useCallback(() => {
+    activeRequestControllerRef.current?.abort()
+  }, [])
+
   const handleSendMessage = async () => {
     // If recording, stop it and flag to send immediately after
     if (isRecording) {
@@ -452,6 +516,8 @@ export function ChatInterface({ activeSessionId, onMessageSent }: ChatInterfaceP
     setIsSubmitting(true)
 
     const requestId = createChatRequestId()
+    const abortController = new AbortController()
+    activeRequestControllerRef.current = abortController
     const requestType: ChatRequestKind = mediaBlob ? "voice" : selectedImage ? "image" : "chat"
     const hasAttachment = Boolean(mediaBlob || selectedImage)
     const stagePlan = buildChatStagePlan({ type: requestType, hasAttachment })
@@ -502,10 +568,10 @@ export function ChatInterface({ activeSessionId, onMessageSent }: ChatInterfaceP
     let fileType: "image" | "voice" | undefined = undefined
 
     if (mediaBlob) {
-      fileUrl = URL.createObjectURL(mediaBlob)
+      fileUrl = createMessageObjectUrl(mediaBlob)
       fileType = "voice"
     } else if (selectedImage) {
-      fileUrl = URL.createObjectURL(selectedImage)
+      fileUrl = createMessageObjectUrl(selectedImage)
       fileType = "image"
     }
 
@@ -528,6 +594,7 @@ export function ChatInterface({ activeSessionId, onMessageSent }: ChatInterfaceP
       const response = await fetch("/api/chat/n8n", {
         method: "POST",
         body: formData, // fetch automatically sets Content-Type boundary
+        signal: abortController.signal,
       })
 
       if (!response.ok) {
@@ -607,6 +674,8 @@ export function ChatInterface({ activeSessionId, onMessageSent }: ChatInterfaceP
         typeof meta?.webSearchProvider === "string" ? meta.webSearchProvider : undefined
       const webSearchPendingPrompt =
         typeof meta?.webSearchPendingPrompt === "string" ? meta.webSearchPendingPrompt : undefined
+      const degradedFrom =
+        typeof meta?.degradedFrom === "string" ? meta.degradedFrom : undefined
 
       if (routeHint === "duplicate_inflight" || routeHint === "duplicate_replay") {
         await refreshMessages()
@@ -633,6 +702,7 @@ export function ChatInterface({ activeSessionId, onMessageSent }: ChatInterfaceP
           webSearchUsed,
           webSearchProvider,
           webSearchPendingPrompt,
+          degradedFrom,
         },
       }
 
@@ -654,8 +724,11 @@ export function ChatInterface({ activeSessionId, onMessageSent }: ChatInterfaceP
 
     } catch (error) {
       console.error("Chat error:", error)
+      const isAbortError = error instanceof DOMException && error.name === "AbortError"
       const message =
-        typeof error === "object" &&
+        isAbortError
+          ? "Đã hủy yêu cầu. Bạn có thể chỉnh lại câu hỏi hoặc gửi câu khác."
+          : typeof error === "object" &&
         error !== null &&
         "message" in error &&
         typeof error.message === "string"
@@ -669,14 +742,18 @@ export function ChatInterface({ activeSessionId, onMessageSent }: ChatInterfaceP
           ? error.requestId
           : requestId
       const failedStage =
-        typeof error === "object" &&
+        isAbortError
+          ? "failed"
+          : typeof error === "object" &&
         error !== null &&
         "stage" in error &&
         typeof error.stage === "string"
           ? (error.stage as ChatStageKey)
           : "failed"
       const failedRouteHint =
-        typeof error === "object" &&
+        isAbortError
+          ? "cancelled"
+          : typeof error === "object" &&
         error !== null &&
         "routeHint" in error &&
         typeof error.routeHint === "string"
@@ -708,6 +785,9 @@ export function ChatInterface({ activeSessionId, onMessageSent }: ChatInterfaceP
         timestamp: new Date().toISOString(),
       } satisfies ChatRequestMetric)
     } finally {
+      if (activeRequestControllerRef.current === abortController) {
+        activeRequestControllerRef.current = null
+      }
       setIsSubmitting(false)
       setLoadingState(null)
     }
@@ -746,7 +826,9 @@ export function ChatInterface({ activeSessionId, onMessageSent }: ChatInterfaceP
               <h2 className="text-xl md:text-2xl font-bold text-foreground">Trợ lý Đa phương thức</h2>
               <p className="text-xs md:text-sm text-muted-foreground mt-1">Hỗ trợ Chat, Voice (Whisper) và Nhận diện ảnh (OCR)</p>
               <div className="flex items-center gap-2 mt-1">
-                <span className="text-[10px] md:text-xs text-muted-foreground/50 truncate max-w-[200px] md:max-w-none">Session ID: {activeSessionId}</span>
+                <span className="text-[10px] md:text-xs text-muted-foreground/50 truncate max-w-[200px] md:max-w-none">
+                  Phiên trò chuyện đang hoạt động
+                </span>
                 <div className={`w-2 h-2 rounded-full shrink-0 ${(isHistoryLoading || isSubmitting) ? "bg-yellow-400 animate-pulse" : "bg-green-400"}`} />
               </div>
             </div>
@@ -772,6 +854,7 @@ export function ChatInterface({ activeSessionId, onMessageSent }: ChatInterfaceP
                       stagePlan={loadingState.stagePlan}
                       elapsedMs={loadingState.elapsedMs}
                       requestId={loadingState.requestId}
+                      onCancel={handleCancelRequest}
                     />
                   </div>
                 </div>
@@ -799,15 +882,15 @@ export function ChatInterface({ activeSessionId, onMessageSent }: ChatInterfaceP
                     </div>
                     <div className="flex-1 min-w-0">
                       <p className="text-xs font-medium mb-1">Ghi âm: {(mediaBlob.size / 1024).toFixed(1)} KB</p>
-                      <audio controls src={URL.createObjectURL(mediaBlob)} className="w-full h-8" />
+                      {voicePreviewUrl && <audio controls src={voicePreviewUrl} className="w-full h-8" />}
                     </div>
                   </div>
                 )}
-                {selectedImage && (
+                {selectedImage && selectedImagePreviewUrl && (
                   <div className="flex items-center gap-3">
                     <div className="relative w-16 h-16 rounded overflow-hidden border border-border">
                       <Image
-                        src={URL.createObjectURL(selectedImage)}
+                        src={selectedImagePreviewUrl}
                         alt="Preview"
                         fill
                         unoptimized
@@ -868,11 +951,11 @@ export function ChatInterface({ activeSessionId, onMessageSent }: ChatInterfaceP
               disabled={isSubmitting || isRecording}
             />
             <Button
-              onClick={handleSendMessage}
-              disabled={isSubmitting || (!input.trim() && !mediaBlob && !selectedImage && !isRecording)}
-              className="bg-primary hover:bg-primary/90 min-w-[44px] min-h-[44px] md:min-w-0 md:min-h-0 px-3 md:px-4"
+              onClick={isSubmitting ? handleCancelRequest : handleSendMessage}
+              disabled={!isSubmitting && (!input.trim() && !mediaBlob && !selectedImage && !isRecording)}
+              className={`${isSubmitting ? "bg-destructive hover:bg-destructive/90" : "bg-primary hover:bg-primary/90"} min-w-[44px] min-h-[44px] md:min-w-0 md:min-h-0 px-3 md:px-4`}
             >
-              <Send className="w-5 h-5" />
+              {isSubmitting ? <X className="w-5 h-5" /> : <Send className="w-5 h-5" />}
             </Button>
           </div>
           <div className="text-[10px] md:text-xs text-muted-foreground/40 mt-2 text-center">
