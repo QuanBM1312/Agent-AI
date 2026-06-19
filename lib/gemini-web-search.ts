@@ -131,6 +131,7 @@ export async function runGeminiWebSearch(prompt: string): Promise<GeminiWebSearc
       `${GEMINI_API_HOST}/v1beta/models/${model}:generateContent`,
       {
         method: "POST",
+        signal: AbortSignal.timeout(45000),
         headers: {
           "content-type": "application/json",
           "x-goog-api-key": apiKey,
@@ -168,7 +169,12 @@ export async function runGeminiWebSearch(prompt: string): Promise<GeminiWebSearc
     );
 
     if (!response.ok) {
-      const retryable = response.status === 401 || response.status === 403 || response.status === 429;
+      const retryable =
+        response.status === 401 ||
+        response.status === 403 ||
+        response.status === 404 ||
+        response.status === 429 ||
+        response.status >= 500;
       lastError = new Error(`Gemini web search failed with status ${response.status}`);
       if (retryable) {
         continue;
@@ -222,6 +228,7 @@ export async function runGeminiSpreadsheetCalculation(
       `${GEMINI_API_HOST}/v1beta/models/${model}:generateContent`,
       {
         method: "POST",
+        signal: AbortSignal.timeout(45000),
         headers: {
           "content-type": "application/json",
           "x-goog-api-key": apiKey,
@@ -254,7 +261,12 @@ export async function runGeminiSpreadsheetCalculation(
     );
 
     if (!response.ok) {
-      const retryable = response.status === 401 || response.status === 403 || response.status === 429;
+      const retryable =
+        response.status === 401 ||
+        response.status === 403 ||
+        response.status === 404 ||
+        response.status === 429 ||
+        response.status >= 500;
       lastError = new Error(`Gemini spreadsheet calculation failed with status ${response.status}`);
       if (retryable) {
         continue;
@@ -312,6 +324,7 @@ export async function runGeminiFileSearchCalculation(params: {
       `${GEMINI_API_HOST}/v1beta/models/${model}:generateContent`,
       {
         method: "POST",
+        signal: AbortSignal.timeout(45000),
         headers: {
           "content-type": "application/json",
           "x-goog-api-key": apiKey,
@@ -351,7 +364,12 @@ export async function runGeminiFileSearchCalculation(params: {
     );
 
     if (!response.ok) {
-      const retryable = response.status === 401 || response.status === 403 || response.status === 429;
+      const retryable =
+        response.status === 401 ||
+        response.status === 403 ||
+        response.status === 404 ||
+        response.status === 429 ||
+        response.status >= 500;
       lastError = new Error(`Gemini file search calculation failed with status ${response.status}`);
       if (retryable) {
         continue;

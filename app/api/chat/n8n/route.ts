@@ -683,7 +683,9 @@ async function resolveDriveUnitPriceThresholdCalculation(params: {
     return null;
   }
 
-  for (const candidate of params.candidates.slice(0, 20)) {
+  // Cap sequential Drive downloads — 20 full file downloads serially can blow the
+  // serverless wall-clock. 6 is enough to find the right price sheet.
+  for (const candidate of params.candidates.slice(0, 6)) {
     if (candidate.driveFileId.startsWith("local::") || candidate.driveFileId.startsWith("surrogate-")) {
       continue;
     }

@@ -163,6 +163,16 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'File is required' }, { status: 400 });
     }
 
+    // Bound the size — the file is read into memory and base64-encoded into the
+    // n8n webhook body (~33% blowup), so a huge upload OOMs the function.
+    const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
+    if (file.size > MAX_UPLOAD_BYTES) {
+      return NextResponse.json(
+        { error: `File quá lớn (tối đa ${MAX_UPLOAD_BYTES / (1024 * 1024)}MB)` },
+        { status: 413 }
+      );
+    }
+
     // Step 1: Upload the file to Google Drive
     const { fileData: uploadedFile, fileBuffer } = await uploadToGoogleDrive(file);
 

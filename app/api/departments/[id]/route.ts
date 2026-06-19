@@ -130,9 +130,15 @@ export async function PATCH(
     const body = await request.json();
     const { id } = await params;
 
+    // Whitelist updatable fields — never write the raw body (mass-assignment of id/etc).
+    const name = typeof body?.name === "string" ? body.name.trim() : "";
+    if (!name) {
+      return NextResponse.json({ error: "name is required" }, { status: 400 });
+    }
+
     const updatedDepartment = await prisma.departments.update({
       where: { id },
-      data: body,
+      data: { name },
     });
 
     if (!updatedDepartment) {
