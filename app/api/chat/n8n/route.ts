@@ -173,7 +173,7 @@ function isCalculationPrompt(value: string) {
   }
 
   const calculationSignal =
-    /\b(tinh|tinh toan|phan tich|loc|tim|dem|bao nhieu|liet ke|danh sach|so sanh|doi chieu|xep hang|top|cao nhat|thap nhat|lon nhat|nho nhat|vuot|tren|duoi|lai lo|lai|lo|loi nhuan|doanh thu|chi phi|tong|trung binh|chenh lech|bien loi nhuan|margin|cong no|ton kho|nhap xuat ton|so luong|don gia|thanh tien|tieu chi|dieu kien)\b/.test(
+    /\b(tinh|tinh toan|phan tich|loc|tim|dem|bao nhieu|liet ke|danh sach|so sanh|doi chieu|xep hang|top|cao nhat|thap nhat|lon nhat|nho nhat|vuot|tren|duoi|lai lo|lai|lo|loi nhuan|doanh thu|chi phi|tong|trung binh|chenh lech|bien loi nhuan|margin|cong no|ton kho|nhap xuat ton|so luong|don gia|thanh tien|bang gia|bao gia|gia|tieu chi|dieu kien)\b/.test(
       normalized,
     );
   const dataSignal =
@@ -191,7 +191,7 @@ function isSpreadsheetCalculationDataPathPrompt(value: string) {
   }
 
   const explicitSpreadsheetSource =
-    /\b(file|excel|xls|xlsx|bang|sheet|bao cao|saleadmin|bang gia|bao gia|niem yet)\b/.test(
+    /\b(file|excel|xls|xlsx|bang|sheet|bao cao|saleadmin|bang gia|bao gia|niem yet|san pham|hang hoa|mat hang)\b/.test(
       normalized,
     );
   const quantitativeBusinessSignal =
@@ -335,6 +335,13 @@ async function resolveCalculationDriveCandidates(chatInput: string) {
     console.warn("[chat-calculation-db-candidates-unavailable]", {
       error: serializeErrorForClient(error),
     });
+    orderedRows = await resolveDriveFolderCalculationRows();
+  }
+
+  if (orderedRows.length === 0) {
+    // New Supabase projects can be healthy but empty before ingestion finishes.
+    // In that state, do not tell users to upload the same Drive files again:
+    // walk the configured Drive folder and rank the spreadsheets directly.
     orderedRows = await resolveDriveFolderCalculationRows();
   }
 
