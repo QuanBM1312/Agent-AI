@@ -37,6 +37,14 @@ function buildGoogleDriveUploadAuthCandidates() {
       email: serviceAccount.client_email,
       key: serviceAccount.private_key,
       scopes: DRIVE_SCOPES,
+    }));
+  }
+
+  if (serviceAccount?.client_email && serviceAccount?.private_key && impersonatedUser) {
+    authCandidates.push(new google.auth.JWT({
+      email: serviceAccount.client_email,
+      key: serviceAccount.private_key,
+      scopes: DRIVE_SCOPES,
       subject: impersonatedUser,
     }));
   }

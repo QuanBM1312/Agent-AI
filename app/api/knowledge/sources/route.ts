@@ -40,6 +40,11 @@ type KnowledgeSourceRow = Record<string, unknown> & {
   full_count: number | bigint | null;
 };
 
+type KnowledgeSourceItem = Record<string, unknown> & {
+  id?: string | null;
+  drive_file_id?: string | null;
+};
+
 const DRIVE_FOLDER_MIME_TYPE = "application/vnd.google-apps.folder";
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -105,6 +110,35 @@ function inferDriveSheetName(file: {
 function isUserVisibleDriveFile(fileName?: string | null) {
   const name = (fileName || "").trim();
   return Boolean(name) && !name.startsWith(".") && !/^upload-probe-/i.test(name);
+}
+
+function mergeKnowledgeSources(
+  dbSources: KnowledgeSourceItem[],
+  driveSources: KnowledgeSourceItem[],
+) {
+  const seen = new Set<string>();
+  const merged: KnowledgeSourceItem[] = [];
+
+  for (const source of dbSources) {
+    const key = source.drive_file_id || source.id || "";
+    if (key) {
+      seen.add(key);
+    }
+    merged.push(source);
+  }
+
+  for (const source of driveSources) {
+    const key = source.drive_file_id || source.id || "";
+    if (key && seen.has(key)) {
+      continue;
+    }
+    if (key) {
+      seen.add(key);
+    }
+    merged.push(source);
+  }
+
+  return merged;
 }
 
 async function listDriveKnowledgeSources(type: string | null) {
@@ -233,20 +267,32 @@ export async function GET(req: Request) {
         return rest;
       });
 
-      if (totalCount === 0) {
-        const driveSources = await listDriveKnowledgeSources(type);
-
-        if (driveSources && driveSources.length > 0) {
-          const pageItems = driveSources.slice(
-            paginationParams.skip,
-            paginationParams.skip + paginationParams.limit,
-          );
-          return NextResponse.json(formatPaginatedResponse(
-            pageItems,
-            driveSources.length,
-            paginationParams,
-          ));
-        }
+      const driveSources = await listDriveKnowledgeSources(type);
+      if (driveSources && driveSources.length > 0) {
+        const allSourcesResult = await prisma.$queryRaw<KnowledgeSourceRow[]>`
+          SELECT
+            *,
+            COUNT(*) OVER() as full_count
+          FROM public.knowledge_sources
+          ${whereCondition}
+          ORDER BY created_at DESC
+          LIMIT 1000
+        `;
+        const allSources = allSourcesResult.map((row) => {
+          const { full_count, ...rest } = row;
+          void full_count;
+          return rest;
+        });
+        const merged = mergeKnowledgeSources(allSources, driveSources);
+        const pageItems = merged.slice(
+          paginationParams.skip,
+          paginationParams.skip + paginationParams.limit,
+        );
+        return NextResponse.json(formatPaginatedResponse(
+          pageItems,
+          merged.length,
+          paginationParams,
+        ));
       }
 
       return NextResponse.json(formatPaginatedResponse(sources, totalCount, paginationParams));
