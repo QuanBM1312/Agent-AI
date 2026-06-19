@@ -1161,7 +1161,7 @@ function resolveLocalShortcut(params: {
 }): LocalChatResolution | null {
   const { chatInput, inlinedAttachmentText } = params;
   const exactAnswerMatch = chatInput.match(
-    /(?:chi|chỉ)\s+tr[aả]\s+l[oờ]i\s+(?:d[uú]ng\s+)?(?:chu[oỗ]i\s+)?(?:sau|n[aà]y)\s*:\s*(.+)$/iu,
+    /(?:chi|chỉ)\s+tr[aả]\s+l[oờ]i\s+(?:(?:d|đ)[uú]ng\s+)?(?:chu[oỗ]i\s+)?(?:sau|n[aà]y)\s*:\s*(.+)$/iu,
   );
 
   if (exactAnswerMatch?.[1]?.trim()) {
