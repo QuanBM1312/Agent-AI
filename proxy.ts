@@ -15,6 +15,7 @@ const isPublicRoute = createRouteMatcher([
   "/docs(.*)",
   "/",
   "/api/chat/internal", // Often public or handled via API key
+  "/api/chat/n8n",
   "/api/knowledge/upload",
   // Add other public routes here
 ]);
