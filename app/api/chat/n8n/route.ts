@@ -1108,7 +1108,43 @@ function buildMissingDataResolution(): LocalChatResolution {
   };
 }
 
-function buildCalculationNeedsDataResolution(): LocalChatResolution {
+function buildCalculationNeedsDataResolution(params: {
+  searchedDrive?: boolean;
+  candidates?: CalculationDriveCandidate[];
+  upstreamUnavailable?: boolean;
+} = {}): LocalChatResolution {
+  const candidateNames = (params.candidates ?? [])
+    .map((candidate) => candidate.driveName || candidate.fileSearchName)
+    .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+    .slice(0, 5);
+
+  if (candidateNames.length > 0) {
+    return {
+      output: [
+        "Tôi đã tìm được file Drive có khả năng liên quan, nhưng chưa đủ chắc để tự chọn đúng sheet/cột và tính ra số cuối cùng.",
+        "Các file ứng viên:",
+        ...candidateNames.map((name, index) => `${index + 1}. ${name}`),
+        params.upstreamUnavailable
+          ? "Luồng n8n/Agent0 hiện không phản hồi, nên tôi không đẩy tiếp sang agent ngoài được."
+          : "",
+        "Bạn có thể hỏi lại kèm tên file/sheet ở trên, hoặc upload đúng file Excel nếu muốn tôi tính deterministic ngay trong app.",
+      ].filter(Boolean).join("\n"),
+      routeHint: params.upstreamUnavailable
+        ? "calculation_drive_candidates_upstream_unavailable"
+        : "calculation_drive_candidates_need_selection",
+    };
+  }
+
+  if (params.searchedDrive) {
+    return {
+      output:
+        "Tôi đã tìm trong dữ liệu nội bộ/Drive nhưng chưa thấy bảng phù hợp để tính câu này. Nếu dữ liệu đã có, cần kiểm tra lại tên file trên Drive hoặc chạy ingestion để metadata nhận diện đúng. Tôi sẽ không bịa số khi chưa xác định được bảng nguồn.",
+      routeHint: params.upstreamUnavailable
+        ? "calculation_drive_source_not_found_upstream_unavailable"
+        : "calculation_drive_source_not_found",
+    };
+  }
+
   return {
     output:
       "Đây là câu hỏi tính toán nên tôi cần xác định đúng bảng dữ liệu trước khi tính. Hãy gửi rõ tên file/sheet hoặc upload file Excel liên quan, ví dụ: `tính lãi lỗ trong file TLE-BC BP SALEADMINS 2026, sheet Tổng Hợp`. Khi có đúng bảng nguồn, tôi sẽ tính theo số liệu trong file thay vì đoán.",
@@ -1212,6 +1248,8 @@ function resolveLocalShortcut(params: {
 function resolveLocalFailureFallback(params: {
   chatInput: string;
   inlinedAttachmentText: string;
+  searchedDrive?: boolean;
+  calculationDriveCandidates?: CalculationDriveCandidate[];
 }): LocalChatResolution {
   const shortcut = resolveLocalShortcut(params);
   if (shortcut) {
@@ -1219,7 +1257,11 @@ function resolveLocalFailureFallback(params: {
   }
 
   if (isCalculationPrompt(params.chatInput)) {
-    return buildCalculationNeedsDataResolution();
+    return buildCalculationNeedsDataResolution({
+      searchedDrive: params.searchedDrive,
+      candidates: params.calculationDriveCandidates,
+      upstreamUnavailable: true,
+    });
   }
 
   return buildInternalUnavailableResolution();
@@ -1941,10 +1983,12 @@ export async function POST(req: NextRequest) {
         : chatInput;
 
     let calculationDriveContext = "";
+    let calculationDriveSearched = false;
     let calculationDriveCandidates: CalculationDriveCandidate[] = [];
     if (requestType === "chat" && !hasAttachment && isSpreadsheetCalculationDataPathPrompt(userContent)) {
       const fileResolveStartedAt = performance.now();
       try {
+        calculationDriveSearched = true;
         const candidates = await resolveCalculationDriveCandidates(userContent);
         calculationDriveCandidates = candidates;
         const driveSpreadsheetResolution = await resolveDriveSpreadsheetCalculation({
@@ -2120,6 +2164,8 @@ export async function POST(req: NextRequest) {
       const degradedResolution = resolveLocalFailureFallback({
         chatInput: userContent,
         inlinedAttachmentText,
+        searchedDrive: calculationDriveSearched,
+        calculationDriveCandidates,
       });
       const totalDurationMs = performance.now() - startedAt;
       const fallbackReason =
@@ -2159,6 +2205,8 @@ export async function POST(req: NextRequest) {
       const degradedResolution = resolveLocalFailureFallback({
         chatInput: userContent,
         inlinedAttachmentText,
+        searchedDrive: calculationDriveSearched,
+        calculationDriveCandidates,
       });
       const totalDurationMs = performance.now() - startedAt;
       await persistAssistantResponse(degradedResolution, {
@@ -2239,7 +2287,10 @@ export async function POST(req: NextRequest) {
       isCalculationPrompt(userContent) &&
       hasNoResultSignal(aiContent)
     ) {
-      return await persistAndReturnResolution(buildCalculationNeedsDataResolution(), {
+      return await persistAndReturnResolution(buildCalculationNeedsDataResolution({
+        searchedDrive: calculationDriveSearched,
+        candidates: calculationDriveCandidates,
+      }), {
         degradedFrom: "calculation_no_structured_source",
       });
     }
