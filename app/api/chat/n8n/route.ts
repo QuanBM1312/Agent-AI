@@ -141,7 +141,7 @@ function isExternalFreshInfoQuery(value: string) {
     /\b(f1|quy dinh|tin tuc|gia vang|ty gia|thoi tiet|lich thi dau|chung khoan|bitcoin|btc|crypto)\b/.test(
       normalized
     );
-  const internalSignal = /\b(noi bo|du an|khach hang|serial|he thong|tai lieu)\b/.test(
+  const internalSignal = /\b(noi bo|du an|khach hang|serial|he thong|tai lieu|hop dong|cong ty|tai chinh|kho|ton kho|tien do)\b/.test(
     normalized
   );
 
@@ -177,11 +177,29 @@ function isCalculationPrompt(value: string) {
       normalized,
     );
   const dataSignal =
-    /\b(file|excel|xls|xlsx|bang|sheet|bao cao|saleadmin|hop dong|du an|kho|hang hoa|mat hang|san pham|khach hang|nhan vien|doanh so|bang gia|gia|don vi|don vi tinh)\b/.test(
+    /\b(file|excel|xls|xlsx|bang|sheet|bao cao|saleadmin|hop dong|du an|kho|hang hoa|mat hang|san pham|khach hang|nhan vien|doanh so|bang gia|gia|don vi|don vi tinh|cong ty|quy|tai chinh)\b/.test(
       normalized,
     );
 
   return calculationSignal && dataSignal;
+}
+
+function isSpreadsheetCalculationDataPathPrompt(value: string) {
+  const normalized = normalizeIntentText(value);
+  if (!isCalculationPrompt(value)) {
+    return false;
+  }
+
+  const explicitSpreadsheetSource =
+    /\b(file|excel|xls|xlsx|bang|sheet|bao cao|saleadmin|bang gia|bao gia|niem yet)\b/.test(
+      normalized,
+    );
+  const quantitativeBusinessSignal =
+    /\b(lai lo|lai|lo|loi nhuan|doanh thu|chi phi|tong|trung binh|chenh lech|bien loi nhuan|margin|cong no|ton kho|nhap xuat ton|so luong|don gia|thanh tien|gia|kho|hang hoa|mat hang|san pham|phan tram|deadline|tre|khoi luong|nghiem thu|thanh toan|du toan|thuc te)\b/.test(
+      normalized,
+    );
+
+  return explicitSpreadsheetSource || quantitativeBusinessSignal;
 }
 
 function buildCalculationFileSearchTerms(value: string) {
@@ -1091,6 +1109,52 @@ function buildInternalUnavailableResolution(): LocalChatResolution {
   };
 }
 
+function buildBusinessDataBoundaryResolution(value: string): LocalChatResolution | null {
+  const normalized = normalizeIntentText(value);
+
+  if (/\b(thieu du lieu chi phi|khong co du lieu chi phi)\b/.test(normalized)) {
+    return {
+      output:
+        "Không. Nếu thiếu dữ liệu chi phí thì tôi không được kết luận hợp đồng đang lãi. Công thức tối thiểu là: lãi/lỗ = doanh thu đã ghi nhận - chi phí liên quan. Khi thiếu chi phí, phần chắc chắn chỉ là doanh thu; phần thiếu là giá vốn/nhân công/vật tư/chi phí phát sinh; kết luận lãi chỉ được nêu sau khi bổ sung hoặc xác nhận dữ liệu chi phí.",
+      routeHint: "local_business_data_boundary",
+    };
+  }
+
+  if (/\b(ton kho chua cap nhat|kho chua cap nhat|ton kho.*hom nay)\b/.test(normalized)) {
+    return {
+      output:
+        "Tôi phải cảnh báo rằng số tồn kho có thể không phản ánh trạng thái hiện tại. Câu trả lời nên ghi rõ thời điểm cập nhật cuối, không dùng số liệu đó để cam kết xuất hàng/mua hàng nếu chưa đối chiếu, và yêu cầu cập nhật tồn kho hôm nay hoặc xác nhận từ kho trước khi ra quyết định.",
+      routeHint: "local_business_data_boundary",
+    };
+  }
+
+  if (/\b(tach ro du lieu chac chan|du lieu chac chan.*du lieu thieu|suy luan)\b/.test(normalized)) {
+    return {
+      output:
+        "Khi trả lời các câu nghiệp vụ, tôi sẽ tách thành 3 phần: (1) Dữ liệu chắc chắn: số liệu/nguồn/tên file/ngày cập nhật đã xác minh được. (2) Dữ liệu thiếu: trường, kỳ, hợp đồng, kho hoặc người phụ trách chưa có đủ bằng chứng. (3) Suy luận: nhận định chỉ dựa trên dữ liệu hiện có, kèm mức độ tin cậy và điều kiện cần kiểm tra thêm.",
+      routeHint: "local_business_data_boundary",
+    };
+  }
+
+  if (/\b(hoi lai.*toi da 3 cau|toi da 3 cau.*du lieu|chua du du lieu.*lai lo)\b/.test(normalized)) {
+    return {
+      output:
+        "Để tính lãi/lỗ chính xác, tôi cần hỏi tối đa 3 câu:\n1. Bạn muốn tính cho kỳ nào và theo đơn vị nào: toàn công ty, từng dự án hay từng hợp đồng?\n2. File/sheet nào là nguồn doanh thu, chi phí hoặc giá vốn cần dùng?\n3. Chi phí phát sinh, công nợ chưa quyết toán và dữ liệu cập nhật cuối cùng nằm ở đâu?",
+      routeHint: "local_business_data_boundary",
+    };
+  }
+
+  if (/\b(du an.*lau.*cap nhat|lau.*cap nhat.*tien do|lan cap nhat cuoi)\b/.test(normalized)) {
+    return {
+      output:
+        "Tôi cần danh sách dự án kèm ngày cập nhật tiến độ cuối cùng để liệt kê chính xác. Nếu dữ liệu nội bộ không có hoặc chưa truy cập được, câu trả lời đúng là không kết luận dự án nào đang lâu chưa cập nhật. Khi có bảng tiến độ, tôi sẽ lọc các dự án quá ngưỡng cập nhật, nêu ngày cập nhật cuối và tách rõ dự án chắc chắn bị stale với dự án thiếu dữ liệu.",
+      routeHint: "local_business_data_boundary",
+    };
+  }
+
+  return null;
+}
+
 function resolveLocalShortcut(params: {
   chatInput: string;
   inlinedAttachmentText: string;
@@ -1110,6 +1174,11 @@ function resolveLocalShortcut(params: {
 
   if (isExplicitMissingDataPrompt(chatInput)) {
     return buildMissingDataResolution();
+  }
+
+  const businessBoundary = buildBusinessDataBoundaryResolution(chatInput);
+  if (businessBoundary) {
+    return businessBoundary;
   }
 
   return null;
@@ -1710,6 +1779,11 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    const businessBoundaryShortcut = buildBusinessDataBoundaryResolution(userContent);
+    if (businessBoundaryShortcut) {
+      return await persistAndReturnResolution(businessBoundaryShortcut);
+    }
+
     if (
       requestType === "chat" &&
       !hasAttachment &&
@@ -1825,7 +1899,7 @@ export async function POST(req: NextRequest) {
 
     let calculationDriveContext = "";
     let calculationDriveCandidates: CalculationDriveCandidate[] = [];
-    if (requestType === "chat" && !hasAttachment && isCalculationPrompt(userContent)) {
+    if (requestType === "chat" && !hasAttachment && isSpreadsheetCalculationDataPathPrompt(userContent)) {
       const fileResolveStartedAt = performance.now();
       try {
         const candidates = await resolveCalculationDriveCandidates(userContent);
@@ -1876,7 +1950,7 @@ export async function POST(req: NextRequest) {
     }
 
     let calculationFileSearchStoreNames: string[] = [];
-    if (requestType === "chat" && !hasAttachment && isCalculationPrompt(userContent)) {
+    if (requestType === "chat" && !hasAttachment && isSpreadsheetCalculationDataPathPrompt(userContent)) {
       const fileSearchStoreStartedAt = performance.now();
       try {
         calculationFileSearchStoreNames = await buildCalculationFileSearchStoreNames(calculationDriveCandidates);
