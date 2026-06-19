@@ -108,7 +108,7 @@ export function StoragePanel() {
             <tbody className="divide-y divide-border">
               {isLoading ? (
                 <tr>
-                  <td colSpan={7} className="p-10 text-center text-muted-foreground">
+                  <td colSpan={8} className="p-10 text-center text-muted-foreground">
                     <Loader2 className="w-8 h-8 animate-spin mx-auto mb-3 text-primary/50" />
                     Đang tải dữ liệu tồn kho...
                   </td>

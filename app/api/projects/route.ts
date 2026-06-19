@@ -200,18 +200,13 @@ export async function PATCH(req: Request) {
         }
       });
 
-      // 2. Simple strategy for items/serials: Delete existing and recreate
-      // This is easier for nested equipment updates unless we want to do complex diffing
-      await tx.project_items.deleteMany({
-        where: { project_id: id }
-      });
+      // 2. Replace nested relations only when the client explicitly sends them.
+      // Partial project edits must not wipe equipment/personnel by omission.
+      if (items !== undefined) {
+        await tx.project_items.deleteMany({
+          where: { project_id: id }
+        });
 
-      await tx.project_personnel.deleteMany({
-        where: { project_id: id }
-      });
-
-      // 3. Re-create items and serials
-      if (items && items.length > 0) {
         for (const item of items) {
           await tx.project_items.create({
             data: {
@@ -230,13 +225,19 @@ export async function PATCH(req: Request) {
         }
       }
 
-      if (personnel_ids && personnel_ids.length > 0) {
-        await tx.project_personnel.createMany({
-          data: personnel_ids.map((userId) => ({
-            project_id: id,
-            user_id: userId,
-          })),
+      if (personnel_ids !== undefined) {
+        await tx.project_personnel.deleteMany({
+          where: { project_id: id }
         });
+
+        if (personnel_ids.length > 0) {
+          await tx.project_personnel.createMany({
+            data: personnel_ids.map((userId) => ({
+              project_id: id,
+              user_id: userId,
+            })),
+          });
+        }
       }
 
       // Return the updated project with relations

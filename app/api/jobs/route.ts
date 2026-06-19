@@ -132,45 +132,47 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Create the job
-    const newJob = await db.jobs.create({
-      data: {
-        job_code,
-        customer_id,
-        job_type: jobTypeMap[job_type] as job_type_enum, // Map to Prisma Enum
-        scheduled_start_time: scheduled_start_time
-          ? new Date(scheduled_start_time)
-          : null,
-        scheduled_end_time: scheduled_end_time
-          ? new Date(scheduled_end_time)
-          : null,
-        notes,
-        created_by_user_id: currentUser.id,
-        status: "ph_n_c_ng",
-        assigned_technician_id: technicianIds[0] || null, // Keep first technician for backward compatibility
-      },
-      include: {
-        customers: true,
-        users_jobs_created_by_user_idTousers: {
-          select: {
-            id: true,
-            full_name: true,
-            email: true,
+    const newJob = await db.$transaction(async (tx) => {
+      const createdJob = await tx.jobs.create({
+        data: {
+          job_code,
+          customer_id,
+          job_type: jobTypeMap[job_type] as job_type_enum, // Map to Prisma Enum
+          scheduled_start_time: scheduled_start_time
+            ? new Date(scheduled_start_time)
+            : null,
+          scheduled_end_time: scheduled_end_time
+            ? new Date(scheduled_end_time)
+            : null,
+          notes,
+          created_by_user_id: currentUser.id,
+          status: "ph_n_c_ng",
+          assigned_technician_id: technicianIds[0] || null, // Keep first technician for backward compatibility
+        },
+        include: {
+          customers: true,
+          users_jobs_created_by_user_idTousers: {
+            select: {
+              id: true,
+              full_name: true,
+              email: true,
+            },
           },
         },
-      },
-    });
-
-    // Create job_technicians entries for all assigned technicians
-    if (technicianIds.length > 0) {
-      await db.job_technicians.createMany({
-        data: technicianIds.map((techId: string) => ({
-          job_id: newJob.id,
-          technician_id: techId,
-        })),
-        skipDuplicates: true,
       });
-    }
+
+      if (technicianIds.length > 0) {
+        await tx.job_technicians.createMany({
+          data: technicianIds.map((techId: string) => ({
+            job_id: createdJob.id,
+            technician_id: techId,
+          })),
+          skipDuplicates: true,
+        });
+      }
+
+      return createdJob;
+    });
 
     return NextResponse.json(
       {

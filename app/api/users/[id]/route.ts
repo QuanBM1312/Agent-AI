@@ -141,10 +141,22 @@ export async function PATCH(
 
   const { id } = await params;
   const body = await request.json();
+  const allowedData: Record<string, unknown> = {};
+
+  if (body.department_id !== undefined) allowedData.department_id = body.department_id || null;
+  if (body.full_name !== undefined) allowedData.full_name = body.full_name || null;
+  if (body.role !== undefined) allowedData.role = body.role;
+  if (body.dob !== undefined) allowedData.dob = body.dob ? new Date(body.dob) : null;
+  if (body.id_card_no !== undefined) allowedData.id_card_no = body.id_card_no || null;
+  if (body.phone_number !== undefined) allowedData.phone_number = body.phone_number || null;
+
+  if (Object.keys(allowedData).length === 0) {
+    return NextResponse.json({ error: "No updatable fields provided" }, { status: 400 });
+  }
 
   const updatedUser = await prisma.users.update({
     where: { id },
-    data: body,
+    data: allowedData,
   });
 
   if (!updatedUser) {

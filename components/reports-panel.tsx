@@ -81,7 +81,7 @@ export function ReportsPanel({ userRole }: ReportsPanelProps) {
   // Fetch Jobs (for dropdown)
   const fetchJobs = useCallback(async () => {
     try {
-      const res = await fetch("/api/jobs")
+      const res = await fetch("/api/jobs?limit=100")
       if (res.ok) {
         const data = await res.json()
         setJobs(data.data || [])
@@ -561,7 +561,10 @@ export function ReportsPanel({ userRole }: ReportsPanelProps) {
                                 <p>Chưa có báo cáo nào cho công việc này.</p>
                             </div>
                           ) : (
-                            jobReports.map((report: Report) => (
+                            jobReports.map((report: Report) => {
+                              const imageUrls = report.image_urls ?? []
+
+                              return (
                               <div key={report.id} className="bg-white rounded-lg border shadow-sm p-4">
                                 <div className="flex justify-between items-start mb-3 pb-2 border-b border-slate-100">
                                   <div>
@@ -582,9 +585,9 @@ export function ReportsPanel({ userRole }: ReportsPanelProps) {
                                 </div>
 
                                 {/* Attachments */}
-                                {(report.image_urls.length > 0 || report.voice_message_url) && (
+                                {(imageUrls.length > 0 || report.voice_message_url) && (
                                   <div className="flex gap-2 flex-wrap pt-2">
-                                    {report.image_urls.map((img: string, idx: number) => (
+                                    {imageUrls.map((img: string, idx: number) => (
                                       <a key={idx} href={img} target="_blank" rel="noopener noreferrer" className="relative group block w-16 h-16 rounded-md border overflow-hidden hover:ring-2 hover:ring-blue-500 transition-all">
                                         <Image src={img} alt="Evidence" width={64} height={64} className="w-full h-full object-cover" />
                                         <div className="absolute inset-0 bg-black/20 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
@@ -601,7 +604,8 @@ export function ReportsPanel({ userRole }: ReportsPanelProps) {
                                   </div>
                                 )}
                               </div>
-                            ))
+                              )
+                            })
                           )}
                         </div>
                       )}

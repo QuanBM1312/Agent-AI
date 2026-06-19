@@ -82,7 +82,7 @@ export function ContactList({ customerId, contacts, onUpdate, userRole }: Contac
                     contacts.map(contact => (
                         <div
                             key={contact.id}
-                            className={`p-3 rounded-lg border bg-card transition-colors ${contact.is_primary ? "border-primary/50 bg-primary/5" : "hover:border-primary/30"
+                            className={`group p-3 rounded-lg border bg-card transition-colors ${contact.is_primary ? "border-primary/50 bg-primary/5" : "hover:border-primary/30"
                                 }`}
                         >
                             <div className="flex items-start justify-between gap-3">

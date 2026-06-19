@@ -2,6 +2,33 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { canAssignToTechnician, getCurrentUserWithRole, sanitizeJobForTechnician } from "@/lib/auth-utils";
 
+const JOB_STATUS_FLOW = ["ph_n_c_ng", "Ch_duy_t", "Ho_n_th_nh", "Ho_n_t_t___n"] as const;
+type JobStatusKey = (typeof JOB_STATUS_FLOW)[number];
+
+const JOB_STATUS_MAP: Record<string, JobStatusKey> = {
+  "Đã phân công": "ph_n_c_ng",
+  "Chờ duyệt": "Ch_duy_t",
+  "Đã duyệt": "Ho_n_th_nh",
+  "Hoàn tất đơn": "Ho_n_t_t___n",
+  ph_n_c_ng: "ph_n_c_ng",
+  Ch_duy_t: "Ch_duy_t",
+  Ho_n_th_nh: "Ho_n_th_nh",
+  Ho_n_t_t___n: "Ho_n_t_t___n",
+};
+
+function normalizeJobStatus(status: unknown): JobStatusKey | null {
+  return typeof status === "string" ? JOB_STATUS_MAP[status] ?? null : null;
+}
+
+function canMoveJobStatus(currentStatus: string | null, nextStatus: JobStatusKey) {
+  if (currentStatus === nextStatus) return true;
+
+  const currentIndex = JOB_STATUS_FLOW.indexOf(currentStatus as JobStatusKey);
+  const nextIndex = JOB_STATUS_FLOW.indexOf(nextStatus);
+
+  return nextIndex === currentIndex + 1;
+}
+
 /**
  * @swagger
  * /api/jobs/{id}:
@@ -180,13 +207,6 @@ export async function PATCH(
       "Sửa chữa": "S_a_ch_a",
     };
 
-    const statusMap: Record<string, string> = {
-      "Đã phân công": "ph_n_c_ng",
-      "Chờ duyệt": "Ch_duy_t",
-      "Đã duyệt": "Ho_n_th_nh",
-      "Hoàn tất đơn": "Ho_n_t_t___n"
-    };
-
     // Fetch existing job to check current status
     const existingJob = await db.jobs.findUnique({
       where: { id },
@@ -245,22 +265,33 @@ export async function PATCH(
       }
     }
 
+    const normalizedStatus = status !== undefined ? normalizeJobStatus(status) : null;
+    if (status !== undefined && !normalizedStatus) {
+      return NextResponse.json({ error: "Invalid job status" }, { status: 400 });
+    }
+    if (normalizedStatus && !canMoveJobStatus(existingJob.status as string | null, normalizedStatus)) {
+      return NextResponse.json(
+        {
+          error:
+            "Invalid job status transition. Jobs must move in order: Đã phân công → Chờ duyệt → Đã duyệt → Hoàn tất đơn.",
+        },
+        { status: 400 }
+      );
+    }
+
     // Update job in a transaction to handle technicians
-    const updatedJob = await db.$transaction(async (tx: unknown) => {
+    const updatedJob = await db.$transaction(async (transaction) => {
       const data: Record<string, unknown> = {};
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const transaction = tx as any;
       if (job_code) data.job_code = job_code;
       if (customer_id) data.customer_id = customer_id;
       if (job_type && jobTypeMap[job_type]) data.job_type = jobTypeMap[job_type];
       if (scheduled_start_time) data.scheduled_start_time = new Date(scheduled_start_time);
       if (scheduled_end_time) data.scheduled_end_time = new Date(scheduled_end_time);
       if (notes !== undefined) data.notes = notes;
-      if (status) {
-        const newStatus = statusMap[status] || status;
-        data.status = newStatus;
+      if (normalizedStatus) {
+        data.status = normalizedStatus;
         // If transitioning TO completed status for the first time
-        if (newStatus === "Ho_n_t_t___n" && (existingJob.status as string) !== "Ho_n_t_t___n") {
+        if (normalizedStatus === "Ho_n_t_t___n" && (existingJob.status as string) !== "Ho_n_t_t___n") {
            data.actual_end_time = new Date();
         }
       }

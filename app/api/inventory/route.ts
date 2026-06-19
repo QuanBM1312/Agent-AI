@@ -30,6 +30,15 @@ type InventoryProductRow = {
   full_count: bigint | number;
 };
 
+function parseInventoryQuantity(value: unknown, fieldName: string) {
+  if (value === undefined) return undefined;
+  const quantity = Number(value);
+  if (!Number.isFinite(quantity) || quantity < 0) {
+    throw new Error(`INVALID_${fieldName}`);
+  }
+  return quantity;
+}
+
 export async function GET(req: NextRequest) {
   try {
     const currentUser = await getCurrentUserWithRole();
@@ -194,114 +203,161 @@ export async function PUT(req: NextRequest) {
       return NextResponse.json({ error: "Missing product_id" }, { status: 400 });
     }
 
+    const productId = BigInt(product_id);
+    const requestedOpeningQty = parseInventoryQuantity(opening_qty, "OPENING_QTY");
+    const requestedTotalIn = parseInventoryQuantity(total_in, "TOTAL_IN");
+    const requestedTotalOut = parseInventoryQuantity(total_out, "TOTAL_OUT");
+
     const currentYear = new Date().getFullYear();
     const currentMonth = new Date().getMonth() + 1;
     const today = new Date().getDate();
 
-    // 1. Update Product Details
-    const updatedProduct = await db.dim_product.update({
-      where: { product_id: BigInt(product_id) },
-      data: {
-        product_code,
-        model_name,
-        unit,
-      },
-    });
-
-    // 2. Adjust opening stock
-    if (opening_qty !== undefined) {
-      await db.inventory_month_opening.upsert({
-        where: {
-          year_month_product_id: {
+    const updatedProduct = await db.$transaction(async (tx) => {
+      const [currentOpening, currentMovements] = await Promise.all([
+        tx.inventory_month_opening.findUnique({
+          where: {
+            year_month_product_id: {
+              year: currentYear,
+              month: currentMonth,
+              product_id: productId,
+            },
+          },
+        }),
+        tx.inventory_daily_movement.aggregate({
+          where: {
+            product_id: productId,
             year: currentYear,
             month: currentMonth,
-            product_id: BigInt(product_id)
-          }
-        },
-        update: {
-          opening_qty: Number(opening_qty),
-          updated_at: new Date()
-        },
-        create: {
-          year: currentYear,
-          month: currentMonth,
-          product_id: BigInt(product_id),
-          opening_qty: Number(opening_qty),
-          note: "Cập nhật thủ công",
-        },
-      });
-    }
+          },
+          _sum: {
+            in_qty: true,
+            out_qty: true,
+          },
+        }),
+      ]);
 
-    // 3. Adjust In/Out Movements
-    if (total_in !== undefined || total_out !== undefined) {
-      // Find current monthly totals
-      const currentMovements = await db.inventory_daily_movement.aggregate({
-        where: {
-          product_id: BigInt(product_id),
-          year: currentYear,
-          month: currentMonth,
-        },
-        _sum: {
-          in_qty: true,
-          out_qty: true,
-        },
-      });
-
+      const currentOpeningQty = Number(currentOpening?.opening_qty || 0);
       const currentSumIn = Number(currentMovements._sum.in_qty || 0);
       const currentSumOut = Number(currentMovements._sum.out_qty || 0);
 
-      const diffIn = total_in !== undefined ? Number(total_in) - currentSumIn : 0;
-      const diffOut = total_out !== undefined ? Number(total_out) - currentSumOut : 0;
+      const nextOpeningQty = requestedOpeningQty ?? currentOpeningQty;
+      const nextTotalIn = requestedTotalIn ?? currentSumIn;
+      const nextTotalOut = requestedTotalOut ?? currentSumOut;
+      const nextStock = nextOpeningQty + nextTotalIn - nextTotalOut;
 
-      if (diffIn !== 0 || diffOut !== 0) {
-        // Record the discrepancy as a movement today
-        const existingToday = await db.inventory_daily_movement.findUnique({
+      if (nextStock < 0) {
+        throw new Error("NEGATIVE_STOCK");
+      }
+
+      const product = await tx.dim_product.update({
+        where: { product_id: productId },
+        data: {
+          product_code,
+          model_name,
+          unit,
+        },
+      });
+
+      if (requestedOpeningQty !== undefined) {
+        await tx.inventory_month_opening.upsert({
           where: {
-            year_month_day_product_id: {
+            year_month_product_id: {
               year: currentYear,
               month: currentMonth,
-              day: today,
-              product_id: BigInt(product_id)
-            }
-          }
+              product_id: productId,
+            },
+          },
+          update: {
+            opening_qty: requestedOpeningQty,
+            updated_at: new Date(),
+          },
+          create: {
+            year: currentYear,
+            month: currentMonth,
+            product_id: productId,
+            opening_qty: requestedOpeningQty,
+            note: "Cập nhật thủ công",
+          },
         });
+      }
 
-        if (existingToday) {
-          await db.inventory_daily_movement.update({
+      if (requestedTotalIn !== undefined || requestedTotalOut !== undefined) {
+        const diffIn = requestedTotalIn !== undefined ? requestedTotalIn - currentSumIn : 0;
+        const diffOut = requestedTotalOut !== undefined ? requestedTotalOut - currentSumOut : 0;
+
+        if (diffIn !== 0 || diffOut !== 0) {
+          const existingToday = await tx.inventory_daily_movement.findUnique({
             where: {
               year_month_day_product_id: {
                 year: currentYear,
                 month: currentMonth,
                 day: today,
-                product_id: BigInt(product_id)
-              }
+                product_id: productId,
+              },
             },
-            data: {
-              in_qty: { increment: diffIn },
-              out_qty: { increment: diffOut },
-              note: (existingToday.note ? existingToday.note + "; " : "") + "Điều chỉnh kiểm kê tháng",
-              updated_at: new Date()
-            }
           });
-        } else {
-          await db.inventory_daily_movement.create({
-            data: {
-              year: currentYear,
-              month: currentMonth,
-              day: today,
-              product_id: BigInt(product_id),
-              in_qty: diffIn,
-              out_qty: diffOut,
-              note: "Điều chỉnh kiểm kê tháng",
+
+          if (existingToday) {
+            const nextTodayIn = Number(existingToday.in_qty || 0) + diffIn;
+            const nextTodayOut = Number(existingToday.out_qty || 0) + diffOut;
+            if (nextTodayIn < 0 || nextTodayOut < 0) {
+              throw new Error("NEGATIVE_DAILY_MOVEMENT");
             }
-          });
+
+            await tx.inventory_daily_movement.update({
+              where: {
+                year_month_day_product_id: {
+                  year: currentYear,
+                  month: currentMonth,
+                  day: today,
+                  product_id: productId,
+                },
+              },
+              data: {
+                in_qty: nextTodayIn,
+                out_qty: nextTodayOut,
+                note: (existingToday.note ? existingToday.note + "; " : "") + "Điều chỉnh kiểm kê tháng",
+                updated_at: new Date(),
+              },
+            });
+          } else {
+            if (diffIn < 0 || diffOut < 0) {
+              throw new Error("NEGATIVE_DAILY_MOVEMENT");
+            }
+
+            await tx.inventory_daily_movement.create({
+              data: {
+                year: currentYear,
+                month: currentMonth,
+                day: today,
+                product_id: productId,
+                in_qty: diffIn,
+                out_qty: diffOut,
+                note: "Điều chỉnh kiểm kê tháng",
+              },
+            });
+          }
         }
       }
-    }
+
+      return product;
+    });
 
     return NextResponse.json({ data: { ...updatedProduct, product_id: updatedProduct.product_id.toString() } });
   } catch (error: unknown) {
     console.error("Error updating product:", error);
+    if (error instanceof Error && error.message === "NEGATIVE_STOCK") {
+      return NextResponse.json({ error: "Tồn kho không được âm" }, { status: 400 });
+    }
+    if (error instanceof Error && error.message.startsWith("INVALID_")) {
+      return NextResponse.json({ error: "Số lượng tồn kho không hợp lệ" }, { status: 400 });
+    }
+    if (error instanceof Error && error.message === "NEGATIVE_DAILY_MOVEMENT") {
+      return NextResponse.json(
+        { error: "Không thể giảm tổng nhập/xuất thấp hơn phần đã ghi nhận trong các ngày trước" },
+        { status: 400 }
+      );
+    }
     if (
       error instanceof Prisma.PrismaClientKnownRequestError &&
       error.code === "P2002"

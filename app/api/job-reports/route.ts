@@ -98,34 +98,46 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Create the report
-    const report = await db.job_reports.create({
-      data: {
-        job_id,
-        created_by_user_id: currentUser.id,
-        problem_summary,
-        actions_taken,
-        image_urls,
-        voice_message_url,
-        customer_ref,
-      },
-      include: {
-        users: {
-          select: {
-            id: true,
-            full_name: true,
-            email: true,
+    if (job.status !== "ph_n_c_ng") {
+      return NextResponse.json(
+        {
+          error:
+            "Công việc này không còn ở trạng thái Đã phân công, nên không thể gửi báo cáo mới để đưa lại về Chờ duyệt.",
+        },
+        { status: 409 }
+      );
+    }
+
+    const report = await db.$transaction(async (tx) => {
+      const createdReport = await tx.job_reports.create({
+        data: {
+          job_id,
+          created_by_user_id: currentUser.id,
+          problem_summary,
+          actions_taken,
+          image_urls,
+          voice_message_url,
+          customer_ref,
+        },
+        include: {
+          users: {
+            select: {
+              id: true,
+              full_name: true,
+              email: true,
+            },
           },
         },
-      },
-    });
+      });
 
-    // QC WORKFLOW (Phương án A - Mục 4): Change job status to "Chờ duyệt"
-    await db.jobs.update({
-      where: { id: job_id },
-      data: {
-        status: "Ch_duy_t", // "Chờ duyệt" - Pending Approval
-      },
+      await tx.jobs.update({
+        where: { id: job_id },
+        data: {
+          status: "Ch_duy_t", // "Chờ duyệt" - Pending Approval
+        },
+      });
+
+      return createdReport;
     });
 
     return NextResponse.json(

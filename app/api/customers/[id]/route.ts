@@ -165,11 +165,23 @@ export async function PATCH(
 
     const { id } = await params;
     const body = await request.json();
+    const allowedData: Record<string, unknown> = {};
+
+    if (body.company_name !== undefined) allowedData.company_name = body.company_name || null;
+    if (body.contact_person !== undefined) allowedData.contact_person = body.contact_person;
+    if (body.phone !== undefined) allowedData.phone = body.phone || null;
+    if (body.address !== undefined) allowedData.address = body.address || null;
+    if (body.customer_type !== undefined) allowedData.customer_type = body.customer_type || null;
+
+    if (Object.keys(allowedData).length === 0) {
+      return NextResponse.json({ error: "No updatable fields provided" }, { status: 400 });
+    }
+
     const updatedCustomer = await prisma.customers.update({
       where: {
         id: id as string,
       },
-      data: body,
+      data: allowedData,
     });
     if (!updatedCustomer) {
       return NextResponse.json({ error: "Customer not found" }, { status: 404 });

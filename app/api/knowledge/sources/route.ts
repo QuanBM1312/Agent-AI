@@ -372,16 +372,11 @@ export async function DELETE(request: Request) {
       return NextResponse.json({ error: "Knowledge source not found" }, { status: 404 });
     }
 
-    const fileSearchDeleteConditions = [
-      source.drive_file_id ? { drive_file_id: source.drive_file_id } : null,
-      source.drive_name ? { drive_name: source.drive_name } : null,
-    ].filter(Boolean) as Array<{ drive_file_id: string } | { drive_name: string }>;
-
     await prisma.$transaction([
-      ...(fileSearchDeleteConditions.length > 0
+      ...(source.drive_file_id
         ? [
             prisma.file_search_storage.deleteMany({
-              where: { OR: fileSearchDeleteConditions },
+              where: { drive_file_id: source.drive_file_id },
             }),
           ]
         : []),

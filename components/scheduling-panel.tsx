@@ -176,7 +176,8 @@ export function SchedulingPanel({ userRole }: SchedulingPanelProps) {
     setIsSubmitting(true)
     try {
       const startDateTime = new Date(`${editItem.start_date}T${editItem.start_time || '09:00'}:00`).toISOString()
-      const endDateTime = new Date(`${editItem.start_date}T${editItem.end_time || '11:00'}:00`).toISOString()
+      const endDate = editItem.end_date || editItem.start_date
+      const endDateTime = new Date(`${endDate}T${editItem.end_time || '11:00'}:00`).toISOString()
 
       const payload = {
         job_code: editItem.job_code,

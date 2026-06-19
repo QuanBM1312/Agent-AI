@@ -25,6 +25,17 @@ interface Department {
     name: string
 }
 
+function formatDateInputValue(value?: string | Date | null) {
+    if (!value) return ''
+    if (value instanceof Date) {
+        const year = value.getFullYear()
+        const month = String(value.getMonth() + 1).padStart(2, '0')
+        const day = String(value.getDate()).padStart(2, '0')
+        return `${year}-${month}-${day}`
+    }
+    return value.slice(0, 10)
+}
+
 export function UsersPanel({ userRole }: { userRole: string }) {
     const [users, setUsers] = useState<User[]>([])
     const [departments, setDepartments] = useState<Department[]>([])
@@ -274,7 +285,7 @@ export function UsersPanel({ userRole }: { userRole: string }) {
                                     <label className="text-sm font-medium">Ngày sinh</label>
                                     <Input
                                         type="date"
-                                        value={editingUser.dob ? new Date(editingUser.dob).toISOString().split('T')[0] : ''}
+                                        value={formatDateInputValue(editingUser.dob)}
                                         onChange={e => setEditingUser({ ...editingUser, dob: e.target.value })}
                                     />
                                 </div>

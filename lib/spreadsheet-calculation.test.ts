@@ -65,6 +65,20 @@ test("price filter + sum: tổng Thành tiền của các mặt hàng có đơn 
   assert.match(res.output, /39\.000\.000/);
 });
 
+test("price filter + sum requires amount column instead of summing unit prices", () => {
+  const res = resolveSpreadsheetCalculation({
+    prompt: "tính tổng giá trị các mặt hàng có đơn giá trên 10 triệu",
+    fileName: "bang-gia-thieu-thanh-tien.csv",
+    buffer: csv(`Mặt hàng,Đơn giá,Số lượng
+Máy lạnh A,12.000.000,2
+Tủ lạnh B,8.000.000,5
+Máy giặt C,15.000.000,1`),
+  });
+
+  assert.ok(res);
+  assert.equal(res.routeHint, "spreadsheet_calculation_needs_columns");
+});
+
 test("count: đếm số mặt hàng có đơn giá > 10tr → 2", () => {
   const res = resolveSpreadsheetCalculation({
     prompt: "đếm số mặt hàng có đơn giá trên 10 triệu",
