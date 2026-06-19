@@ -693,7 +693,11 @@ export function resolveSpreadsheetCalculation(params: {
     return buildNeedsColumnsResolution({ spreadsheet, tables });
   }
 
-  if (/\b(dem|bao nhieu|co bao nhieu|co may|may mat hang|how many|count)\b/.test(prompt)) {
+  const inventoryPrompt = /\b(ton kho|nhap xuat ton|sl con lai|so luong|khoi luong|quantity|qty)\b/.test(prompt);
+  const explicitRowCountPrompt = /\b(dem|co may|may mat hang|so mat hang|how many|count)\b/.test(prompt);
+  const generalCountPrompt = /\b(bao nhieu|co bao nhieu)\b/.test(prompt);
+
+  if (explicitRowCountPrompt) {
     return buildCountResolution({
       spreadsheet,
       table: calculationTable,
@@ -702,7 +706,7 @@ export function resolveSpreadsheetCalculation(params: {
     });
   }
 
-  if (/\b(ton kho|nhap xuat ton|sl con lai|so luong|khoi luong|quantity|qty)\b/.test(prompt)) {
+  if (inventoryPrompt) {
     if (inventoryColumns.length > 0) {
       return buildAggregateResolution({
         spreadsheet,
@@ -714,6 +718,15 @@ export function resolveSpreadsheetCalculation(params: {
         originalRowCount,
       });
     }
+  }
+
+  if (generalCountPrompt) {
+    return buildCountResolution({
+      spreadsheet,
+      table: calculationTable,
+      rowFilter,
+      originalRowCount,
+    });
   }
 
   if (/\b(tong|doanh thu|thanh tien|so tien|gia tri|amount|total)\b/.test(prompt)) {

@@ -110,6 +110,34 @@ B,25`),
   );
 });
 
+test("inventory: 'bao nhiêu tồn kho' means aggregate quantity, not row count", () => {
+  const res = resolveSpreadsheetCalculation({
+    prompt: "còn bao nhiêu hàng tồn kho",
+    fileName: "kho.csv",
+    buffer: csv(`Mặt hàng,Tồn kho
+A,10
+B,25`),
+  });
+
+  assert.ok(res);
+  assert.equal(res.meta.operation, "aggregate");
+  assert.match(res.output, /35/);
+});
+
+test("inventory: explicit 'đếm số mặt hàng' counts rows, not stock quantity", () => {
+  const res = resolveSpreadsheetCalculation({
+    prompt: "đếm số mặt hàng tồn kho",
+    fileName: "kho.csv",
+    buffer: csv(`Mặt hàng,Tồn kho
+A,10
+B,25`),
+  });
+
+  assert.ok(res);
+  assert.equal(res.meta.operation, "count");
+  assert.equal(res.meta.matchedRowCount, 2);
+});
+
 test("needs columns when there is no usable numeric column", () => {
   const res = resolveSpreadsheetCalculation({
     prompt: "tính tổng doanh thu",

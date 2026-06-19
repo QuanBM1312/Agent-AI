@@ -1,7 +1,6 @@
-// Must be a real, currently-served Gemini model id. "gemini-3.5-flash" does NOT
-// exist and made every generateContent call 404 (silently killing the web-search
-// and raw-spreadsheet calculation fallbacks). Override per-call via env if needed.
-const DEFAULT_GEMINI_MODEL = "gemini-2.5-flash";
+// Keep the default on the strongest low-latency Gemini model available to this
+// deployment. Override per-call via GEMINI_WEB_MODEL if quota/availability changes.
+const DEFAULT_GEMINI_MODEL = "gemini-3.5-flash";
 const DEFAULT_GEMINI_FILE_SEARCH_MODEL = "gemini-2.5-flash";
 const GEMINI_API_HOST = "https://generativelanguage.googleapis.com";
 
