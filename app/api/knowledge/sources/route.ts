@@ -233,6 +233,22 @@ export async function GET(req: Request) {
         return rest;
       });
 
+      if (totalCount === 0) {
+        const driveSources = await listDriveKnowledgeSources(type);
+
+        if (driveSources && driveSources.length > 0) {
+          const pageItems = driveSources.slice(
+            paginationParams.skip,
+            paginationParams.skip + paginationParams.limit,
+          );
+          return NextResponse.json(formatPaginatedResponse(
+            pageItems,
+            driveSources.length,
+            paginationParams,
+          ));
+        }
+      }
+
       return NextResponse.json(formatPaginatedResponse(sources, totalCount, paginationParams));
     } catch (databaseError) {
       console.warn("[knowledge-sources-db-unavailable]", { error: databaseError });
