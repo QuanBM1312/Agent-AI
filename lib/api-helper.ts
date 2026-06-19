@@ -1,17 +1,23 @@
 import { NextResponse } from "next/server";
 import { Prisma } from "@prisma/client";
+import { isTenantDatabaseBoundaryError } from "@/lib/db-runtime";
 
 export async function handleApiError(error: unknown, contextStr: string = "API Error") {
   console.error(`[${contextStr}]`, error);
+  const errorMessage = error instanceof Error ? error.message : "";
 
   // Prisma Connection Error
   if (
+    isTenantDatabaseBoundaryError(error) ||
     error instanceof Prisma.PrismaClientInitializationError ||
     error instanceof Prisma.PrismaClientKnownRequestError
   ) {
     // Check for specific connection issues or general initialization failures
     // Note: error.message usually contains "Can't reach database server"
-    if (error.message.includes("Can't reach database server")) {
+    if (
+      isTenantDatabaseBoundaryError(error) ||
+      errorMessage.includes("Can't reach database server")
+    ) {
       return NextResponse.json(
         {
           error: "Service Temporarily Unavailable",
@@ -22,7 +28,7 @@ export async function handleApiError(error: unknown, contextStr: string = "API E
     }
   }
 
-  const details = error instanceof Error ? error.message : "Unknown error";
+  const details = errorMessage || "Unknown error";
 
   return NextResponse.json(
     { error: "Internal Server Error", details },

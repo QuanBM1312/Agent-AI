@@ -16,5 +16,9 @@ export function readErrorMessage(error: unknown) {
 
 export function isTenantDatabaseBoundaryError(error: unknown) {
   const message = readErrorMessage(error);
-  return message.includes("Tenant or user not found");
+  return (
+    message.includes("Tenant or user not found") ||
+    message.includes("tenant/user") ||
+    message.includes("ENOTFOUND")
+  );
 }
