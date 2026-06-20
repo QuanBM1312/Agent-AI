@@ -47,6 +47,16 @@ type CalculationDriveCandidate = {
 
 const DRIVE_FOLDER_MIME_TYPE = "application/vnd.google-apps.folder";
 
+type InventoryProductRow = {
+  product_id: bigint | number | string;
+  product_code: string | null;
+  model_name: string | null;
+  unit: string | null;
+  opening: number | string | null;
+  total_in: number | string | null;
+  total_out: number | string | null;
+};
+
 type RequestResolutionMeta = Record<string, unknown> & {
   webSearchPendingPrompt?: string;
   webSearchUsed?: boolean;
@@ -257,6 +267,102 @@ function hasInventoryFileMarker(value: string) {
   return /\b(kho|ton kho|ton hang|hang hoa|nhap xuat ton)\b/.test(normalizeIntentText(value));
 }
 
+function isInventorySummaryPrompt(value: string) {
+  const normalized = normalizeIntentText(value);
+  return /\b(ton kho|hang ton|hang hoa|mat hang|so luong|con bao nhieu|bao nhieu hang|am kho|duoi nguong)\b/.test(normalized);
+}
+
+function toNumber(value: number | string | bigint | null | undefined) {
+  if (typeof value === "bigint") {
+    return Number(value);
+  }
+  const parsed = Number(value ?? 0);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+async function resolveInventoryDbCalculation(prompt: string): Promise<LocalChatResolution | null> {
+  if (!isInventorySummaryPrompt(prompt)) {
+    return null;
+  }
+
+  const currentYear = new Date().getFullYear();
+  const currentMonth = new Date().getMonth() + 1;
+  const rows = await prisma.$queryRawUnsafe<InventoryProductRow[]>(
+    "SELECT p.product_id, p.product_code, p.model_name, p.unit, " +
+      "COALESCE(CAST(o.opening_qty AS FLOAT), 0) as opening, " +
+      "COALESCE(CAST(SUM(m.in_qty) AS FLOAT), 0) as total_in, " +
+      "COALESCE(CAST(SUM(m.out_qty) AS FLOAT), 0) as total_out " +
+      "FROM public.dim_product p " +
+      "LEFT JOIN public.inventory_month_opening o ON p.product_id = o.product_id " +
+      "AND o.year = $1 AND o.month = $2 " +
+      "LEFT JOIN public.inventory_daily_movement m ON p.product_id = m.product_id " +
+      "AND m.year = $1 AND m.month = $2 " +
+      "GROUP BY p.product_id, p.product_code, p.model_name, p.unit, o.opening_qty " +
+      "ORDER BY p.model_name ASC LIMIT 500",
+    currentYear,
+    currentMonth,
+  );
+
+  if (rows.length === 0) {
+    return null;
+  }
+
+  const inventory = rows.map((row) => {
+    const opening = toNumber(row.opening);
+    const totalIn = toNumber(row.total_in);
+    const totalOut = toNumber(row.total_out);
+    return {
+      code: row.product_code || String(row.product_id),
+      name: row.model_name || row.product_code || String(row.product_id),
+      unit: row.unit || "",
+      currentStock: opening + totalIn - totalOut,
+    };
+  });
+
+  const totalStock = inventory.reduce((sum, item) => sum + item.currentStock, 0);
+  const negativeItems = inventory.filter((item) => item.currentStock < 0);
+  const lowItems = inventory
+    .filter((item) => item.currentStock >= 0 && item.currentStock <= 5)
+    .sort((a, b) => a.currentStock - b.currentStock)
+    .slice(0, 8);
+  const topRows = inventory
+    .slice()
+    .sort((a, b) => b.currentStock - a.currentStock)
+    .slice(0, 8)
+    .map((item, index) =>
+      String(index + 1) + ". " + item.name + (item.code ? " (" + item.code + ")" : "") + ": " +
+      item.currentStock.toLocaleString("vi-VN") + " " + item.unit
+    );
+
+  const riskLines = [
+    negativeItems.length > 0
+      ? "Cảnh báo âm kho: " + String(negativeItems.length) + " mặt hàng (" +
+        negativeItems.slice(0, 5).map((item) => item.name).join(", ") +
+        (negativeItems.length > 5 ? ", ..." : "") + ")."
+      : "Không thấy mặt hàng âm kho trong dữ liệu hiện tại.",
+    lowItems.length > 0
+      ? "Mặt hàng dưới/ngang ngưỡng 5: " +
+        lowItems.map((item) => item.name + ": " + item.currentStock.toLocaleString("vi-VN") + " " + item.unit).join("; ") + "."
+      : "Không thấy mặt hàng nào ở ngưỡng thấp <= 5 trong dữ liệu hiện tại.",
+  ];
+
+  return {
+    routeHint: "local_inventory_summary",
+    output: [
+      "Tôi tính tồn kho hiện tại từ bảng inventory của app cho tháng " + String(currentMonth) + "/" + String(currentYear) + ".",
+      "Công thức: tồn hiện tại = tồn đầu tháng + nhập trong tháng - xuất trong tháng.",
+      "Tổng tồn hiện tại: " + totalStock.toLocaleString("vi-VN") + " đơn vị trên " + inventory.length.toLocaleString("vi-VN") + " mặt hàng.",
+      "",
+      "Top mặt hàng tồn nhiều:",
+      ...topRows,
+      "",
+      ...riskLines,
+      "",
+      "Nguồn dữ liệu: dim_product + inventory_month_opening + inventory_daily_movement trong database production.",
+    ].join("\n"),
+  };
+}
+
 async function resolveCalculationDriveCandidates(chatInput: string) {
   const terms = buildCalculationFileSearchTerms(chatInput);
   const normalized = normalizeIntentText(chatInput);
@@ -361,7 +467,10 @@ async function resolveCalculationDriveCandidates(chatInput: string) {
     })
     .filter((item) => {
       if (inventoryPrompt) {
-        return item.score > 0 && hasInventoryFileMarker(`${item.row.drive_name ?? ""} ${item.row.file_search_name ?? ""}`);
+        // Prefer explicit inventory files, but do not drop every candidate when
+        // Drive/Supabase metadata is sparse. Agent0 can inspect plausible
+        // spreadsheets if we pass the candidates through.
+        return item.score > 0;
       }
 
       return item.score > 0 || pricePrompt;
@@ -684,8 +793,9 @@ async function resolveDriveUnitPriceThresholdCalculation(params: {
   }
 
   // Cap sequential Drive downloads — 20 full file downloads serially can blow the
-  // serverless wall-clock. 6 is enough to find the right price sheet.
-  for (const candidate of params.candidates.slice(0, 6)) {
+  // serverless wall-clock. 12 gives price prompts enough room when Drive ranking
+  // has several similarly named price/proposal workbooks.
+  for (const candidate of params.candidates.slice(0, 12)) {
     if (candidate.driveFileId.startsWith("local::") || candidate.driveFileId.startsWith("surrogate-")) {
       continue;
     }
@@ -1006,7 +1116,7 @@ async function buildCalculationRawDriveContext(
 ) {
   const chunks: string[] = [];
 
-  for (const candidate of candidates.slice(0, 1)) {
+  for (const candidate of candidates.slice(0, 2)) {
     if (candidate.driveFileId.startsWith("local::")) {
       continue;
     }
@@ -1032,6 +1142,9 @@ async function buildCalculationRawDriveContext(
         buildSpreadsheetPreview({
           fileName,
           buffer: file.buffer,
+          maxRowsPerSheet: 120,
+          maxSheets: 4,
+          maxChars: 18_000,
         }),
         "[RAW_DRIVE_SPREADSHEET_CONTEXT_END]",
       ].join("\n"));
@@ -1984,6 +2097,28 @@ export async function POST(req: NextRequest) {
             .join("\n\n")
         : chatInput;
 
+    if (requestType === "chat" && !hasAttachment && isInventorySummaryPrompt(userContent)) {
+      const inventoryStartedAt = performance.now();
+      try {
+        const inventoryResolution = await resolveInventoryDbCalculation(userContent);
+        mark("inventory_db", inventoryStartedAt);
+        if (inventoryResolution) {
+          return await persistAndReturnResolution(inventoryResolution, {
+            spreadsheetCalculationUsed: true,
+            webSearchUsed: false,
+            webSearchProvider: "app_inventory_db",
+          });
+        }
+      } catch (error) {
+        mark("inventory_db", inventoryStartedAt);
+        console.warn("[chat-inventory-db-calculation-failed]", {
+          requestId,
+          sessionId,
+          error: serializeErrorForClient(error),
+        });
+      }
+    }
+
     let calculationDriveContext = "";
     let calculationDriveSearched = false;
     let calculationDriveCandidates: CalculationDriveCandidate[] = [];
@@ -2021,10 +2156,9 @@ export async function POST(req: NextRequest) {
             },
           );
         }
-        const shouldSkipRawDriveContext = parsePriceThreshold(userContent) !== null;
         calculationDriveContext = [
           buildCalculationDriveContext(candidates),
-          shouldSkipRawDriveContext ? "" : await buildCalculationRawDriveContext(candidates),
+          await buildCalculationRawDriveContext(candidates),
         ].filter(Boolean).join("\n\n");
       } catch (error) {
         if (!isTenantDatabaseBoundaryError(error)) {
