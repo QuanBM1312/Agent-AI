@@ -280,6 +280,61 @@ function toNumber(value: number | string | bigint | null | undefined) {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
+async function fetchInventoryRowsViaSupabaseRest(year: number, month: number) {
+  const supabaseUrl = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SECRET_KEY;
+  if (!supabaseUrl || !serviceKey) {
+    return [];
+  }
+
+  const baseUrl = supabaseUrl.replace(/\/$/, "");
+  const headers = {
+    apikey: serviceKey,
+    authorization: `Bearer ${serviceKey}`,
+    accept: "application/json",
+  };
+
+  const productsUrl =
+    baseUrl +
+    "/rest/v1/dim_product?select=product_id,product_code,model_name,unit&limit=2000";
+  const openingsUrl =
+    baseUrl +
+    `/rest/v1/inventory_month_opening?select=product_id,opening_qty&year=eq.${year}&month=eq.${month}&limit=2000`;
+
+  const [productsResponse, openingsResponse] = await Promise.all([
+    fetch(productsUrl, { headers }),
+    fetch(openingsUrl, { headers }),
+  ]);
+
+  if (!productsResponse.ok || !openingsResponse.ok) {
+    throw new Error(
+      `Supabase REST inventory fetch failed: products=${productsResponse.status}, openings=${openingsResponse.status}`
+    );
+  }
+
+  const products = (await productsResponse.json()) as Array<{
+    product_id: number | string;
+    product_code: string | null;
+    model_name: string | null;
+    unit: string | null;
+  }>;
+  const openings = (await openingsResponse.json()) as Array<{
+    product_id: number | string;
+    opening_qty: number | string | null;
+  }>;
+  const openingByProductId = new Map(openings.map((row) => [String(row.product_id), row.opening_qty]));
+
+  return products.map((product) => ({
+    product_id: product.product_id,
+    product_code: product.product_code,
+    model_name: product.model_name,
+    unit: product.unit,
+    opening: openingByProductId.get(String(product.product_id)) ?? 0,
+    total_in: 0,
+    total_out: 0,
+  }));
+}
+
 async function resolveInventoryDbCalculation(prompt: string): Promise<LocalChatResolution | null> {
   if (!isInventorySummaryPrompt(prompt)) {
     return null;
@@ -287,21 +342,29 @@ async function resolveInventoryDbCalculation(prompt: string): Promise<LocalChatR
 
   const currentYear = new Date().getFullYear();
   const currentMonth = new Date().getMonth() + 1;
-  const rows = await prisma.$queryRawUnsafe<InventoryProductRow[]>(
-    "SELECT p.product_id, p.product_code, p.model_name, p.unit, " +
-      "COALESCE(CAST(o.opening_qty AS FLOAT), 0) as opening, " +
-      "COALESCE(CAST(SUM(m.in_qty) AS FLOAT), 0) as total_in, " +
-      "COALESCE(CAST(SUM(m.out_qty) AS FLOAT), 0) as total_out " +
-      "FROM public.dim_product p " +
-      "LEFT JOIN public.inventory_month_opening o ON p.product_id = o.product_id " +
-      "AND o.year = $1 AND o.month = $2 " +
-      "LEFT JOIN public.inventory_daily_movement m ON p.product_id = m.product_id " +
-      "AND m.year = $1 AND m.month = $2 " +
-      "GROUP BY p.product_id, p.product_code, p.model_name, p.unit, o.opening_qty " +
-      "ORDER BY p.model_name ASC LIMIT 500",
-    currentYear,
-    currentMonth,
-  );
+  let rows: InventoryProductRow[];
+  try {
+    rows = await prisma.$queryRawUnsafe<InventoryProductRow[]>(
+      "SELECT p.product_id, p.product_code, p.model_name, p.unit, " +
+        "COALESCE(CAST(o.opening_qty AS FLOAT), 0) as opening, " +
+        "COALESCE(CAST(SUM(m.in_qty) AS FLOAT), 0) as total_in, " +
+        "COALESCE(CAST(SUM(m.out_qty) AS FLOAT), 0) as total_out " +
+        "FROM public.dim_product p " +
+        "LEFT JOIN public.inventory_month_opening o ON p.product_id = o.product_id " +
+        "AND o.year = $1 AND o.month = $2 " +
+        "LEFT JOIN public.inventory_daily_movement m ON p.product_id = m.product_id " +
+        "AND m.year = $1 AND m.month = $2 " +
+        "GROUP BY p.product_id, p.product_code, p.model_name, p.unit, o.opening_qty " +
+        "ORDER BY p.model_name ASC LIMIT 2000",
+      currentYear,
+      currentMonth,
+    );
+  } catch (error) {
+    console.warn("[chat-inventory-prisma-unavailable-using-rest]", {
+      error: serializeErrorForClient(error),
+    });
+    rows = await fetchInventoryRowsViaSupabaseRest(currentYear, currentMonth);
+  }
 
   if (rows.length === 0) {
     return null;
