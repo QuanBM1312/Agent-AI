@@ -194,21 +194,25 @@ function isCalculationPrompt(value: string) {
   return calculationSignal && dataSignal;
 }
 
-function isSpreadsheetCalculationDataPathPrompt(value: string) {
+// A price lookup ("báo giá điều hòa Toshiba", "phiếu tính giá", "giá Daikin") is
+// an internal-data question even when not phrased as a calculation. A bare brand
+// is not a price signal on its own ("lắp máy lạnh LG" = install), so a brand only
+// counts when paired with a price word.
+function isInternalPriceLookupPrompt(value: string) {
   const normalized = normalizeIntentText(value);
-
-  // A price lookup is a valid internal data-path even when it isn't phrased as a
-  // calculation (e.g. "báo giá điều hòa Toshiba", "giá điều hòa Daikin"). A bare
-  // brand is not a price signal on its own ("lắp máy lạnh LG" = install), so a
-  // brand only counts when paired with a price word.
-  const internalPriceLookup =
+  return (
     /\b(phieu tinh gia|tim gia|gia cua|gia san pham|gia dieu hoa|bao gia|bang gia|don gia)\b/.test(
       normalized,
     ) ||
     (/\b(toshiba|carrier|daikin|midea|lg|panasonic|mitsubishi)\b/.test(normalized) &&
-      /\bgia\b/.test(normalized));
+      /\bgia\b/.test(normalized))
+  );
+}
 
-  if (internalPriceLookup) {
+function isSpreadsheetCalculationDataPathPrompt(value: string) {
+  const normalized = normalizeIntentText(value);
+
+  if (isInternalPriceLookupPrompt(value)) {
     return true;
   }
 
@@ -1361,6 +1365,22 @@ function buildInternalUnavailableResolution(): LocalChatResolution {
   };
 }
 
+// Honest answer for an internal price question the internal lanes could not
+// satisfy. Never falls back to web prices — that would be misleading for an
+// internal-data question.
+function buildInternalPriceUnavailableResolution(): LocalChatResolution {
+  return {
+    output: [
+      "Tôi chưa đọc được giá sản phẩm từ dữ liệu nội bộ cho yêu cầu này. Tôi sẽ KHÔNG trả giá lấy từ web cho câu hỏi giá nội bộ.",
+      "",
+      "- Dữ liệu chắc chắn: chưa truy cập được file/bảng giá sản phẩm nội bộ phù hợp.",
+      "- Dữ liệu thiếu: bảng giá sản phẩm theo hãng trong Drive nội bộ chưa đọc được (thường do file chưa được chia sẻ cho service account, hoặc bảng giá nội bộ chỉ là giá dịch vụ chứ không có giá sản phẩm).",
+      "- Suy luận: cần chia sẻ đúng file giá cho service account, hoặc gửi rõ tên file/sheet giá sản phẩm; sau đó tôi sẽ tính từ nguồn nội bộ.",
+    ].join("\n"),
+    routeHint: "local_internal_price_unavailable",
+  };
+}
+
 function buildBusinessDataBoundaryResolution(value: string): LocalChatResolution | null {
   const normalized = normalizeIntentText(value);
 
@@ -2351,6 +2371,21 @@ export async function POST(req: NextRequest) {
           error: serializeErrorForClient(error),
         });
       }
+    }
+
+    // Internal price questions must not fall back to web. If every internal lane
+    // (deterministic Drive parse, price filter, Gemini on raw/file-search) already
+    // failed to answer, return an honest "no internal price data" instead of
+    // forwarding to n8n — which would answer from web search.
+    if (
+      requestType === "chat" &&
+      !hasAttachment &&
+      isInternalPriceLookupPrompt(userContent)
+    ) {
+      return await persistAndReturnResolution(buildInternalPriceUnavailableResolution(), {
+        spreadsheetCalculationUsed: false,
+        webSearchUsed: false,
+      });
     }
 
     const outgoingFormData = new FormData();
