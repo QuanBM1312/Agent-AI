@@ -92,6 +92,24 @@ test("count: đếm số mặt hàng có đơn giá > 10tr → 2", () => {
   assert.equal(res.meta.matchedRowCount, 2);
 });
 
+test("price lookup: 'giá bao nhiêu' for a product code returns row details, not a row count", () => {
+  const res = resolveSpreadsheetCalculation({
+    prompt: "Mã hàng H2AT321I08 là gì và giá bao nhiêu trong bảng giá nội bộ?",
+    fileName: "bang-gia.csv",
+    buffer: csv(`Mã hàng,Tên sản phẩm,Đơn giá
+H2AT321I08,Điều hòa Toshiba RAS-18J2AVG-V,42.500.000
+H8BTDK0032,Điều khiển RBC-AXU31-E,210000`),
+  });
+
+  assert.ok(res);
+  assert.equal(res.routeHint, "spreadsheet_calculation");
+  assert.equal(res.meta.operation, "price_lookup");
+  assert.match(res.output, /H2AT321I08/);
+  assert.match(res.output, /Điều hòa Toshiba RAS-18J2AVG-V/);
+  assert.match(res.output, /42\.500\.000/);
+  assert.doesNotMatch(res.output, /Tổng số dòng dữ liệu/);
+});
+
 test("aggregate without filter sums the amount column", () => {
   const res = resolveSpreadsheetCalculation({
     prompt: "tính tổng thành tiền",

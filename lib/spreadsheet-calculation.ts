@@ -142,6 +142,13 @@ function formatNumber(value: number) {
   }).format(value);
 }
 
+function formatCellValue(value: CellValue) {
+  if (value instanceof Date) {
+    return value.toISOString().slice(0, 10);
+  }
+  return String(value ?? "").trim();
+}
+
 function parsePromptAmount(valueText: string, unitText?: string) {
   const amount = Number.parseFloat(valueText.replace(",", "."));
   if (!Number.isFinite(amount)) {
@@ -470,6 +477,133 @@ function applyRowFilter(table: TableProfile, filter: RowFilter): TableProfile {
   };
 }
 
+function pickLookupColumnIndexes(table: TableProfile) {
+  const preferred = table.headers
+    .map((header, index) => ({ header: normalizeText(header), index }))
+    .filter(({ header }) =>
+      /\b(ma|ma hang|code|model|sku|ten|ten hang|ten san pham|san pham|mat hang|hang hoa|description)\b/.test(header),
+    )
+    .map(({ index }) => index);
+
+  return preferred.length > 0 ? preferred : table.headers.map((_, index) => index);
+}
+
+function extractLookupTerms(prompt: string) {
+  const stopWords = new Set([
+    "bang",
+    "bao",
+    "bao nhieu",
+    "cho",
+    "cua",
+    "dong",
+    "duoc",
+    "file",
+    "gia",
+    "hang",
+    "hay",
+    "la",
+    "lieu",
+    "ma",
+    "mat",
+    "nguon",
+    "noi",
+    "pham",
+    "san",
+    "sheet",
+    "ten",
+    "theo",
+    "tin",
+    "tim",
+    "trong",
+  ]);
+  const terms = new Set<string>();
+
+  for (const match of prompt.matchAll(/\b[A-Za-z0-9][A-Za-z0-9._-]{2,}\b/g)) {
+    const term = normalizeText(match[0]);
+    if (term.length >= 3 && !stopWords.has(term)) {
+      terms.add(term);
+    }
+  }
+
+  for (const term of normalizeText(prompt).split(" ")) {
+    if (term.length >= 4 && !stopWords.has(term) && !/^\d+$/.test(term)) {
+      terms.add(term);
+    }
+  }
+
+  return [...terms].slice(0, 8);
+}
+
+function buildPriceLookupResolution(params: {
+  spreadsheet: ParsedSpreadsheet;
+  table: TableProfile;
+  prompt: string;
+  priceColumns: ColumnProfile[];
+}): SpreadsheetCalculationResolution | null {
+  const terms = extractLookupTerms(params.prompt);
+  if (terms.length === 0 || params.priceColumns.length === 0) {
+    return null;
+  }
+
+  const lookupIndexes = pickLookupColumnIndexes(params.table);
+  const matches = params.table.dataRows
+    .map((row, rowIndex) => {
+      const lookupText = normalizeText(lookupIndexes.map((index) => formatCellValue(row[index])).join(" "));
+      const allText = normalizeText(row.map(formatCellValue).join(" "));
+      const score = terms.reduce((total, term) => {
+        if (lookupText.includes(term)) {
+          return total + (lookupText === term ? 6 : 3);
+        }
+        return allText.includes(term) ? total + 1 : total;
+      }, 0);
+      return { row, rowIndex, score };
+    })
+    .filter((entry) => entry.score > 0)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 8);
+
+  if (matches.length === 0) {
+    return null;
+  }
+
+  const displayColumns = [
+    ...lookupIndexes.slice(0, 4),
+    ...params.priceColumns.map((column) => column.index),
+  ].filter((index, position, array) => array.indexOf(index) === position);
+
+  const lines = matches.map((entry, index) => {
+    const fields = displayColumns
+      .map((columnIndex) => {
+        const value = formatCellValue(entry.row[columnIndex]);
+        return value ? `${params.table.headers[columnIndex]}: ${value}` : "";
+      })
+      .filter(Boolean)
+      .join("; ");
+    return `${index + 1}. ${fields} (dòng ${params.table.headerRowIndex + 2 + entry.rowIndex})`;
+  });
+
+  return {
+    output: [
+      `Tôi đã tra trong file "${params.spreadsheet.fileName}", sheet "${params.table.sheetName}".`,
+      `Từ khóa khớp: ${terms.join(", ")}.`,
+      "Các dòng phù hợp:",
+      ...lines,
+      `Nguồn: header dòng ${params.table.headerRowIndex + 1}; cột giá: ${params.priceColumns.map((column) => column.name).join(", ")}.`,
+    ].join("\n"),
+    routeHint: "spreadsheet_calculation",
+    citations: [`${params.spreadsheet.fileName} / ${params.table.sheetName}`],
+    meta: {
+      spreadsheetFile: params.spreadsheet.fileName,
+      sheet: params.table.sheetName,
+      headerRow: params.table.headerRowIndex + 1,
+      operation: "price_lookup",
+      lookupTerms: terms,
+      matchedRowCount: matches.length,
+      priceColumns: params.priceColumns.map((column) => column.name),
+    },
+  };
+}
+
 function buildNeedsColumnsResolution(params: {
   spreadsheet: ParsedSpreadsheet;
   tables: TableProfile[];
@@ -676,6 +810,7 @@ export function resolveSpreadsheetCalculation(params: {
     /\bamount\b/,
     /\btotal\b/,
   ]);
+  const priceColumns = pickFilterColumns(calculationTable, params.prompt);
 
   if (/\b(lai lo|loi nhuan|profit|margin)\b/.test(prompt)) {
     const revenue = revenueColumns[0];
@@ -695,7 +830,9 @@ export function resolveSpreadsheetCalculation(params: {
 
   const inventoryPrompt = /\b(ton kho|nhap xuat ton|sl con lai|so luong|khoi luong|quantity|qty)\b/.test(prompt);
   const explicitRowCountPrompt = /\b(dem|co may|may mat hang|so mat hang|how many|count)\b/.test(prompt);
-  const generalCountPrompt = /\b(bao nhieu|co bao nhieu)\b/.test(prompt);
+  const priceLookupPrompt = /\b(gia|don gia|gia ban|bao gia|price)\b/.test(prompt) &&
+    /\b(ma hang|ma|model|sku|ten|san pham|mat hang|hang hoa|bao nhieu)\b/.test(prompt);
+  const generalCountPrompt = /\b(bao nhieu|co bao nhieu)\b/.test(prompt) && !priceLookupPrompt;
 
   if (explicitRowCountPrompt) {
     return buildCountResolution({
@@ -717,6 +854,18 @@ export function resolveSpreadsheetCalculation(params: {
         rowFilter,
         originalRowCount,
       });
+    }
+  }
+
+  if (priceLookupPrompt) {
+    const lookupResolution = buildPriceLookupResolution({
+      spreadsheet,
+      table: calculationTable,
+      prompt: params.prompt,
+      priceColumns,
+    });
+    if (lookupResolution) {
+      return lookupResolution;
     }
   }
 
