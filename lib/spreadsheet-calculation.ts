@@ -490,44 +490,20 @@ function pickLookupColumnIndexes(table: TableProfile) {
 
 function extractLookupTerms(prompt: string) {
   const stopWords = new Set([
-    "bang",
-    "bao",
-    "bao nhieu",
-    "cho",
-    "cua",
-    "dong",
-    "duoc",
-    "file",
-    "gia",
-    "hang",
-    "hay",
-    "la",
-    "lieu",
-    "ma",
-    "mat",
-    "nguon",
-    "noi",
-    "pham",
-    "san",
-    "sheet",
-    "ten",
-    "theo",
-    "tin",
-    "tim",
-    "trong",
+    "bang", "bao", "nhieu", "cho", "cua", "dong", "duoc", "file", "gia", "hang",
+    "hay", "la", "lieu", "ma", "mat", "nguon", "noi", "pham", "san", "sheet",
+    "ten", "theo", "tin", "tim", "trong", "gi", "co", "the", "nao", "va", "hoac",
+    "khong", "cac", "nhung", "may", "don", "ban", "niem", "yet", "price", "model",
+    "sku", "code", "bn", "cua hang", "hien tai",
   ]);
   const terms = new Set<string>();
 
-  for (const match of prompt.matchAll(/\b[A-Za-z0-9][A-Za-z0-9._-]{2,}\b/g)) {
-    const term = normalizeText(match[0]);
-    if (term.length >= 3 && !stopWords.has(term)) {
-      terms.add(term);
-    }
-  }
-
-  for (const term of normalizeText(prompt).split(" ")) {
-    if (term.length >= 4 && !stopWords.has(term) && !/^\d+$/.test(term)) {
-      terms.add(term);
+  // Normalize FIRST (strips diacritics + đ→d), then split on any non-alphanumeric
+  // run. This prevents junk fragments from punctuation/Vietnamese vowels — e.g.
+  // "bao nhiêu?" must NOT yield "nhi" / "nhieu?" which then match unrelated rows.
+  for (const token of normalizeText(prompt).split(/[^a-z0-9]+/)) {
+    if (token.length >= 3 && !stopWords.has(token)) {
+      terms.add(token);
     }
   }
 
@@ -549,12 +525,14 @@ function buildPriceLookupResolution(params: {
   const matches = params.table.dataRows
     .map((row, rowIndex) => {
       const lookupText = normalizeText(lookupIndexes.map((index) => formatCellValue(row[index])).join(" "));
-      const allText = normalizeText(row.map(formatCellValue).join(" "));
+      // Only count hits inside the code/name columns. A weak "appears anywhere in
+      // the row" match surfaced unrelated rows (e.g. a code not in this file still
+      // matched service rows). If no lookup-column term hits, the row is not a match.
       const score = terms.reduce((total, term) => {
-        if (lookupText.includes(term)) {
-          return total + (lookupText === term ? 6 : 3);
+        if (!lookupText.includes(term)) {
+          return total;
         }
-        return allText.includes(term) ? total + 1 : total;
+        return total + (lookupText === term ? 6 : 3);
       }, 0);
       return { row, rowIndex, score };
     })

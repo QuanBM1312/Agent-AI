@@ -110,6 +110,22 @@ H8BTDK0032,Điều khiển RBC-AXU31-E,210000`),
   assert.doesNotMatch(res.output, /Tổng số dòng dữ liệu/);
 });
 
+test("price lookup: a code absent from the sheet must not match unrelated rows", () => {
+  const res = resolveSpreadsheetCalculation({
+    prompt: "Mã hàng H2AT411I05 giá bao nhiêu?",
+    fileName: "service.csv",
+    buffer: csv(`Tên hàng,Đơn giá
+Vệ sinh đường ống nước ngưng,7000
+Tháo bộ điều hòa treo tường,300000`),
+  });
+
+  // Code not in this service sheet — must NOT confidently return unrelated service
+  // rows (the junk-term / weak-match bug). Honest no-match instead.
+  assert.ok(res);
+  assert.notEqual(res.meta.operation, "price_lookup");
+  assert.doesNotMatch(res.output, /Vệ sinh đường ống/);
+});
+
 test("aggregate without filter sums the amount column", () => {
   const res = resolveSpreadsheetCalculation({
     prompt: "tính tổng thành tiền",
