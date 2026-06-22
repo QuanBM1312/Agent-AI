@@ -200,6 +200,15 @@ function isSpreadsheetCalculationDataPathPrompt(value: string) {
     return false;
   }
 
+  // A bare brand name is NOT a price signal on its own (e.g. "lắp máy lạnh LG"
+  // is an install request). Treat a brand as a price lookup only when it appears
+  // together with a price word.
+  const internalPriceLookup =
+    /\b(phieu tinh gia|tim gia|gia cua|gia san pham|gia dieu hoa|bao gia|bang gia|don gia)\b/.test(
+      normalized,
+    ) ||
+    (/\b(toshiba|carrier|daikin|midea|lg|panasonic|mitsubishi)\b/.test(normalized) &&
+      /\bgia\b/.test(normalized));
   const explicitSpreadsheetSource =
     /\b(file|excel|xls|xlsx|bang|sheet|bao cao|saleadmin|bang gia|bao gia|niem yet|san pham|hang hoa|mat hang)\b/.test(
       normalized,
@@ -209,7 +218,7 @@ function isSpreadsheetCalculationDataPathPrompt(value: string) {
       normalized,
     );
 
-  return explicitSpreadsheetSource || quantitativeBusinessSignal;
+  return internalPriceLookup || explicitSpreadsheetSource || quantitativeBusinessSignal;
 }
 
 function buildCalculationFileSearchTerms(value: string) {
@@ -229,6 +238,13 @@ function buildCalculationFileSearchTerms(value: string) {
     terms.add("bao gia");
     terms.add("niem yet");
     terms.add("price");
+  }
+
+  for (const brand of ["toshiba", "carrier", "daikin", "midea", "lg", "panasonic", "mitsubishi"]) {
+    // Word-boundary match — avoid catching a brand as a substring of another word.
+    if (new RegExp(`\\b${brand}\\b`).test(normalized)) {
+      terms.add(brand);
+    }
   }
 
   if (/\b(saleadmin|sale admin|doanh thu|lai lo|loi nhuan)\b/.test(normalized)) {
