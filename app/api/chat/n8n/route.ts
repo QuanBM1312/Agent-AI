@@ -196,19 +196,26 @@ function isCalculationPrompt(value: string) {
 
 function isSpreadsheetCalculationDataPathPrompt(value: string) {
   const normalized = normalizeIntentText(value);
-  if (!isCalculationPrompt(value)) {
-    return false;
-  }
 
-  // A bare brand name is NOT a price signal on its own (e.g. "lắp máy lạnh LG"
-  // is an install request). Treat a brand as a price lookup only when it appears
-  // together with a price word.
+  // A price lookup is a valid internal data-path even when it isn't phrased as a
+  // calculation (e.g. "báo giá điều hòa Toshiba", "giá điều hòa Daikin"). A bare
+  // brand is not a price signal on its own ("lắp máy lạnh LG" = install), so a
+  // brand only counts when paired with a price word.
   const internalPriceLookup =
     /\b(phieu tinh gia|tim gia|gia cua|gia san pham|gia dieu hoa|bao gia|bang gia|don gia)\b/.test(
       normalized,
     ) ||
     (/\b(toshiba|carrier|daikin|midea|lg|panasonic|mitsubishi)\b/.test(normalized) &&
       /\bgia\b/.test(normalized));
+
+  if (internalPriceLookup) {
+    return true;
+  }
+
+  if (!isCalculationPrompt(value)) {
+    return false;
+  }
+
   const explicitSpreadsheetSource =
     /\b(file|excel|xls|xlsx|bang|sheet|bao cao|saleadmin|bang gia|bao gia|niem yet|san pham|hang hoa|mat hang)\b/.test(
       normalized,
@@ -218,7 +225,7 @@ function isSpreadsheetCalculationDataPathPrompt(value: string) {
       normalized,
     );
 
-  return internalPriceLookup || explicitSpreadsheetSource || quantitativeBusinessSignal;
+  return explicitSpreadsheetSource || quantitativeBusinessSignal;
 }
 
 function buildCalculationFileSearchTerms(value: string) {
