@@ -24,7 +24,10 @@ function parseServiceAccountCredentials() {
 }
 
 function buildGoogleDriveUploadAuthCandidates() {
-  const authCandidates = [];
+  const authCandidates: Array<{
+    label: string;
+    auth: InstanceType<typeof google.auth.JWT> | InstanceType<typeof google.auth.OAuth2>;
+  }> = [];
   const serviceAccount = parseServiceAccountCredentials();
   const useDomainWideDelegation =
     process.env.GOOGLE_SERVICE_ACCOUNT_USE_DOMAIN_WIDE_DELEGATION === "1";
@@ -33,20 +36,26 @@ function buildGoogleDriveUploadAuthCandidates() {
     : undefined;
 
   if (serviceAccount?.client_email && serviceAccount?.private_key) {
-    authCandidates.push(new google.auth.JWT({
-      email: serviceAccount.client_email,
-      key: serviceAccount.private_key,
-      scopes: DRIVE_SCOPES,
-    }));
+    authCandidates.push({
+      label: `service-account:${serviceAccount.client_email}`,
+      auth: new google.auth.JWT({
+        email: serviceAccount.client_email,
+        key: serviceAccount.private_key,
+        scopes: DRIVE_SCOPES,
+      }),
+    });
   }
 
   if (serviceAccount?.client_email && serviceAccount?.private_key && impersonatedUser) {
-    authCandidates.push(new google.auth.JWT({
-      email: serviceAccount.client_email,
-      key: serviceAccount.private_key,
-      scopes: DRIVE_SCOPES,
-      subject: impersonatedUser,
-    }));
+    authCandidates.push({
+      label: `service-account-impersonation:${impersonatedUser}`,
+      auth: new google.auth.JWT({
+        email: serviceAccount.client_email,
+        key: serviceAccount.private_key,
+        scopes: DRIVE_SCOPES,
+        subject: impersonatedUser,
+      }),
+    });
   }
 
   const clientId = process.env.GOOGLE_OAUTH_CLIENT_ID;
@@ -61,10 +70,61 @@ function buildGoogleDriveUploadAuthCandidates() {
     );
 
     auth.setCredentials({ refresh_token: refreshToken });
-    authCandidates.push(auth);
+    authCandidates.push({
+      label: "oauth-refresh-token",
+      auth,
+    });
   }
 
   return authCandidates;
+}
+
+function getUploadErrorMessage(error: unknown) {
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  if (error && typeof error === "object" && "message" in error) {
+    return String((error as { message?: unknown }).message);
+  }
+
+  return String(error);
+}
+
+function buildActionableDriveUploadError(
+  errors: Array<{ label: string; error: unknown }>
+) {
+  const summaries = errors.map(({ label, error }) => ({
+    label,
+    message: getUploadErrorMessage(error),
+  }));
+  const serviceAccountFailure = summaries.find((summary) =>
+    summary.label.startsWith("service-account"),
+  );
+  const oauthFailure = summaries.find((summary) => summary.label === "oauth-refresh-token");
+  const hasInvalidGrant = summaries.some((summary) => /invalid_grant/i.test(summary.message));
+
+  if (serviceAccountFailure && hasInvalidGrant) {
+    return new Error(
+      `Không upload được lên Google Drive bằng service account (${serviceAccountFailure.message}). OAuth refresh token hiện cũng hết hạn (invalid_grant). Hãy share folder Drive đích với quyền Editor cho service account, hoặc re-auth GOOGLE_OAUTH_REFRESH_TOKEN.`,
+    );
+  }
+
+  if (serviceAccountFailure) {
+    return new Error(
+      `Không upload được lên Google Drive bằng service account (${serviceAccountFailure.message}). Hãy share folder Drive đích với quyền Editor cho service account.`,
+    );
+  }
+
+  if (oauthFailure) {
+    return new Error(
+      `Không upload được lên Google Drive bằng OAuth (${oauthFailure.message}). Hãy re-auth GOOGLE_OAUTH_REFRESH_TOKEN hoặc cấu hình service account có quyền Editor trên folder Drive đích.`,
+    );
+  }
+
+  return new Error(
+    `Không upload được lên Google Drive: ${summaries.map((summary) => `${summary.label}: ${summary.message}`).join("; ")}`,
+  );
 }
 
 async function uploadToGoogleDrive(
@@ -80,9 +140,9 @@ async function uploadToGoogleDrive(
 
   // 3. Prepare content
   const fileBuffer = Buffer.from(await file.arrayBuffer());
-  let lastError: unknown = null;
+  const errors: Array<{ label: string; error: unknown }> = [];
 
-  for (const auth of buildGoogleDriveUploadAuthCandidates()) {
+  for (const { label, auth } of buildGoogleDriveUploadAuthCandidates()) {
     try {
       const drive = google.drive({ version: 'v3', auth });
       const media = {
@@ -104,12 +164,15 @@ async function uploadToGoogleDrive(
 
       return { fileData, fileBuffer };
     } catch (error) {
-      lastError = error;
-      console.warn("Google Drive upload auth candidate failed", error);
+      errors.push({ label, error });
+      console.warn("Google Drive upload auth candidate failed", {
+        label,
+        error: getUploadErrorMessage(error),
+      });
     }
   }
 
-  throw lastError instanceof Error ? lastError : new Error(String(lastError));
+  throw buildActionableDriveUploadError(errors);
 }
 
 
