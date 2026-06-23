@@ -31,8 +31,22 @@ interface KnowledgeApiItem {
   source?: string | null
 }
 
+interface KnowledgeUploadResponse {
+  fileName?: string
+  ingestion?: {
+    triggered: boolean
+    status?: number
+    ok?: boolean
+    error?: string
+  }
+}
+
 export function KnowledgePortal() {
   const [isUploading, setIsUploading] = useState(false)
+  const [uploadNotice, setUploadNotice] = useState<{
+    tone: "success" | "warning"
+    message: string
+  } | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   // Documents State
@@ -149,6 +163,7 @@ export function KnowledgePortal() {
 
   const handleUpload = async (file: File) => {
     setIsUploading(true)
+    setUploadNotice(null)
     const formData = new FormData()
     formData.append("file", file)
 
@@ -169,6 +184,26 @@ export function KnowledgePortal() {
           }
           throw e
         }
+      }
+
+      const data = await response.json() as KnowledgeUploadResponse
+      const fileName = data.fileName || file.name
+      if (data.ingestion?.triggered && data.ingestion.ok === false) {
+        const detail = data.ingestion.error || `HTTP ${data.ingestion.status || "không rõ"}`
+        setUploadNotice({
+          tone: "warning",
+          message: `Đã upload "${fileName}" lên Drive, nhưng ingestion/vector hóa chưa hoàn tất (${detail}). File vẫn sẽ hiện trong danh sách; cần chạy lại ingestion nếu muốn chat/RAG dùng ngay.`,
+        })
+      } else if (data.ingestion?.triggered === false) {
+        setUploadNotice({
+          tone: "warning",
+          message: `Đã upload "${fileName}" lên Drive, nhưng chưa cấu hình webhook ingestion nên dữ liệu có thể chưa tìm được trong chat/RAG.`,
+        })
+      } else {
+        setUploadNotice({
+          tone: "success",
+          message: `Đã upload "${fileName}" lên Drive và gửi ingestion.`,
+        })
       }
 
       // Refresh documents list
@@ -478,6 +513,16 @@ export function KnowledgePortal() {
             </Button>
           </div>
           <div className="space-y-2">
+            {uploadNotice ? (
+              <div className={`flex gap-3 rounded-lg border p-4 ${
+                uploadNotice.tone === "warning"
+                  ? "border-amber-300 bg-amber-50 text-amber-900"
+                  : "border-emerald-300 bg-emerald-50 text-emerald-900"
+              }`}>
+                <AlertCircle className="mt-0.5 h-5 w-5 shrink-0" />
+                <p className="text-sm">{uploadNotice.message}</p>
+              </div>
+            ) : null}
             {isDocumentsLoading ? (
               // Files Skeleton
               [...Array(5)].map((_, i) => (
