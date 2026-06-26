@@ -32,6 +32,12 @@ const INVENTORY: InventoryItem[] = [
     unit: "Bộ",
     currentStock: 195,
   },
+  {
+    code: "H9BTDK9999",
+    name: "Điều khiển không dây",
+    unit: "Bộ",
+    currentStock: 999,
+  },
 ];
 
 test("inventory lookup extracts the actual product terms from a stock question", () => {
@@ -56,6 +62,7 @@ test("filtered inventory answers product-family count instead of global stock su
   assert.match(res.output, /Điều khiển RBC-AXU31-E/);
   assert.match(res.output, /Điều khiển nối dây RBC-AMTU31-E/);
   assert.doesNotMatch(res.output, /Bộ chia gas/);
+  assert.doesNotMatch(res.output, /Điều khiển không dây/);
   assert.doesNotMatch(res.output, /Tổng tồn hiện tại/);
 });
 

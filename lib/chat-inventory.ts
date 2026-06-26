@@ -104,6 +104,12 @@ export function extractInventoryLookupTerms(prompt: string) {
   return [...terms].filter((term) => !stopWords.has(term)).slice(0, 8);
 }
 
+function extractRequiredModelTerms(prompt: string) {
+  return [...prompt.matchAll(/\b[A-Z0-9][A-Z0-9._-]{2,}\b/g)]
+    .map((match) => normalizeInventoryText(match[0]))
+    .filter((term) => term.length >= 3);
+}
+
 function scoreInventoryItem(item: InventoryItem, terms: string[]) {
   const code = normalizeInventoryText(item.code);
   const name = normalizeInventoryText(item.name);
@@ -138,12 +144,24 @@ export function buildFilteredInventoryResolution(params: {
   }
 
   const normalized = normalizeInventoryText(params.prompt);
+  const requiredModelTerms = extractRequiredModelTerms(params.prompt);
   const matches = params.inventory
     .map((item) => ({
       item,
       score: scoreInventoryItem(item, terms),
     }))
-    .filter((entry) => entry.score > 0)
+    .filter((entry) => {
+      if (entry.score <= 0) {
+        return false;
+      }
+
+      if (requiredModelTerms.length === 0) {
+        return true;
+      }
+
+      const searchable = normalizeInventoryText(`${entry.item.code} ${entry.item.name}`);
+      return requiredModelTerms.every((term) => searchable.includes(term));
+    })
     .sort((a, b) => b.score - a.score || b.item.currentStock - a.item.currentStock)
     .map((entry) => entry.item);
 

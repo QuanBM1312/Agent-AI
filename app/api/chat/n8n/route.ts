@@ -353,7 +353,7 @@ function hasInventoryFileMarker(value: string) {
 
 function isInventorySummaryPrompt(value: string) {
   const normalized = normalizeIntentText(value);
-  return /\b(ton kho|hang ton|kho hang|nhap xuat ton|ton hien tai|am kho|duoi nguong|nguong toi thieu)\b/.test(normalized);
+  return /\b(ton kho|hang ton|kho hang|nhap xuat ton|ton hien tai|con ton|ton bao nhieu|con bao nhieu|tung kho|theo kho|o kho|am kho|duoi nguong|nguong toi thieu)\b/.test(normalized);
 }
 
 function toNumber(value: number | string | bigint | null | undefined) {
