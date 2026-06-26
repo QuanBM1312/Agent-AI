@@ -12,6 +12,10 @@ import {
 } from "@/lib/chat-observability";
 import { isTenantDatabaseBoundaryError } from "@/lib/db-runtime";
 import {
+  buildFilteredInventoryResolution,
+  formatInventoryQuantity,
+} from "@/lib/chat-inventory";
+import {
   isGeminiWebSearchConfigured,
   runGeminiFileSearchCalculation,
   runGeminiSpreadsheetCalculation,
@@ -57,6 +61,14 @@ type InventoryProductRow = {
   total_out: number | string | null;
 };
 
+type RecentChatMessage = {
+  id: string;
+  role: "user" | "assistant";
+  content: string;
+  retrieved_context: unknown;
+  timestamp: Date;
+};
+
 type RequestResolutionMeta = Record<string, unknown> & {
   webSearchPendingPrompt?: string;
   webSearchUsed?: boolean;
@@ -90,6 +102,51 @@ function isGreetingPrompt(value: string) {
   );
 
   return (hasGreeting || asksForHelp) && !hasSpecificTask && normalized.length <= 120;
+}
+
+function isFollowUpPrompt(value: string) {
+  const normalized = normalizeIntentText(value);
+  if (!normalized) {
+    return false;
+  }
+
+  const words = normalized.split(" ").filter(Boolean);
+  return (
+    /\b(cai nay|viec nay|phan nay|noi dung nay|ket qua nay|ket qua tren|cau tren|o tren|nhu vay|vay thi|du chua|con thieu|tiep theo|lam tiep|noi ro hon|giai thich them|tai sao lai vay)\b/.test(
+      normalized,
+    ) ||
+    (words.length <= 8 && /\b(no|nay|do|vay|du|thieu|tiep|them)\b/.test(normalized))
+  );
+}
+
+function compactChatContent(value: string, maxLength = 900) {
+  const compacted = value.replace(/\s+/g, " ").trim();
+  if (compacted.length <= maxLength) {
+    return compacted;
+  }
+  return `${compacted.slice(0, maxLength - 16).trim()} ...[truncated]`;
+}
+
+function buildRecentConversationContext(messages: RecentChatMessage[]) {
+  const ordered = messages
+    .slice()
+    .sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime())
+    .filter((message) => message.content.trim().length > 0)
+    .slice(-8);
+
+  if (ordered.length === 0) {
+    return "";
+  }
+
+  return [
+    "[RECENT_CONVERSATION_CONTEXT_BEGIN]",
+    "Use this recent conversation only to resolve references/follow-up questions. Do not treat it as a verified data source unless the cited answer says its source.",
+    ...ordered.map((message) => {
+      const speaker = message.role === "user" ? "User" : "Assistant";
+      return `${speaker}: ${compactChatContent(message.content)}`;
+    }),
+    "[RECENT_CONVERSATION_CONTEXT_END]",
+  ].join("\n");
 }
 
 function isAttachmentSummaryRequest(value: string, hasInlineText: boolean) {
@@ -409,6 +466,16 @@ async function resolveInventoryDbCalculation(prompt: string): Promise<LocalChatR
     };
   });
 
+  const filteredResolution = buildFilteredInventoryResolution({
+    prompt,
+    inventory,
+    year: currentYear,
+    month: currentMonth,
+  });
+  if (filteredResolution) {
+    return filteredResolution;
+  }
+
   const totalStock = inventory.reduce((sum, item) => sum + item.currentStock, 0);
   const negativeItems = inventory.filter((item) => item.currentStock < 0);
   const lowItems = inventory
@@ -441,7 +508,7 @@ async function resolveInventoryDbCalculation(prompt: string): Promise<LocalChatR
     output: [
       "Tôi tính tồn kho hiện tại từ bảng inventory của app cho tháng " + String(currentMonth) + "/" + String(currentYear) + ".",
       "Công thức: tồn hiện tại = tồn đầu tháng + nhập trong tháng - xuất trong tháng.",
-      "Tổng tồn hiện tại: " + totalStock.toLocaleString("vi-VN") + " đơn vị trên " + inventory.length.toLocaleString("vi-VN") + " mặt hàng.",
+      "Tổng tồn hiện tại: " + formatInventoryQuantity(totalStock) + " đơn vị trên " + inventory.length.toLocaleString("vi-VN") + " mặt hàng.",
       "",
       "Top mặt hàng tồn nhiều:",
       ...topRows,
@@ -1745,13 +1812,7 @@ export async function POST(req: NextRequest) {
     }
     mark("session", sessionStartedAt);
 
-    let recentMessages: Array<{
-      id: string;
-      role: "user" | "assistant";
-      content: string;
-      retrieved_context: unknown;
-      timestamp: Date;
-    }> = [];
+    let recentMessages: RecentChatMessage[] = [];
 
     if (persistenceAvailable) {
       const duplicateCheckStartedAt = performance.now();
@@ -2293,8 +2354,14 @@ export async function POST(req: NextRequest) {
       mark("calculation_file_search_store", fileSearchStoreStartedAt);
     }
 
+    const recentConversationContext =
+      requestType === "chat" && !hasAttachment && isFollowUpPrompt(userContent)
+        ? buildRecentConversationContext(recentMessages)
+        : "";
+
     const effectiveChatInput =
       [
+        recentConversationContext,
         semanticChatInput || (inlinedAttachmentText.length > 0 ? "Đây là nội dung file đính kèm cần xử lý." : ""),
         calculationDriveContext,
         inlinedAttachmentText.length > 0

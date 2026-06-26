@@ -7,7 +7,7 @@
     "build": "next build --webpack",
     "start": "next start",
     "lint": "eslint",
-    "test:unit": "node --test lib/spreadsheet-calculation.test.ts",
+    "test:unit": "node --test lib/*.test.ts",
     "typecheck": "rm -rf .next && next typegen && tsc --noEmit --incremental false",
     "e2e": "node scripts/run-playwright-test.mjs test",
     "e2e:local": "E2E_TARGET=local node scripts/run-playwright-test.mjs test",
