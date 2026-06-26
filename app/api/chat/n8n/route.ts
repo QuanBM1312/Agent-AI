@@ -149,6 +149,46 @@ function buildRecentConversationContext(messages: RecentChatMessage[]) {
   ].join("\n");
 }
 
+function buildFollowUpAssessmentResolution(params: {
+  prompt: string;
+  latestAssistantContent: string;
+  latestAssistantRouteHint: string | null;
+}): LocalChatResolution | null {
+  if (!isFollowUpPrompt(params.prompt) || !/\b(du chua|con thieu|cai nay|nhu vay|vay)\b/.test(normalizeIntentText(params.prompt))) {
+    return null;
+  }
+
+  const latestContent = params.latestAssistantContent.trim();
+  if (!latestContent) {
+    return null;
+  }
+
+  if (params.latestAssistantRouteHint === "local_inventory_filtered") {
+    const lacksWarehouse = /chưa có chiều kho|chua co chieu kho|chưa tách được từng kho|chua tach duoc tung kho/i.test(
+      latestContent,
+    );
+    return {
+      routeHint: "local_followup_assessment",
+      output: [
+        "Nếu mục tiêu là nắm nhanh nhóm hàng/mã nào đang có trong tồn kho tổng thì câu trả lời trước là đủ ở mức sơ bộ.",
+        lacksWarehouse
+          ? "Nếu mục tiêu là quyết định theo từng kho, điều chuyển hàng, hoặc cam kết xuất hàng thì chưa đủ: dữ liệu hiện tại chưa có chiều kho/vị trí kho nên chỉ chứng minh được tồn tổng theo sản phẩm."
+          : "Nếu mục tiêu là ra quyết định vận hành, vẫn nên đối chiếu thời điểm cập nhật tồn kho và danh sách dòng đầy đủ thay vì chỉ dùng top dòng hiển thị.",
+        "Dữ liệu chắc chắn: câu trả lời trước lấy từ dim_product + inventory_month_opening + inventory_daily_movement.",
+        "Dữ liệu thiếu: kho/vị trí kho, thời điểm cập nhật cuối theo từng kho, và ngưỡng tối thiểu theo từng mã nếu cần cảnh báo thiếu hàng.",
+      ].join("\n"),
+    };
+  }
+
+  return {
+    routeHint: "local_followup_assessment",
+    output: [
+      "Tôi có thể đánh giá dựa trên câu trả lời ngay trước đó, nhưng cần biết mục tiêu sử dụng là gì để nói 'đủ' hay 'chưa đủ'.",
+      "Ở mức an toàn: hãy coi câu trả lời trước là đủ để tham khảo nhanh, chưa đủ để ra quyết định nếu còn thiếu nguồn dữ liệu, thời điểm cập nhật, hoặc tiêu chí kiểm chứng.",
+    ].join("\n"),
+  };
+}
+
 function isAttachmentSummaryRequest(value: string, hasInlineText: boolean) {
   if (!hasInlineText) {
     return false;
@@ -1905,6 +1945,13 @@ export async function POST(req: NextRequest) {
       ? readPendingWebSearchPrompt(latestAssistantMessage.retrieved_context)
       : null;
     const geminiWebSearchEnabled = isGeminiWebSearchConfigured();
+    const latestAssistantContext = latestAssistantMessage
+      ? readRetrievedContext(latestAssistantMessage.retrieved_context)
+      : null;
+    const latestAssistantRouteHint =
+      typeof latestAssistantContext?.routeHint === "string"
+        ? latestAssistantContext.routeHint
+        : null;
 
     // 4. Save User Message
     // First, handle file upload if present
@@ -2101,6 +2148,15 @@ export async function POST(req: NextRequest) {
         extraContext,
       );
     };
+
+    const followUpAssessment = buildFollowUpAssessmentResolution({
+      prompt: userContent,
+      latestAssistantContent: latestAssistantMessage?.content ?? "",
+      latestAssistantRouteHint,
+    });
+    if (requestType === "chat" && !hasAttachment && followUpAssessment) {
+      return await persistAndReturnResolution(followUpAssessment);
+    }
 
     if (
       requestType === "chat" &&
