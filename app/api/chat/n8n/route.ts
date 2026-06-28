@@ -2547,6 +2547,37 @@ export async function POST(req: NextRequest) {
       });
     }
 
+    // Complex inventory questions should not degrade into a generic n8n/web
+    // answer when Drive sources are missing or inconclusive. The app database
+    // can still provide a verified stock baseline and explicitly name missing
+    // dimensions such as warehouse/location.
+    if (
+      businessAnalysisPlan?.intent === "inventory_analysis" &&
+      requestType === "chat" &&
+      !hasAttachment &&
+      isInventorySummaryPrompt(userContent)
+    ) {
+      const inventoryFallbackStartedAt = performance.now();
+      try {
+        const inventoryResolution = await resolveInventoryDbCalculation(userContent);
+        mark("inventory_db_business_fallback", inventoryFallbackStartedAt);
+        if (inventoryResolution) {
+          return await persistAndReturnResolution(inventoryResolution, {
+            spreadsheetCalculationUsed: true,
+            webSearchUsed: false,
+            webSearchProvider: "app_inventory_db_business_fallback",
+          });
+        }
+      } catch (error) {
+        mark("inventory_db_business_fallback", inventoryFallbackStartedAt);
+        console.warn("[chat-inventory-business-fallback-failed]", {
+          requestId,
+          sessionId,
+          error: serializeErrorForClient(error),
+        });
+      }
+    }
+
     const outgoingFormData = new FormData();
     outgoingFormData.append("sessionId", sessionId);
     outgoingFormData.append("type", type);
