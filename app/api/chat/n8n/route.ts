@@ -16,6 +16,11 @@ import {
   formatInventoryQuantity,
 } from "@/lib/chat-inventory";
 import {
+  buildBusinessAnalysisContext,
+  detectBusinessAnalysisPlan,
+} from "@/lib/business-analysis-planner";
+import type { BusinessAnalysisPlan } from "@/lib/business-analysis-planner";
+import {
   isGeminiWebSearchConfigured,
   runGeminiFileSearchCalculation,
   runGeminiSpreadsheetCalculation,
@@ -560,11 +565,14 @@ async function resolveInventoryDbCalculation(prompt: string): Promise<LocalChatR
   };
 }
 
-async function resolveCalculationDriveCandidates(chatInput: string) {
-  const terms = buildCalculationFileSearchTerms(chatInput);
+async function resolveCalculationDriveCandidates(chatInput: string, businessPlan?: BusinessAnalysisPlan | null) {
+  const terms = Array.from(new Set([
+    ...buildCalculationFileSearchTerms(chatInput),
+    ...(businessPlan?.retrievalTerms ?? []),
+  ]));
   const normalized = normalizeIntentText(chatInput);
   const pricePrompt = /\b(gia|don gia|bang gia|bao gia|niem yet|price|tren|duoi)\b/.test(normalized);
-  const inventoryPrompt = isInventoryCalculationPrompt(chatInput);
+  const inventoryPrompt = isInventoryCalculationPrompt(chatInput) || businessPlan?.intent === "inventory_analysis";
   if (terms.length === 0) {
     return [];
   }
@@ -677,7 +685,7 @@ async function resolveCalculationDriveCandidates(chatInput: string) {
   const seen = new Set<string>();
   const candidates: CalculationDriveCandidate[] = [];
 
-  const maxCandidates = pricePrompt ? 20 : 8;
+  const maxCandidates = businessPlan?.candidateLimit ?? (pricePrompt ? 20 : 8);
 
   for (const item of scored) {
     const driveFileId = item.row.drive_file_id;
@@ -787,7 +795,10 @@ function isUserVisibleDriveFile(fileName?: string | null) {
   return Boolean(name) && !name.startsWith(".") && !/^upload-probe-/i.test(name);
 }
 
-function buildCalculationDriveContext(candidates: Awaited<ReturnType<typeof resolveCalculationDriveCandidates>>) {
+function buildCalculationDriveContext(
+  candidates: Awaited<ReturnType<typeof resolveCalculationDriveCandidates>>,
+  businessPlan?: BusinessAnalysisPlan | null,
+) {
   if (candidates.length === 0) {
     return "";
   }
@@ -804,7 +815,9 @@ function buildCalculationDriveContext(candidates: Awaited<ReturnType<typeof reso
     "[INTERNAL_DRIVE_FILE_CANDIDATES_BEGIN]",
     "The app resolved these likely Google Drive source files for this internal file analysis/calculation. Use these IDs before trying Supabase discovery.",
     ...lines,
-    "Agent0 instruction: run `python3 /a0/tools/read_drive_file.py --file-id \"<drive_file_id>\" --format markdown --max-rows 120 --max-sheets 8` on the most relevant candidate, then analyze/filter/count/compare/calculate from the returned rows. If several candidates are plausible, inspect the top 2 before answering.",
+    businessPlan
+      ? `Agent0 instruction: this is a multi-source business analysis (${businessPlan.intent}). Run \`python3 /a0/tools/read_drive_file.py --file-id "<drive_file_id>" --format markdown --max-rows 160 --max-sheets 8\` on up to ${businessPlan.rawFileLimit} plausible candidates, compare their periods/sheets/columns, then answer only from verified rows. If the files do not contain the needed dimensions, say exactly which source category is missing.`
+      : "Agent0 instruction: run `python3 /a0/tools/read_drive_file.py --file-id \"<drive_file_id>\" --format markdown --max-rows 120 --max-sheets 8` on the most relevant candidate, then analyze/filter/count/compare/calculate from the returned rows. If several candidates are plausible, inspect the top 2 before answering.",
     "[INTERNAL_DRIVE_FILE_CANDIDATES_END]",
   ].join("\n");
 }
@@ -1310,10 +1323,15 @@ function buildSpreadsheetPreview(params: {
 
 async function buildCalculationRawDriveContext(
   candidates: Awaited<ReturnType<typeof resolveCalculationDriveCandidates>>,
+  businessPlan?: BusinessAnalysisPlan | null,
 ) {
   const chunks: string[] = [];
+  const rawFileLimit = businessPlan?.rawFileLimit ?? 2;
+  const maxRowsPerSheet = businessPlan ? 160 : 120;
+  const maxSheets = businessPlan ? 6 : 4;
+  const maxCharsPerFile = businessPlan ? 14_000 : 18_000;
 
-  for (const candidate of candidates.slice(0, 2)) {
+  for (const candidate of candidates.slice(0, rawFileLimit)) {
     if (candidate.driveFileId.startsWith("local::")) {
       continue;
     }
@@ -1339,9 +1357,9 @@ async function buildCalculationRawDriveContext(
         buildSpreadsheetPreview({
           fileName,
           buffer: file.buffer,
-          maxRowsPerSheet: 120,
-          maxSheets: 4,
-          maxChars: 18_000,
+          maxRowsPerSheet,
+          maxSheets,
+          maxChars: maxCharsPerFile,
         }),
         "[RAW_DRIVE_SPREADSHEET_CONTEXT_END]",
       ].join("\n"));
@@ -2319,8 +2337,18 @@ export async function POST(req: NextRequest) {
             .filter(Boolean)
             .join("\n\n")
         : chatInput;
+    const businessAnalysisPlan =
+      requestType === "chat" && !hasAttachment
+        ? detectBusinessAnalysisPlan(userContent)
+        : null;
+    const businessAnalysisContext = buildBusinessAnalysisContext(businessAnalysisPlan);
 
-    if (requestType === "chat" && !hasAttachment && isInventorySummaryPrompt(userContent)) {
+    if (
+      requestType === "chat" &&
+      !hasAttachment &&
+      isInventorySummaryPrompt(userContent) &&
+      businessAnalysisPlan?.intent !== "inventory_analysis"
+    ) {
       const inventoryStartedAt = performance.now();
       try {
         const inventoryResolution = await resolveInventoryDbCalculation(userContent);
@@ -2345,43 +2373,50 @@ export async function POST(req: NextRequest) {
     let calculationDriveContext = "";
     let calculationDriveSearched = false;
     let calculationDriveCandidates: CalculationDriveCandidate[] = [];
-    if (requestType === "chat" && !hasAttachment && isSpreadsheetCalculationDataPathPrompt(userContent)) {
+    const needsInternalFileAnalysis =
+      requestType === "chat" &&
+      !hasAttachment &&
+      (isSpreadsheetCalculationDataPathPrompt(userContent) || Boolean(businessAnalysisPlan));
+    if (needsInternalFileAnalysis) {
       const fileResolveStartedAt = performance.now();
       try {
         calculationDriveSearched = true;
-        const candidates = await resolveCalculationDriveCandidates(userContent);
+        const candidates = await resolveCalculationDriveCandidates(userContent, businessAnalysisPlan);
         calculationDriveCandidates = candidates;
-        const driveSpreadsheetResolution = await resolveDriveSpreadsheetCalculation({
-          prompt: userContent,
-          candidates,
-        });
-        if (driveSpreadsheetResolution?.routeHint === "spreadsheet_calculation") {
-          return await persistAndReturnResolution(
-            driveSpreadsheetResolution,
-            {
-              spreadsheetCalculationUsed: true,
-              webSearchUsed: false,
-              webSearchProvider: "drive_spreadsheet_parser",
-            },
-          );
-        }
-        const priceFilterResolution = await resolveDriveUnitPriceThresholdCalculation({
-          prompt: userContent,
-          candidates,
-        });
-        if (priceFilterResolution) {
-          return await persistAndReturnResolution(
-            priceFilterResolution,
-            {
-              spreadsheetCalculationUsed: true,
-              webSearchUsed: false,
-              webSearchProvider: "drive_spreadsheet_parser",
-            },
-          );
+
+        if (!businessAnalysisPlan) {
+          const driveSpreadsheetResolution = await resolveDriveSpreadsheetCalculation({
+            prompt: userContent,
+            candidates,
+          });
+          if (driveSpreadsheetResolution?.routeHint === "spreadsheet_calculation") {
+            return await persistAndReturnResolution(
+              driveSpreadsheetResolution,
+              {
+                spreadsheetCalculationUsed: true,
+                webSearchUsed: false,
+                webSearchProvider: "drive_spreadsheet_parser",
+              },
+            );
+          }
+          const priceFilterResolution = await resolveDriveUnitPriceThresholdCalculation({
+            prompt: userContent,
+            candidates,
+          });
+          if (priceFilterResolution) {
+            return await persistAndReturnResolution(
+              priceFilterResolution,
+              {
+                spreadsheetCalculationUsed: true,
+                webSearchUsed: false,
+                webSearchProvider: "drive_spreadsheet_parser",
+              },
+            );
+          }
         }
         calculationDriveContext = [
-          buildCalculationDriveContext(candidates),
-          await buildCalculationRawDriveContext(candidates),
+          buildCalculationDriveContext(candidates, businessAnalysisPlan),
+          await buildCalculationRawDriveContext(candidates, businessAnalysisPlan),
         ].filter(Boolean).join("\n\n");
       } catch (error) {
         if (!isTenantDatabaseBoundaryError(error)) {
@@ -2396,7 +2431,7 @@ export async function POST(req: NextRequest) {
     }
 
     let calculationFileSearchStoreNames: string[] = [];
-    if (requestType === "chat" && !hasAttachment && isSpreadsheetCalculationDataPathPrompt(userContent)) {
+    if (needsInternalFileAnalysis) {
       const fileSearchStoreStartedAt = performance.now();
       try {
         calculationFileSearchStoreNames = await buildCalculationFileSearchStoreNames(calculationDriveCandidates);
@@ -2418,6 +2453,7 @@ export async function POST(req: NextRequest) {
     const effectiveChatInput =
       [
         recentConversationContext,
+        businessAnalysisContext,
         semanticChatInput || (inlinedAttachmentText.length > 0 ? "Đây là nội dung file đính kèm cần xử lý." : ""),
         calculationDriveContext,
         inlinedAttachmentText.length > 0

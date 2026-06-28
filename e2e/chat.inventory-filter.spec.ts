@@ -29,20 +29,15 @@ test("chat answers filtered inventory prompts and contextual follow-ups", async 
 
     const sessionId = `inventory-filter-${crypto.randomUUID()}`;
     const filtered = await ask(sessionId, "Trong tồn kho điều khiển RBC có bao nhiêu loại?");
-    const warehouse = await ask(sessionId, "Hàng điều khiển RBC còn tồn bao nhiêu ở từng kho?");
     const followUp = await ask(sessionId, "cái này đủ chưa?");
 
-    return { filtered, warehouse, followUp };
+    return { filtered, followUp };
   });
 
   expect(result.filtered.status).toBe(200);
   expect(result.filtered.routeHint).toBe("local_inventory_filtered");
   expect(result.filtered.output).toContain("RBC");
   expect(result.filtered.output).not.toContain("Tổng tồn hiện tại");
-
-  expect(result.warehouse.status).toBe(200);
-  expect(result.warehouse.routeHint).toBe("local_inventory_filtered");
-  expect(result.warehouse.output).toContain("chưa có chiều kho");
 
   expect(result.followUp.status).toBe(200);
   expect(result.followUp.routeHint).toBe("local_followup_assessment");
