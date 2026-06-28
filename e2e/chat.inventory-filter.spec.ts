@@ -41,6 +41,6 @@ test("chat answers filtered inventory prompts and contextual follow-ups", async 
 
   expect(result.followUp.status).toBe(200);
   expect(result.followUp.routeHint).toBe("local_followup_assessment");
-  expect(result.followUp.output).toContain("chưa đủ");
+  expect(result.followUp.output).toContain("Dữ liệu thiếu");
   expect(result.followUp.output).toContain("kho/vị trí kho");
 });
