@@ -47,6 +47,13 @@ test("inventory lookup extracts the actual product terms from a stock question",
   );
 });
 
+test("warehouse report wording does not become a product-name filter", () => {
+  assert.deepEqual(
+    extractInventoryLookupTerms("Tạo báo cáo kho hàng: tồn kho, nhập xuất tồn và rủi ro thiếu hàng."),
+    [],
+  );
+});
+
 test("filtered inventory answers product-family count instead of global stock summary", () => {
   const res = buildFilteredInventoryResolution({
     prompt: "Trong tồn kho điều khiển RBC có bao nhiêu loại?",
