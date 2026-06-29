@@ -114,6 +114,36 @@ export function extractInventoryLookupTerms(prompt: string) {
   return [...terms].filter((term) => !stopWords.has(term)).slice(0, 8);
 }
 
+export function isInventorySummaryPrompt(prompt: string) {
+  const normalized = normalizeInventoryText(prompt);
+  if (!normalized) {
+    return false;
+  }
+
+  const explicitInventory =
+    /\b(ton kho|hang ton|kho hang|nhap xuat ton|ton hien tai|con ton|ton bao nhieu|con bao nhieu|tung kho|theo kho|o kho|am kho|duoi nguong|nguong toi thieu)\b/.test(
+      normalized,
+    );
+  if (explicitInventory) {
+    return true;
+  }
+
+  // Users often ask stock questions as "hãng Panasonic trong kho có bao nhiêu
+  // loại?" without saying "tồn kho". This is still an inventory query and must
+  // hit the verified inventory DB before Drive/n8n fallback.
+  const mentionsWarehouse = /\b(kho|trong kho)\b/.test(normalized);
+  const asksQuantityOrType =
+    /\b(bao nhieu|co bao nhieu|may loai|bao nhieu loai|so loai|so mat hang|con bao nhieu|con|ton)\b/.test(
+      normalized,
+    );
+  const mentionsProduct =
+    /\b(hang|hang hoa|hang dieu|hang panasonic|hang toshiba|hang daikin|hang carrier|hang midea|san pham|mat hang|ma hang|model|dieu hoa|may lanh|dieu khien|toshiba|carrier|daikin|midea|lg|panasonic|mitsubishi|rbc)\b/.test(
+      normalized,
+    );
+
+  return mentionsWarehouse && asksQuantityOrType && mentionsProduct;
+}
+
 function extractRequiredModelTerms(prompt: string) {
   return [...prompt.matchAll(/\b[A-Z0-9][A-Z0-9._-]{2,}\b/g)]
     .map((match) => normalizeInventoryText(match[0]))

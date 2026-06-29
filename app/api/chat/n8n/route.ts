@@ -14,6 +14,7 @@ import { isTenantDatabaseBoundaryError } from "@/lib/db-runtime";
 import {
   buildFilteredInventoryResolution,
   formatInventoryQuantity,
+  isInventorySummaryPrompt,
 } from "@/lib/chat-inventory";
 import {
   buildBusinessAnalysisContext,
@@ -394,11 +395,6 @@ function isInventoryCalculationPrompt(value: string) {
 
 function hasInventoryFileMarker(value: string) {
   return /\b(kho|ton kho|ton hang|hang hoa|nhap xuat ton)\b/.test(normalizeIntentText(value));
-}
-
-function isInventorySummaryPrompt(value: string) {
-  const normalized = normalizeIntentText(value);
-  return /\b(ton kho|hang ton|kho hang|nhap xuat ton|ton hien tai|con ton|ton bao nhieu|con bao nhieu|tung kho|theo kho|o kho|am kho|duoi nguong|nguong toi thieu)\b/.test(normalized);
 }
 
 function toNumber(value: number | string | bigint | null | undefined) {

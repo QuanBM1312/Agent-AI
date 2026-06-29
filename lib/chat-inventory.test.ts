@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import {
   buildFilteredInventoryResolution,
   extractInventoryLookupTerms,
+  isInventorySummaryPrompt,
 } from "./chat-inventory.ts";
 import type { InventoryItem } from "./chat-inventory.ts";
 
@@ -71,6 +72,12 @@ test("filtered inventory answers product-family count instead of global stock su
   assert.doesNotMatch(res.output, /Bộ chia gas/);
   assert.doesNotMatch(res.output, /Điều khiển không dây/);
   assert.doesNotMatch(res.output, /Tổng tồn hiện tại/);
+});
+
+test("natural 'trong kho có bao nhiêu loại' brand questions route to inventory", () => {
+  assert.equal(isInventorySummaryPrompt("hàng toshiba trong kho có bao nhiêu loại?"), true);
+  assert.equal(isInventorySummaryPrompt("hãng Panasonic trong kho có bao nhiêu loại?"), true);
+  assert.equal(isInventorySummaryPrompt("hãng panáonic trong kho có bao nhiêu loại?"), true);
 });
 
 test("filtered inventory is honest when the user asks per-warehouse but schema lacks warehouse", () => {
