@@ -20,6 +20,59 @@ function normalizeInventoryText(value: string) {
     .trim();
 }
 
+const INVENTORY_BRANDS = [
+  "toshiba",
+  "carrier",
+  "daikin",
+  "midea",
+  "lg",
+  "panasonic",
+  "mitsubishi",
+];
+
+function editDistance(left: string, right: string) {
+  const dp = Array.from({ length: left.length + 1 }, () => Array(right.length + 1).fill(0));
+
+  for (let i = 0; i <= left.length; i += 1) {
+    dp[i][0] = i;
+  }
+  for (let j = 0; j <= right.length; j += 1) {
+    dp[0][j] = j;
+  }
+
+  for (let i = 1; i <= left.length; i += 1) {
+    for (let j = 1; j <= right.length; j += 1) {
+      const substitutionCost = left[i - 1] === right[j - 1] ? 0 : 1;
+      dp[i][j] = Math.min(
+        dp[i - 1][j] + 1,
+        dp[i][j - 1] + 1,
+        dp[i - 1][j - 1] + substitutionCost,
+      );
+    }
+  }
+
+  return dp[left.length][right.length];
+}
+
+function canonicalizeInventoryBrandTerm(term: string) {
+  if (INVENTORY_BRANDS.includes(term)) {
+    return term;
+  }
+
+  for (const brand of INVENTORY_BRANDS) {
+    if (brand.length <= 3) {
+      continue;
+    }
+
+    const maxDistance = brand.length >= 8 ? 2 : 1;
+    if (Math.abs(term.length - brand.length) <= maxDistance && editDistance(term, brand) <= maxDistance) {
+      return brand;
+    }
+  }
+
+  return term;
+}
+
 export function formatInventoryQuantity(value: number) {
   return value.toLocaleString("vi-VN", {
     maximumFractionDigits: 3,
@@ -44,7 +97,7 @@ export function extractInventoryLookupTerms(prompt: string) {
   }
 
   for (const match of prompt.matchAll(/\b[A-Z0-9][A-Z0-9._-]{2,}\b/g)) {
-    const term = normalizeInventoryText(match[0]);
+    const term = canonicalizeInventoryBrandTerm(normalizeInventoryText(match[0]));
     if (term.length >= 3) {
       terms.add(term);
     }
@@ -106,8 +159,9 @@ export function extractInventoryLookupTerms(prompt: string) {
 
   for (const rawWord of normalized.split(" ")) {
     const word = rawWord.replace(/[^a-z0-9]/g, "");
-    if (word.length >= 4 && !stopWords.has(word) && !/^\d+$/.test(word)) {
-      terms.add(word);
+    const term = canonicalizeInventoryBrandTerm(word);
+    if (term.length >= 4 && !stopWords.has(term) && !/^\d+$/.test(term)) {
+      terms.add(term);
     }
   }
 

@@ -34,6 +34,12 @@ const INVENTORY: InventoryItem[] = [
     currentStock: 195,
   },
   {
+    code: "H4PN0001",
+    name: "Điều hòa Panasonic CU-XU9ZKH-8",
+    unit: "Bộ",
+    currentStock: 11,
+  },
+  {
     code: "H9BTDK9999",
     name: "Điều khiển không dây",
     unit: "Bộ",
@@ -78,6 +84,29 @@ test("natural 'trong kho có bao nhiêu loại' brand questions route to invento
   assert.equal(isInventorySummaryPrompt("hàng toshiba trong kho có bao nhiêu loại?"), true);
   assert.equal(isInventorySummaryPrompt("hãng Panasonic trong kho có bao nhiêu loại?"), true);
   assert.equal(isInventorySummaryPrompt("hãng panáonic trong kho có bao nhiêu loại?"), true);
+});
+
+test("inventory brand lookup tolerates small spelling mistakes", () => {
+  assert.deepEqual(
+    extractInventoryLookupTerms("hãng panáonic trong kho có bao nhiêu loại?"),
+    ["panasonic"],
+  );
+  assert.deepEqual(
+    extractInventoryLookupTerms("hãng pananonic trong kho có bao nhiêu loại?"),
+    ["panasonic"],
+  );
+
+  const res = buildFilteredInventoryResolution({
+    prompt: "hãng pananonic trong kho có bao nhiêu loại?",
+    inventory: INVENTORY,
+    year: 2026,
+    month: 6,
+  });
+
+  assert.ok(res);
+  assert.equal(res.routeHint, "local_inventory_filtered");
+  assert.match(res.output, /Điều hòa Panasonic CU-XU9ZKH-8/);
+  assert.match(res.output, /có 1 mặt hàng\/mã khớp/);
 });
 
 test("filtered inventory is honest when the user asks per-warehouse but schema lacks warehouse", () => {
