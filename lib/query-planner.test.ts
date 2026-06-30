@@ -112,6 +112,18 @@ test("internal Toshiba price remains a price lookup", () => {
   assert.equal(buildQueryRoutingPolicy(plan).blockInternalPriceWebFallback, true);
 });
 
+test("internal Toshiba price with market-price ban stays internal and no-web", () => {
+  const plan = buildQueryPlan("Giá nội bộ hàng Toshiba là bao nhiêu? Không dùng giá thị trường.");
+
+  assert.equal(plan.intent, "internal_price_lookup");
+  assert.ok(plan.sourceRequirements.includes("internal_price_file"));
+  assert.ok(plan.allowedTools.includes("drive_file_search"));
+  assert.ok(!plan.allowedTools.includes("gemini_web_search"));
+  assert.ok(plan.blockedFallbacks.includes("web_search"));
+  assert.ok(plan.answerContract.includes("do_not_use_web_prices"));
+  assert.deepEqual(plan.retrievalTerms, ["gia", "bang gia", "bao gia", "niem yet", "toshiba"]);
+});
+
 test("profit/loss requires revenue and cost", () => {
   const plan = buildQueryPlan("Quý gần nhất công ty đang lời hay lỗ?");
 

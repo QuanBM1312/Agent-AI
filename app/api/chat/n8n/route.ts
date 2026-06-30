@@ -27,6 +27,10 @@ import {
   buildQueryRoutingPolicy,
 } from "@/lib/query-planner";
 import {
+  isInternalLookupInstructionStopWord,
+  removeInternalLookupInstructionPhrases,
+} from "@/lib/internal-query-terms";
+import {
   isGeminiWebSearchConfigured,
   runGeminiFileSearchCalculation,
   runGeminiSpreadsheetCalculation,
@@ -342,11 +346,12 @@ function isSpreadsheetCalculationDataPathPrompt(value: string) {
 
 function buildCalculationFileSearchTerms(value: string) {
   const normalized = normalizeIntentText(value);
+  const cleaned = removeInternalLookupInstructionPhrases(normalized);
   const terms = new Set<string>();
 
   const pricePrompt = /\b(gia|don gia|bang gia|bao gia|niem yet|price|tren|duoi)\b/.test(normalized);
 
-  if (/\b(kho|ton kho|hang|hang hoa|mat hang|san pham|don vi)\b/.test(normalized)) {
+  if (/\b(kho|ton kho|hang|hang hoa|mat hang|san pham|don vi)\b/.test(cleaned)) {
     terms.add("kho");
     terms.add("hang");
   }
@@ -361,30 +366,31 @@ function buildCalculationFileSearchTerms(value: string) {
 
   for (const brand of ["toshiba", "carrier", "daikin", "midea", "lg", "panasonic", "mitsubishi"]) {
     // Word-boundary match — avoid catching a brand as a substring of another word.
-    if (new RegExp(`\\b${brand}\\b`).test(normalized)) {
+    if (new RegExp(`\\b${brand}\\b`).test(cleaned)) {
       terms.add(brand);
     }
   }
 
-  if (/\b(saleadmin|sale admin|doanh thu|lai lo|loi nhuan)\b/.test(normalized)) {
+  if (/\b(saleadmin|sale admin|doanh thu|lai lo|loi nhuan)\b/.test(cleaned)) {
     terms.add("sale");
     terms.add("doanh");
   }
 
-  if (/\b(so luong|sl|ton kho|nhap xuat ton|ton|nhap|xuat)\b/.test(normalized)) {
+  if (/\b(so luong|sl|ton kho|nhap xuat ton|ton|nhap|xuat)\b/.test(cleaned)) {
     terms.add("kho");
     terms.add("ton");
   }
 
-  if (/\b(hop dong|du an|cong trinh|thanh toan|cong no)\b/.test(normalized)) {
+  if (/\b(hop dong|du an|cong trinh|thanh toan|cong no)\b/.test(cleaned)) {
     terms.add("hop dong");
     terms.add("du an");
   }
 
-  for (const term of normalized.split(" ")) {
+  for (const term of cleaned.split(" ")) {
     if (
       term.length >= 4 &&
-      !/^(tinh|toan|toan bo|nhung|cac|theo|tieu|chi|dieu|kien|tren|duoi|don|vi|dong|file|bang|sheet|excel)$/.test(term)
+      !/^(tinh|toan|toan bo|nhung|cac|theo|tieu|chi|dieu|kien|tren|duoi|don|vi|dong|file|bang|sheet|excel)$/.test(term) &&
+      !isInternalLookupInstructionStopWord(term)
     ) {
       terms.add(term);
     }
@@ -1656,9 +1662,21 @@ export async function POST(req: NextRequest) {
   const startedAt = performance.now();
   const serverTiming: Array<{ name: string; durationMs: number }> = [];
   let responseStagePlan: string[] = [];
+  const includeEvalDebugMeta = req.headers.get("x-chat-eval-debug") === "1";
+  let queryPlan: ReturnType<typeof buildQueryPlan> | null = null;
+  let sourcePlanPresent = false;
+  let answerContractPresent = false;
   const mark = (name: string, sinceMs: number) => {
     serverTiming.push({ name, durationMs: performance.now() - sinceMs });
   };
+  const buildEvalDebugMeta = () =>
+    includeEvalDebugMeta
+      ? {
+          plannerIntent: queryPlan?.intent ?? null,
+          sourcePlanPresent,
+          answerContractPresent,
+        }
+      : {};
   const jsonWithTelemetry = (
     body: Record<string, unknown>,
     status: number,
@@ -1675,6 +1693,7 @@ export async function POST(req: NextRequest) {
           routeHint,
           stagePlan: responseStagePlan,
           serverTiming,
+          ...buildEvalDebugMeta(),
           ...extraMeta,
         },
       },
@@ -2067,6 +2086,10 @@ export async function POST(req: NextRequest) {
         .trim() || "[Voice Message]";
     }
     if (type === "image") userContent = userContent || "[Image Upload]";
+    queryPlan =
+      requestType === "chat" && !hasAttachment
+        ? buildQueryPlan(userContent)
+        : null;
 
     if (persistenceAvailable) {
       const saveUserMessageStartedAt = performance.now();
@@ -2338,10 +2361,6 @@ export async function POST(req: NextRequest) {
             .filter(Boolean)
             .join("\n\n")
         : chatInput;
-    const queryPlan =
-      requestType === "chat" && !hasAttachment
-        ? buildQueryPlan(userContent)
-        : null;
     const queryRoutingPolicy = buildQueryRoutingPolicy(queryPlan);
     const businessAnalysisPlan =
       requestType === "chat" && !hasAttachment
@@ -2610,6 +2629,8 @@ export async function POST(req: NextRequest) {
         });
       },
     });
+    sourcePlanPresent = n8nSourcePlanPayload.sourcePlan.length > 0;
+    answerContractPresent = n8nSourcePlanPayload.answerContract.length > 0;
     outgoingFormData.append("source_plan", n8nSourcePlanPayload.sourcePlan);
     outgoingFormData.append("candidate_files", n8nSourcePlanPayload.candidateFiles);
     outgoingFormData.append("answer_contract", n8nSourcePlanPayload.answerContract);

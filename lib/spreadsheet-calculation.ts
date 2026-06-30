@@ -1,5 +1,10 @@
 import * as XLSX from "xlsx";
 
+import {
+  isInternalLookupInstructionStopWord,
+  removeInternalLookupInstructionPhrases,
+} from "./internal-query-terms.ts";
+
 type CellValue = string | number | boolean | Date | null;
 
 interface SheetData {
@@ -494,20 +499,38 @@ function extractLookupTerms(prompt: string) {
     "hay", "la", "lieu", "ma", "mat", "nguon", "noi", "pham", "san", "sheet",
     "ten", "theo", "tin", "tim", "trong", "gi", "co", "the", "nao", "va", "hoac",
     "khong", "cac", "nhung", "may", "don", "ban", "niem", "yet", "price", "model",
-    "sku", "code", "bn", "cua hang", "hien tai",
+    "sku", "code", "bn", "cua hang", "hien tai", "bo",
   ]);
   const terms = new Set<string>();
+  const normalizedPrompt = removeInternalLookupInstructionPhrases(normalizeText(prompt));
 
   // Normalize FIRST (strips diacritics + đ→d), then split on any non-alphanumeric
   // run. This prevents junk fragments from punctuation/Vietnamese vowels — e.g.
   // "bao nhiêu?" must NOT yield "nhi" / "nhieu?" which then match unrelated rows.
-  for (const token of normalizeText(prompt).split(/[^a-z0-9]+/)) {
-    if (token.length >= 3 && !stopWords.has(token)) {
+  for (const token of normalizedPrompt.split(/[^a-z0-9]+/)) {
+    if (
+      token.length >= 3 &&
+      !stopWords.has(token) &&
+      !isInternalLookupInstructionStopWord(token)
+    ) {
       terms.add(token);
     }
   }
 
   return [...terms].slice(0, 8);
+}
+
+function isFootnoteOrPolicyLookupRow(row: CellValue[], lookupIndexes: number[], priceColumns: ColumnProfile[]) {
+  const lookupText = normalizeText(lookupIndexes.map((index) => formatCellValue(row[index])).join(" "));
+  const allText = normalizeText(row.map(formatCellValue).filter(Boolean).join(" "));
+  const hasPrice = priceColumns.some((column) => parseNumber(row[column.index]) !== null);
+  const lookupWordCount = lookupText.split(/\s+/).filter(Boolean).length;
+  const startsLikeFootnote = /^\s*[*•-]/.test(formatCellValue(row[lookupIndexes[0] ?? 0]));
+  const hasPolicyLanguage =
+    /\b(ghi chu|luu y|khong ap dung|gia thi truong|tren web|website|internet|google)\b/.test(allText) ||
+    /\b(chua bao gom|da bao gom|ap dung cho|bao hanh|dieu kien|phu thuoc|tham khao)\b/.test(allText);
+
+  return hasPrice && hasPolicyLanguage && (startsLikeFootnote || lookupWordCount >= 7);
 }
 
 function buildPriceLookupResolution(params: {
@@ -534,13 +557,21 @@ function buildPriceLookupResolution(params: {
         }
         return total + (lookupText === term ? 6 : 3);
       }, 0);
-      return { row, rowIndex, score };
+      return {
+        row,
+        rowIndex,
+        score,
+        isFootnoteOrPolicy: isFootnoteOrPolicyLookupRow(row, lookupIndexes, params.priceColumns),
+      };
     })
-    .filter((entry) => entry.score > 0)
+    .filter((entry) => entry.score > 0);
+
+  const primaryMatches = matches.filter((entry) => !entry.isFootnoteOrPolicy);
+  const selectedMatches = (primaryMatches.length > 0 ? primaryMatches : matches)
     .sort((a, b) => b.score - a.score)
     .slice(0, 8);
 
-  if (matches.length === 0) {
+  if (selectedMatches.length === 0) {
     return null;
   }
 
@@ -549,7 +580,7 @@ function buildPriceLookupResolution(params: {
     ...params.priceColumns.map((column) => column.index),
   ].filter((index, position, array) => array.indexOf(index) === position);
 
-  const lines = matches.map((entry, index) => {
+  const lines = selectedMatches.map((entry, index) => {
     const fields = displayColumns
       .map((columnIndex) => {
         const value = formatCellValue(entry.row[columnIndex]);
@@ -576,7 +607,7 @@ function buildPriceLookupResolution(params: {
       headerRow: params.table.headerRowIndex + 1,
       operation: "price_lookup",
       lookupTerms: terms,
-      matchedRowCount: matches.length,
+      matchedRowCount: selectedMatches.length,
       priceColumns: params.priceColumns.map((column) => column.name),
     },
   };
@@ -809,7 +840,7 @@ export function resolveSpreadsheetCalculation(params: {
   const inventoryPrompt = /\b(ton kho|nhap xuat ton|sl con lai|so luong|khoi luong|quantity|qty)\b/.test(prompt);
   const explicitRowCountPrompt = /\b(dem|co may|may mat hang|so mat hang|how many|count)\b/.test(prompt);
   const priceLookupPrompt = /\b(gia|don gia|gia ban|bao gia|price)\b/.test(prompt) &&
-    /\b(ma hang|ma|model|sku|ten|san pham|mat hang|hang hoa|bao nhieu)\b/.test(prompt);
+    /\b(ma hang|ma|model|sku|ten|san pham|mat hang|hang hoa|bao nhieu|noi bo|toshiba|carrier|daikin|midea|panasonic|mitsubishi|lg|dieu hoa|may lanh|lap dat|dich vu)\b/.test(prompt);
   const generalCountPrompt = /\b(bao nhieu|co bao nhieu)\b/.test(prompt) && !priceLookupPrompt;
 
   if (explicitRowCountPrompt) {

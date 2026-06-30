@@ -126,6 +126,88 @@ Tháo bộ điều hòa treo tường,300000`),
   assert.doesNotMatch(res.output, /Vệ sinh đường ống/);
 });
 
+test("internal Toshiba price ignores no-web market-price instructions and prefers product rows", () => {
+  const res = resolveSpreadsheetCalculation({
+    prompt: "Giá nội bộ hàng Toshiba là bao nhiêu? Không dùng giá thị trường.",
+    fileName: "bang-gia-noi-bo.csv",
+    buffer: csv(`Mặt hàng,Đơn giá
+Điều hòa Toshiba RAS-18J2AVG-V,42.500.000
+* Không dùng giá thị trường/web cho bảng giá nội bộ Toshiba,0`),
+  });
+
+  assert.ok(res);
+  assert.equal(res.routeHint, "spreadsheet_calculation");
+  assert.equal(res.meta.operation, "price_lookup");
+  assert.deepEqual(res.meta.lookupTerms, ["toshiba"]);
+  assert.equal(res.meta.matchedRowCount, 1);
+  assert.match(res.output, /Điều hòa Toshiba RAS-18J2AVG-V/);
+  assert.match(res.output, /42\.500\.000/);
+  assert.doesNotMatch(res.output, /Không dùng giá thị trường/);
+  assert.doesNotMatch(res.output, /web cho bảng giá nội bộ/);
+});
+
+test("price lookup demotes policy rows when a product row also matches", () => {
+  const res = resolveSpreadsheetCalculation({
+    prompt: "Giá Toshiba nội bộ là bao nhiêu? Không dùng web.",
+    fileName: "bang-gia-noi-bo.csv",
+    buffer: csv(`Tên hàng,Đơn giá
+* Giá Toshiba trên web chỉ để tham khảo,0
+Máy lạnh Toshiba RAS-H10,12.500.000`),
+  });
+
+  assert.ok(res);
+  assert.equal(res.meta.operation, "price_lookup");
+  assert.deepEqual(res.meta.lookupTerms, ["toshiba"]);
+  assert.equal(res.meta.matchedRowCount, 1);
+  assert.match(res.output, /Máy lạnh Toshiba RAS-H10/);
+  assert.doesNotMatch(res.output, /chỉ để tham khảo/);
+});
+
+test("price lookup keeps service rows such as installation as primary matches", () => {
+  const res = resolveSpreadsheetCalculation({
+    prompt: "Giá lắp đặt điều hòa Toshiba là bao nhiêu?",
+    fileName: "bang-gia-dich-vu.csv",
+    buffer: csv(`Tên dịch vụ,Đơn giá
+Lắp đặt điều hòa Toshiba treo tường,1.200.000
+* Điều kiện bảo hành áp dụng cho lắp đặt Toshiba,0`),
+  });
+
+  assert.ok(res);
+  assert.equal(res.meta.operation, "price_lookup");
+  assert.match(res.output, /Lắp đặt điều hòa Toshiba treo tường/);
+  assert.match(res.output, /1\.200\.000/);
+  assert.doesNotMatch(res.output, /Điều kiện bảo hành/);
+});
+
+test("price lookup strips no-web instruction terms without dropping public-price planner coverage", () => {
+  const res = resolveSpreadsheetCalculation({
+    prompt: "Giá nội bộ Toshiba không dùng web/google/internet hay giá thị trường.",
+    fileName: "bang-gia-noi-bo.csv",
+    buffer: csv(`Tên hàng,Đơn giá
+Điều hòa Toshiba RAS-H13,13.500.000`),
+  });
+
+  assert.ok(res);
+  assert.equal(res.meta.operation, "price_lookup");
+  assert.deepEqual(res.meta.lookupTerms, ["toshiba"]);
+  assert.match(res.output, /Điều hòa Toshiba RAS-H13/);
+});
+
+test("price lookup does not match unrelated policy rows when model/code/name is absent", () => {
+  const res = resolveSpreadsheetCalculation({
+    prompt: "Mã hàng H2AT411I05 giá nội bộ là bao nhiêu? Không dùng web.",
+    fileName: "bang-gia-noi-bo.csv",
+    buffer: csv(`Tên hàng,Đơn giá
+* Không dùng web hoặc giá thị trường cho bảng giá nội bộ,0
+Điều hòa Toshiba RAS-H10,12.500.000`),
+  });
+
+  assert.ok(res);
+  assert.notEqual(res.meta.operation, "price_lookup");
+  assert.doesNotMatch(res.output, /Không dùng web/);
+  assert.doesNotMatch(res.output, /Điều hòa Toshiba RAS-H10/);
+});
+
 test("aggregate without filter sums the amount column", () => {
   const res = resolveSpreadsheetCalculation({
     prompt: "tính tổng thành tiền",

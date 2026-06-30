@@ -292,6 +292,7 @@ function buildHeaders(cookie) {
   return {
     cookie,
     accept: "application/json",
+    "x-chat-eval-debug": "1",
   };
 }
 
