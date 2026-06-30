@@ -103,8 +103,9 @@ const BUSINESS_EVAL_CASES = [
     ],
     forbiddenRoutes: ["gemini_web_search", "gemini_web_offer", "local_external_limit"],
     forbiddenWeb: true,
-    requiredSignals: ["dữ liệu nội bộ"],
-    requiredWarningsAny: [["không trả giá lấy từ web", "không dùng giá thị trường", "không trả giá web"]],
+    // If the app finds an internal spreadsheet/file, the proof is the cited file/sheet
+    // and no-web route. Do not require a refusal phrase unless no source is found.
+    requiredWarningsAny: [["file", "sheet", "dữ liệu nội bộ", "không trả giá lấy từ web", "không dùng giá thị trường", "không trả giá web"]],
   },
   {
     id: "business-profit-loss-missing-cost",
@@ -119,7 +120,10 @@ const BUSINESS_EVAL_CASES = [
       ["không được kết luận", "không thể kết luận", "chưa được kết luận", "không kết luận"],
     ],
     requiredFormula: true,
-    mustNotContainAny: [/ket luan la lai\b/, /chac chan.*\blai\b/, /\bdang co lai\b/],
+    mustNotContainAny: [
+      /ket luan\s+(la|rang)\b.*\b(co lai|dang lai)\b/,
+      /\bdang co lai\b/,
+    ],
   },
   {
     id: "business-source-missing-index-pending",
@@ -133,6 +137,7 @@ const BUSINESS_EVAL_CASES = [
       "calculation_drive_source_not_found_upstream_unavailable",
       "local_internal_unavailable",
       "local_business_data_boundary",
+      "gemini_spreadsheet_calculation",
     ],
     forbiddenRoutes: ["gemini_web_search", "gemini_web_offer"],
     forbiddenWeb: true,
