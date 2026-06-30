@@ -1529,7 +1529,7 @@ function buildBusinessDataBoundaryResolution(value: string): LocalChatResolution
   if (/\b(ton kho chua cap nhat|kho chua cap nhat|ton kho.*hom nay)\b/.test(normalized)) {
     return {
       output:
-        "Tôi phải cảnh báo rằng số tồn kho có thể không phản ánh trạng thái hiện tại. Câu trả lời nên ghi rõ thời điểm cập nhật cuối, không dùng số liệu đó để cam kết xuất hàng/mua hàng nếu chưa đối chiếu, và yêu cầu cập nhật tồn kho hôm nay hoặc xác nhận từ kho trước khi ra quyết định.",
+        "Tôi phải cảnh báo rằng dữ liệu tồn kho chưa cập nhật hôm nay có thể không phản ánh trạng thái hiện tại. Câu trả lời nên ghi rõ thời điểm cập nhật cuối, không dùng số liệu đó để cam kết xuất hàng/mua hàng nếu chưa đối chiếu, và yêu cầu cập nhật tồn kho hôm nay hoặc xác nhận từ kho trước khi ra quyết định.",
       routeHint: "local_business_data_boundary",
     };
   }
@@ -2864,10 +2864,14 @@ export async function POST(req: NextRequest) {
             ? normalizedData.message
             : JSON.stringify(normalizedData);
     const citations = normalizedData.citations;
-    const routeHint = inferRouteHint(normalizedData, {
+    const inferredRouteHint = inferRouteHint(normalizedData, {
       type: requestType,
       hasAttachment,
     });
+    const routeHint =
+      shouldUseAgent0DeepLane && (inferredRouteHint === "general" || inferredRouteHint === "document_grounded")
+        ? "agent0_deep"
+        : inferredRouteHint;
     const agent0ContextId = readAgent0ContextId(normalizedData);
     const totalDurationMs = performance.now() - startedAt;
     const responseEvidence =
@@ -2886,6 +2890,7 @@ export async function POST(req: NextRequest) {
       agent0ContextId,
       extraMeta: {
         toolProvider: "n8n",
+        toolExecutionProof: shouldUseAgent0DeepLane && sourcePlanPresent,
         webSearchUsed:
           typeof normalizedData.webSearchUsed === "boolean"
             ? normalizedData.webSearchUsed
@@ -2916,6 +2921,7 @@ export async function POST(req: NextRequest) {
       requestType === "chat" &&
       !hasAttachment &&
       isCalculationPrompt(userContent) &&
+      !shouldUseAgent0DeepLane &&
       hasNoResultSignal(aiContent)
     ) {
       return await persistAndReturnResolution(buildCalculationNeedsDataResolution({
