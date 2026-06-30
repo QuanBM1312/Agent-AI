@@ -72,6 +72,24 @@ test("n8n failure is explicit tool unavailable", () => {
   assert.ok(metadata.executionTrace.some((event) => event.status === "tool_unavailable"));
 });
 
+test("Agent0 credential errors are tool unavailable, not verified evidence", () => {
+  const queryPlan = buildQueryPlan("Giá nội bộ hàng Toshiba là bao nhiêu? Không dùng web.");
+  const metadata = buildAnswerContractMetadata({
+    queryPlan,
+    routeHint: "agent0_deep",
+    output: "Tôi gặp lỗi quyền truy cập invalid_grant nên không thể truy xuất file nội bộ.",
+    toolProvider: "n8n",
+    toolExecutionProof: true,
+    sourcePlanPresent: true,
+    answerContractPresent: true,
+    candidateFileCount: 3,
+  });
+
+  assert.equal(metadata.verificationStatus, "tool_unavailable");
+  assert.ok(metadata.evidence.some((item) => item.kind === "agent0"));
+  assert.ok(metadata.executionTrace.some((event) => event.status === "tool_unavailable"));
+});
+
 test("generic n8n transport without source proof is not verified", () => {
   const metadata = buildAnswerContractMetadata({
     queryPlan: null,

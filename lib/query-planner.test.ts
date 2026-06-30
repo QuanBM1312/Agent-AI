@@ -43,6 +43,14 @@ test("multi-domain short report routes to risk summary before single-domain rout
   });
 });
 
+test("answer-format contract request routes to risk summary", () => {
+  const plan = buildQueryPlan("Hãy tách rõ dữ liệu chắc chắn, dữ liệu thiếu và suy luận trong câu trả lời.");
+
+  assert.equal(plan.intent, "risk_summary");
+  assert.ok(plan.answerContract.includes("separate_verified_missing_inferred"));
+  assert.equal(buildQueryRoutingPolicy(plan).useAgent0DeepLane, true);
+});
+
 test("toshiba and tosiba normalize into the same internal price plan", () => {
   const correct = buildQueryPlan("phiếu tính giá của điều hòa toshiba");
   const typo = buildQueryPlan("phiếu tính giá của điều hòa tosiba");

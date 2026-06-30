@@ -103,6 +103,7 @@ const INTERNAL_FILE_ROUTES = [
 ];
 const INVENTORY_ROUTES = [
   "agent0_deep",
+  "local_business_data_boundary",
   "local_inventory_filtered",
   "local_inventory_filter_not_found",
   "local_inventory_summary",
@@ -374,6 +375,7 @@ const BUSINESS_EVAL_CASES = [
     input: "Giá nội bộ hàng Toshiba là bao nhiêu? Không dùng giá thị trường.",
     expectedIntent: "internal_price_lookup",
     allowedRoutes: [
+      "agent0_deep",
       "local_internal_price_unavailable",
       "spreadsheet_calculation",
       "drive_spreadsheet_price_filter",

@@ -361,6 +361,7 @@ export function buildQueryPlan(prompt: string, context: QueryPlannerContext = {}
   const riskSummarySignal = includesAny(normalized, [
     /\b(bao cao ngan|tong hop|rui ro|can.*can thiep|can thiep ngay|hom nay).*\b(tai chinh|ton kho|tien do|du an|rui ro)\b/,
     /\b(tai chinh|ton kho|tien do|rui ro)\b.*\b(tong hop|bao cao)\b/,
+    /\b(tach ro|phan tach|du lieu chac chan|du lieu thieu|suy luan)\b.*\b(du lieu|cau tra loi|tra loi|noi ro)\b/,
   ]);
   const profitLossSignal = includesAny(normalized, [
     /\b(lai[\s/.-]*lo|loi nhuan|dang lai|dang lo|lo nhat|lai nhat|doanh thu.*chi phi|chi phi.*doanh thu|doanh thu.*gia von|gia von.*doanh thu|quy\s*\d|quy gan nhat)\b/,

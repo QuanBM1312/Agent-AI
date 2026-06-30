@@ -253,8 +253,13 @@ function warningsForPlan(params: BuildAnswerContractMetadataInput) {
 
 function statusFor(params: BuildAnswerContractMetadataInput, evidence: EvidenceItem[], missingData: MissingDataItem[]) {
   const routeHint = params.routeHint;
+  const output = normalize(params.output ?? "");
 
   if (params.degradedFrom || routeIncludes(routeHint, ["timeout", "fetch_error", "non_ok"])) {
+    return "tool_unavailable" satisfies VerificationStatus;
+  }
+
+  if (/\b(invalid grant|invalid_grant|bad request|loi quyen|loi xac thuc|khong co quyen truy cap|khong the truy xuat)\b/.test(output)) {
     return "tool_unavailable" satisfies VerificationStatus;
   }
 

@@ -2559,6 +2559,7 @@ export async function POST(req: NextRequest) {
       !hasAttachment &&
       calculationDriveContext.includes("[RAW_DRIVE_SPREADSHEET_CONTEXT_BEGIN]") &&
       !shouldUseAgent0DeepLane &&
+      !queryRoutingPolicy.useInventoryBusinessFallback &&
       geminiWebSearchEnabled
     ) {
       const geminiSpreadsheetStartedAt = performance.now();
@@ -2594,6 +2595,7 @@ export async function POST(req: NextRequest) {
       !hasAttachment &&
       calculationFileSearchStoreNames.length > 0 &&
       !shouldUseAgent0DeepLane &&
+      !queryRoutingPolicy.useInventoryBusinessFallback &&
       geminiWebSearchEnabled
     ) {
       const geminiFileSearchStartedAt = performance.now();
@@ -2868,8 +2870,13 @@ export async function POST(req: NextRequest) {
       type: requestType,
       hasAttachment,
     });
+    const shouldLabelAgent0DeepResponse =
+      queryRoutingPolicy.useAgent0DeepLane &&
+      sourcePlanPresent &&
+      requestType === "chat" &&
+      !hasAttachment;
     const routeHint =
-      shouldUseAgent0DeepLane && (inferredRouteHint === "general" || inferredRouteHint === "document_grounded")
+      shouldLabelAgent0DeepResponse && (inferredRouteHint === "general" || inferredRouteHint === "document_grounded")
         ? "agent0_deep"
         : inferredRouteHint;
     const agent0ContextId = readAgent0ContextId(normalizedData);
@@ -2890,7 +2897,7 @@ export async function POST(req: NextRequest) {
       agent0ContextId,
       extraMeta: {
         toolProvider: "n8n",
-        toolExecutionProof: shouldUseAgent0DeepLane && sourcePlanPresent,
+        toolExecutionProof: shouldLabelAgent0DeepResponse,
         webSearchUsed:
           typeof normalizedData.webSearchUsed === "boolean"
             ? normalizedData.webSearchUsed
@@ -2906,6 +2913,7 @@ export async function POST(req: NextRequest) {
       requestType === "chat" &&
       !hasAttachment &&
       geminiWebSearchEnabled &&
+      !queryRoutingPolicy.useAgent0DeepLane &&
       shouldOfferGeminiAfterNoResult(userContent, aiContent)
     ) {
       return await persistAndReturnResolution(
