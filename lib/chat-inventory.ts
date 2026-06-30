@@ -1,3 +1,9 @@
+import {
+  canonicalizeBrand,
+  extractEntities,
+  normalizeBusinessText,
+} from "./entity-normalizer.ts";
+
 export type InventoryItem = {
   code: string;
   name: string;
@@ -10,68 +16,7 @@ export type InventoryChatResolution = {
   routeHint: string;
 };
 
-function normalizeInventoryText(value: string) {
-  return value
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toLowerCase()
-    .replace(/\u0111/g, "d")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-const INVENTORY_BRANDS = [
-  "toshiba",
-  "carrier",
-  "daikin",
-  "midea",
-  "lg",
-  "panasonic",
-  "mitsubishi",
-];
-
-function editDistance(left: string, right: string) {
-  const dp = Array.from({ length: left.length + 1 }, () => Array(right.length + 1).fill(0));
-
-  for (let i = 0; i <= left.length; i += 1) {
-    dp[i][0] = i;
-  }
-  for (let j = 0; j <= right.length; j += 1) {
-    dp[0][j] = j;
-  }
-
-  for (let i = 1; i <= left.length; i += 1) {
-    for (let j = 1; j <= right.length; j += 1) {
-      const substitutionCost = left[i - 1] === right[j - 1] ? 0 : 1;
-      dp[i][j] = Math.min(
-        dp[i - 1][j] + 1,
-        dp[i][j - 1] + 1,
-        dp[i - 1][j - 1] + substitutionCost,
-      );
-    }
-  }
-
-  return dp[left.length][right.length];
-}
-
-function canonicalizeInventoryBrandTerm(term: string) {
-  if (INVENTORY_BRANDS.includes(term)) {
-    return term;
-  }
-
-  for (const brand of INVENTORY_BRANDS) {
-    if (brand.length <= 3) {
-      continue;
-    }
-
-    const maxDistance = brand.length >= 8 ? 2 : 1;
-    if (Math.abs(term.length - brand.length) <= maxDistance && editDistance(term, brand) <= maxDistance) {
-      return brand;
-    }
-  }
-
-  return term;
-}
+const normalizeInventoryText = normalizeBusinessText;
 
 export function formatInventoryQuantity(value: number) {
   return value.toLocaleString("vi-VN", {
@@ -83,23 +28,9 @@ export function extractInventoryLookupTerms(prompt: string) {
   const normalized = normalizeInventoryText(prompt);
   const terms = new Set<string>();
 
-  for (const phrase of [
-    "dieu khien",
-    "dieu hoa",
-    "may lanh",
-    "dan lanh",
-    "dan nong",
-    "bo chia gas",
-  ]) {
-    if (new RegExp(`\\b${phrase}\\b`).test(normalized)) {
-      terms.add(phrase);
-    }
-  }
-
-  for (const match of prompt.matchAll(/\b[A-Z0-9][A-Z0-9._-]{2,}\b/g)) {
-    const term = canonicalizeInventoryBrandTerm(normalizeInventoryText(match[0]));
-    if (term.length >= 3) {
-      terms.add(term);
+  for (const entity of extractEntities(prompt)) {
+    if (["brand", "product_type", "model", "product_code"].includes(entity.kind)) {
+      terms.add(entity.normalized);
     }
   }
 
@@ -159,7 +90,7 @@ export function extractInventoryLookupTerms(prompt: string) {
 
   for (const rawWord of normalized.split(" ")) {
     const word = rawWord.replace(/[^a-z0-9]/g, "");
-    const term = canonicalizeInventoryBrandTerm(word);
+    const term = canonicalizeBrand(word);
     if (term.length >= 4 && !stopWords.has(term) && !/^\d+$/.test(term)) {
       terms.add(term);
     }
@@ -190,10 +121,9 @@ export function isInventorySummaryPrompt(prompt: string) {
     /\b(bao nhieu|co bao nhieu|may loai|bao nhieu loai|so loai|so mat hang|con bao nhieu|con|ton)\b/.test(
       normalized,
     );
-  const mentionsProduct =
-    /\b(hang|hang hoa|hang dieu|hang panasonic|hang toshiba|hang daikin|hang carrier|hang midea|san pham|mat hang|ma hang|model|dieu hoa|may lanh|dieu khien|toshiba|carrier|daikin|midea|lg|panasonic|mitsubishi|rbc)\b/.test(
-      normalized,
-    );
+  const mentionsProduct = extractEntities(prompt).some((entity) =>
+    ["brand", "product_type", "model", "product_code"].includes(entity.kind),
+  ) || /\b(hang|hang hoa|hang dieu|san pham|mat hang|ma hang|model)\b/.test(normalized);
 
   return mentionsWarehouse && asksQuantityOrType && mentionsProduct;
 }

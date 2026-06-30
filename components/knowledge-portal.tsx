@@ -11,6 +11,8 @@ interface KnowledgeItem {
   name: string
   type: "pdf" | "word" | "excel" | "sheet"
   uploadedAt: string
+  status: string
+  statusTone: SourceStateTone
 }
 
 interface SourceItem {
@@ -18,7 +20,34 @@ interface SourceItem {
   name: string
   type: "GOOGLE_SHEET" | "WEB_URL"
   status: string
+  statusTone: SourceStateTone
   url?: string
+}
+
+type KnowledgeSourceStatus =
+  | "drive_only"
+  | "metadata_only"
+  | "index_pending"
+  | "rag_ready"
+  | "calculation_unverified"
+  | "calculation_ready"
+  | "raw_unreadable"
+  | "ingestion_failed"
+  | "unknown"
+
+type SourceStateTone = "success" | "warning" | "danger" | "neutral"
+
+interface KnowledgeSourceState {
+  driveVisible: boolean
+  metadataSaved: boolean
+  vectorIndexed: boolean
+  rawReadable: boolean
+  rawReadChecked: boolean
+  n8nIngested: boolean | null
+  usableForCalculation: boolean
+  usableForRag: boolean
+  status: KnowledgeSourceStatus
+  statusMessage: string
 }
 
 interface KnowledgeApiItem {
@@ -28,11 +57,21 @@ interface KnowledgeApiItem {
   sheet_name?: string | null
   hash?: string | number | null
   created_at?: string | null
+  web_view_link?: string | null
   source?: string | null
+  sourceState?: KnowledgeSourceState
 }
 
 interface KnowledgeUploadResponse {
   fileName?: string
+  sourceState?: KnowledgeSourceState
+  ingestionStatus?: {
+    triggered: boolean
+    status?: number
+    ok?: boolean
+    accepted?: boolean
+    error?: string
+  }
   ingestion?: {
     triggered: boolean
     status?: number
@@ -77,6 +116,42 @@ export function KnowledgePortal() {
     return 'pdf'
   }
 
+  const getStateDisplay = (state?: KnowledgeSourceState): { label: string; tone: SourceStateTone } => {
+    switch (state?.status) {
+      case "drive_only":
+        return { label: "Có trên Drive - chưa index", tone: "warning" }
+      case "index_pending":
+        return { label: "Đang chờ ingestion/index", tone: "warning" }
+      case "rag_ready":
+        return { label: "Đã index cho chat", tone: "success" }
+      case "calculation_unverified":
+        return { label: "Chưa xác minh đọc file để tính", tone: "warning" }
+      case "calculation_ready":
+        return { label: "Sẵn sàng tính toán", tone: "success" }
+      case "ingestion_failed":
+        return { label: "Ingestion lỗi", tone: "danger" }
+      case "raw_unreadable":
+        return { label: "Không đọc được file để tính", tone: "danger" }
+      case "metadata_only":
+        return { label: "Chỉ có metadata", tone: "neutral" }
+      default:
+        return { label: "Chưa rõ trạng thái", tone: "neutral" }
+    }
+  }
+
+  const getStateBadgeClass = (tone: SourceStateTone) => {
+    switch (tone) {
+      case "success":
+        return "border-emerald-200 bg-emerald-50 text-emerald-700"
+      case "danger":
+        return "border-red-200 bg-red-50 text-red-700"
+      case "warning":
+        return "border-amber-200 bg-amber-50 text-amber-800"
+      default:
+        return "border-border bg-muted text-muted-foreground"
+    }
+  }
+
   const fetchSources = useCallback(async () => {
     setIsSourcesLoading(true)
     setSourcesError(null)
@@ -95,18 +170,20 @@ export function KnowledgePortal() {
         }
 
         const validSources: SourceItem[] = rawItems.map((item) => {
-          let url = item.drive_file_id
+          let url = item.web_view_link || item.drive_file_id
           if (item.sheet_name === 'GOOGLE_SHEET' && item.drive_file_id && !item.drive_file_id.startsWith('http')) {
             url = `https://docs.google.com/spreadsheets/d/${item.drive_file_id}/edit`
           } else if (item.drive_file_id && !item.drive_file_id.startsWith('http')) {
             url = `https://drive.google.com/file/d/${item.drive_file_id}/view`
           }
+          const stateDisplay = getStateDisplay(item.sourceState)
 
           return {
             id: item.id,
             name: item.drive_name || item.drive_file_id || "",
             type: item.sheet_name === 'GOOGLE_SHEET' ? 'GOOGLE_SHEET' : 'WEB_URL',
-            status: item.source === "google_drive_fallback" ? "Đã kết nối từ Drive" : "Đã kết nối",
+            status: stateDisplay.label,
+            statusTone: stateDisplay.tone,
             url: url || ""
           }
         })
@@ -136,12 +213,18 @@ export function KnowledgePortal() {
           setDocumentsTotalPages(data.pagination.totalPages)
         }
 
-        const validItems: KnowledgeItem[] = rawItems.map((item) => ({
-          id: item.id,
-          name: item.drive_name || "Unknown File",
-          type: getFileType(item.drive_name || ""),
-          uploadedAt: item.created_at ? new Date(item.created_at).toISOString().split('T')[0] : ""
-        }))
+        const validItems: KnowledgeItem[] = rawItems.map((item) => {
+          const stateDisplay = getStateDisplay(item.sourceState)
+
+          return {
+            id: item.id,
+            name: item.drive_name || "Unknown File",
+            type: getFileType(item.drive_name || ""),
+            uploadedAt: item.created_at ? new Date(item.created_at).toISOString().split('T')[0] : "",
+            status: stateDisplay.label,
+            statusTone: stateDisplay.tone,
+          }
+        })
 
         setItems(validItems)
     } catch (error) {
@@ -188,21 +271,27 @@ export function KnowledgePortal() {
 
       const data = await response.json() as KnowledgeUploadResponse
       const fileName = data.fileName || file.name
-      if (data.ingestion?.triggered && data.ingestion.ok === false) {
-        const detail = data.ingestion.error || `HTTP ${data.ingestion.status || "không rõ"}`
+      const ingestion = data.ingestionStatus || data.ingestion
+      if (data.sourceState?.status === "ingestion_failed" || (ingestion?.triggered && ingestion.ok === false)) {
+        const detail = data.sourceState?.statusMessage || ingestion?.error || `HTTP ${ingestion?.status || "không rõ"}`
         setUploadNotice({
           tone: "warning",
-          message: `Đã upload "${fileName}" lên Drive, nhưng ingestion/vector hóa chưa hoàn tất (${detail}). File vẫn sẽ hiện trong danh sách; cần chạy lại ingestion nếu muốn chat/RAG dùng ngay.`,
+          message: `Đã upload "${fileName}" lên Drive, nhưng ingestion lỗi. Chat có thể chưa tra cứu được file này. ${detail}`,
         })
-      } else if (data.ingestion?.triggered === false) {
+      } else if (ingestion?.triggered === false) {
         setUploadNotice({
           tone: "warning",
           message: `Đã upload "${fileName}" lên Drive, nhưng chưa cấu hình webhook ingestion nên dữ liệu có thể chưa tìm được trong chat/RAG.`,
         })
+      } else if (data.sourceState?.status === "index_pending") {
+        setUploadNotice({
+          tone: "warning",
+          message: `Đã upload "${fileName}" lên Drive và lưu metadata. Ingestion đã được gửi, nhưng file đang chờ index nên chat/RAG có thể chưa dùng ngay.`,
+        })
       } else {
         setUploadNotice({
           tone: "success",
-          message: `Đã upload "${fileName}" lên Drive và gửi ingestion.`,
+          message: `Đã upload "${fileName}" lên Drive. ${data.sourceState?.statusMessage || "Sẵn sàng cho tra cứu."}`,
         })
       }
 
@@ -269,6 +358,7 @@ export function KnowledgePortal() {
           name: data.drive_name || newSourceUrl,
           type: "WEB_URL",
           status: "Đang đồng bộ",
+          statusTone: "warning",
           url: newSourceUrl
         }, ...prev])
         setNewSourceUrl("")
@@ -467,7 +557,9 @@ export function KnowledgePortal() {
                     {getSourceIcon(source.type)}
                     <div className="min-w-0">
                       <p className="font-medium text-foreground truncate group-hover:text-primary">{source.name}</p>
-                      <p className="text-xs text-muted-foreground">{source.status}</p>
+                      <span className={`mt-1 inline-flex max-w-full rounded border px-2 py-0.5 text-xs ${getStateBadgeClass(source.statusTone)}`}>
+                        {source.status}
+                      </span>
                     </div>
                   </a>
                 </div>
@@ -562,9 +654,14 @@ export function KnowledgePortal() {
                     {getFileIcon(item.type)}
                     <div className="flex-1">
                       <p className="font-medium text-foreground text-sm">{item.name}</p>
-                      <p className="text-xs text-muted-foreground">
-                        Tải lên {item.uploadedAt}
-                      </p>
+                      <div className="mt-1 flex flex-wrap items-center gap-2">
+                        <span className="text-xs text-muted-foreground">
+                          Tải lên {item.uploadedAt}
+                        </span>
+                        <span className={`inline-flex rounded border px-2 py-0.5 text-xs ${getStateBadgeClass(item.statusTone)}`}>
+                          {item.status}
+                        </span>
+                      </div>
                     </div>
                   </div>
                   <button

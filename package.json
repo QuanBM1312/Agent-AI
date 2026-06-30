@@ -49,6 +49,7 @@
     "doctor:agent0:migration": "node scripts/doctor-agent0-migration-lane.mjs",
     "probe:live:chat-auth": "node scripts/probe-live-chat-auth.mjs",
     "probe:live:chat-auth:browser": "node scripts/probe-live-chat-auth-browser.mjs",
+    "probe:n8n:agent0-contract": "node scripts/probe-n8n-agent0-contract.mjs",
     "probe:live:clerk:webhooks": "node scripts/probe-live-clerk-webhook-sync.mjs",
     "bootstrap:live:clerk:svix": "node scripts/bootstrap-live-clerk-svix-app.mjs",
     "probe:live:db": "node scripts/probe-live-db-connectivity.mjs",
@@ -62,6 +63,7 @@
     "diagnose:live:n8n-execution": "node scripts/diagnose-live-n8n-execution-latency.mjs",
     "correlate:chat-eval:n8n": "node scripts/correlate-chat-eval-n8n-executions.mjs",
     "verify:live:deploy": "node scripts/verify-live-deploy.mjs",
+    "test:n8n-agent0-contract-probe": "node --test scripts/n8n-agent0-contract-probe.test.mjs",
     "postinstall": "prisma generate"
   },
   "dependencies": {

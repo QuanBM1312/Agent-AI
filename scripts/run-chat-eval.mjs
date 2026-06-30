@@ -5,19 +5,17 @@ import os from "node:os";
 import path from "node:path";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import {
+  addEquivalentGroupAssertions,
+  evaluateChatEvalCase,
+} from "../lib/chat-eval-invariants.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const projectRoot = path.resolve(__dirname, "..");
 
 const DEFAULT_EVAL_SET_PATH = path.join(projectRoot, "docs", "chat-evaluation-set.json");
-const DEFAULT_OUTPUT_PATH = path.join(
-  projectRoot,
-  "docs",
-  "artifacts",
-  "chat-eval",
-  "latest.json",
-);
+const DEFAULT_OUTPUT_PATH = path.join(os.tmpdir(), "agent-ai-chat-eval-latest.json");
 const DEFAULT_FILE_FIXTURE = path.join(
   projectRoot,
   "docs",
@@ -40,12 +38,130 @@ Environment variables:
   CHAT_EVAL_EMAIL       Optional Clerk sign-in email used when CHAT_EVAL_COOKIE is absent.
   CHAT_EVAL_PASSWORD    Optional Clerk sign-in password used when CHAT_EVAL_COOKIE is absent.
   CHAT_EVAL_SET         Path to evaluation-set JSON. Default: docs/chat-evaluation-set.json
-  CHAT_EVAL_OUTPUT      Output artifact path. Default: docs/artifacts/chat-eval/latest.json
+  CHAT_EVAL_OUTPUT      Output artifact path. Default: /tmp/agent-ai-chat-eval-latest.json
   CHAT_EVAL_FILE_PATH   File fixture for file-backed case. Default: docs/artifacts/chat-eval/sample-file-backed.txt
   CHAT_EVAL_SESSION_ID  Reuse an existing chat session instead of creating a fresh one
+  CHAT_EVAL_BUSINESS    Include built-in SPEC-10 business cases. Default: 1
+
+Options:
+  --list-cases         Print the resolved evaluation case ids without calling the app.
 `);
   process.exit(0);
 }
+
+const BUSINESS_EVAL_CASES = [
+  {
+    id: "business-inventory-rbc-per-warehouse",
+    category: "business_inventory",
+    input: "Hàng RBC còn tồn bao nhiêu ở từng kho?",
+    expectedIntent: "inventory_analysis",
+    allowedRoutes: [
+      "local_inventory_filtered",
+      "calculation_drive_candidates_need_selection",
+      "calculation_drive_source_not_found",
+      "calculation_drive_source_not_found_upstream_unavailable",
+      "local_internal_unavailable",
+    ],
+    forbiddenRoutes: ["gemini_web_search", "gemini_web_offer"],
+    forbiddenWeb: true,
+    requiredSignals: ["RBC"],
+    requiredWarningsAny: [["kho", "vị trí kho", "warehouse", "chiều kho"]],
+  },
+  {
+    id: "business-inventory-panasonic",
+    category: "business_inventory",
+    input: "Hàng panasonic trong kho có bao nhiêu loại?",
+    expectedIntent: "inventory_lookup",
+    equivalentGroup: "panasonic-brand-lookup",
+    allowedRoutes: ["local_inventory_filtered", "local_inventory_filter_not_found"],
+    forbiddenRoutes: ["gemini_web_search", "gemini_web_offer"],
+    forbiddenWeb: true,
+    requiredSignals: ["panasonic"],
+  },
+  {
+    id: "business-inventory-pananonic-typo",
+    category: "business_inventory",
+    input: "Hàng pananonic trong kho có bao nhiêu loại?",
+    expectedIntent: "inventory_lookup",
+    equivalentGroup: "panasonic-brand-lookup",
+    allowedRoutes: ["local_inventory_filtered", "local_inventory_filter_not_found"],
+    forbiddenRoutes: ["gemini_web_search", "gemini_web_offer"],
+    forbiddenWeb: true,
+    requiredSignals: ["panasonic"],
+  },
+  {
+    id: "business-internal-toshiba-price-no-web",
+    category: "business_price",
+    input: "Giá nội bộ hàng Toshiba là bao nhiêu? Không dùng giá thị trường.",
+    expectedIntent: "internal_price_lookup",
+    allowedRoutes: [
+      "local_internal_price_unavailable",
+      "spreadsheet_calculation",
+      "drive_spreadsheet_price_filter",
+      "gemini_file_search_calculation",
+      "gemini_spreadsheet_calculation",
+    ],
+    forbiddenRoutes: ["gemini_web_search", "gemini_web_offer", "local_external_limit"],
+    forbiddenWeb: true,
+    requiredSignals: ["dữ liệu nội bộ"],
+    requiredWarningsAny: [["không trả giá lấy từ web", "không dùng giá thị trường", "không trả giá web"]],
+  },
+  {
+    id: "business-profit-loss-missing-cost",
+    category: "business_finance",
+    input: "Nếu thiếu dữ liệu chi phí, bạn có được kết luận hợp đồng đang lãi không?",
+    expectedIntent: "profit_loss",
+    allowedRoutes: ["local_business_data_boundary"],
+    forbiddenRoutes: ["gemini_web_search", "gemini_web_offer"],
+    forbiddenWeb: true,
+    requiredWarningsAny: [
+      ["thiếu dữ liệu chi phí", "thiếu chi phí", "thiếu dữ liệu giá vốn", "thiếu giá vốn"],
+      ["không được kết luận", "không thể kết luận", "chưa được kết luận", "không kết luận"],
+    ],
+    requiredFormula: true,
+    mustNotContainAny: [/ket luan la lai\b/, /chac chan.*\blai\b/, /\bdang co lai\b/],
+  },
+  {
+    id: "business-source-missing-index-pending",
+    category: "business_source_state",
+    input: "Quý gần nhất công ty đang lời hay lỗ? Nêu công thức và nguồn dữ liệu.",
+    expectedIntent: "profit_loss",
+    allowedRoutes: [
+      "calculation_needs_data",
+      "calculation_drive_candidates_need_selection",
+      "calculation_drive_source_not_found",
+      "calculation_drive_source_not_found_upstream_unavailable",
+      "local_internal_unavailable",
+      "local_business_data_boundary",
+    ],
+    forbiddenRoutes: ["gemini_web_search", "gemini_web_offer"],
+    forbiddenWeb: true,
+    alternativeAssertionGroups: [
+      {
+        name: "formula_or_explicit_missing_source",
+        class: "source-state",
+        message:
+          "Expected either a formula, or an explicit missing-source refusal with source/data warning",
+        any: [
+          { requiredFormula: true },
+          {
+            requiredWarningsAny: [
+              [
+                "chưa thấy bảng phù hợp",
+                "chưa đủ",
+                "không đủ nguồn",
+                "không đủ dữ liệu",
+                "thiếu nguồn",
+                "thiếu dữ liệu",
+              ],
+              ["nguồn", "dữ liệu", "file", "bảng"],
+            ],
+          },
+        ],
+      },
+    ],
+  },
+];
 
 function assertEnv(name, value) {
   if (!value) {
@@ -234,10 +350,11 @@ function summarizeBody(body) {
 }
 
 async function runCase({ baseUrl, cookie, sessionId, fileFixture, testCase, caseIndex }) {
+  const input = testCase.input || testCase.prompt;
   const formData = new FormData();
   formData.set("sessionId", sessionId);
   formData.set("type", "chat");
-  formData.set("chatInput", testCase.input);
+  formData.set("chatInput", input);
   formData.set("clientMessageId", `eval-${testCase.id}-${Date.now()}-${caseIndex}`);
 
   if (testCase.category === "file_attachment") {
@@ -274,9 +391,11 @@ async function runCase({ baseUrl, cookie, sessionId, fileFixture, testCase, case
   return {
     id: testCase.id,
     category: testCase.category,
-    input: testCase.input,
+    input,
+    expectedIntent: testCase.expectedIntent || null,
     expectedBehavior: testCase.expectedBehavior,
     status: response.status,
+    httpOk: response.ok,
     ok: response.ok,
     startedAt: new Date(startedAtMs).toISOString(),
     completedAt: new Date(completedAtMs).toISOString(),
@@ -325,6 +444,16 @@ async function runCaseWithAuthRetry({
   return { result, cookie: currentCookie };
 }
 
+function resolveEvaluationCases(evaluationSet) {
+  const cases = Array.isArray(evaluationSet?.cases) ? [...evaluationSet.cases] : [];
+
+  if (process.env.CHAT_EVAL_BUSINESS !== "0") {
+    cases.push(...BUSINESS_EVAL_CASES);
+  }
+
+  return cases;
+}
+
 function buildSummary(results) {
   const total = results.length;
   const successCount = results.filter((result) => result.ok).length;
@@ -346,6 +475,12 @@ function buildSummary(results) {
       acc[key] = (acc[key] || 0) + 1;
       return acc;
     }, {}),
+    failureClasses: results.reduce((acc, result) => {
+      for (const failureClass of result.failureClasses || []) {
+        acc[failureClass] = (acc[failureClass] || 0) + 1;
+      }
+      return acc;
+    }, {}),
   };
 }
 
@@ -354,10 +489,30 @@ async function writeArtifact(outputPath, artifact) {
   await fs.writeFile(outputPath, JSON.stringify(artifact, null, 2));
 }
 
+function displayPath(filePath) {
+  const relative = path.relative(projectRoot, filePath);
+
+  return relative.startsWith("..") ? filePath : relative;
+}
+
 async function main() {
   const baseUrl = normalizeBaseUrl(
     process.env.CHAT_EVAL_BASE_URL || "http://localhost:3000",
   );
+  const evaluationSetPath = process.env.CHAT_EVAL_SET || DEFAULT_EVAL_SET_PATH;
+  const outputPath = process.env.CHAT_EVAL_OUTPUT || DEFAULT_OUTPUT_PATH;
+  const fileFixture = process.env.CHAT_EVAL_FILE_PATH || DEFAULT_FILE_FIXTURE;
+
+  const evaluationSet = JSON.parse(await fs.readFile(evaluationSetPath, "utf8"));
+  const evaluationCases = resolveEvaluationCases(evaluationSet);
+
+  if (args.has("--list-cases")) {
+    for (const testCase of evaluationCases) {
+      console.log(`${testCase.id}\t${testCase.category || "uncategorized"}`);
+    }
+    return;
+  }
+
   const canRefreshCookie = Boolean(
     !process.env.CHAT_EVAL_COOKIE &&
       process.env.CHAT_EVAL_EMAIL &&
@@ -374,16 +529,13 @@ async function main() {
     (canRefreshCookie
       ? await refreshCookie()
       : assertEnv("CHAT_EVAL_COOKIE", process.env.CHAT_EVAL_COOKIE));
-  const evaluationSetPath = process.env.CHAT_EVAL_SET || DEFAULT_EVAL_SET_PATH;
-  const outputPath = process.env.CHAT_EVAL_OUTPUT || DEFAULT_OUTPUT_PATH;
-  const fileFixture = process.env.CHAT_EVAL_FILE_PATH || DEFAULT_FILE_FIXTURE;
 
-  const evaluationSet = JSON.parse(await fs.readFile(evaluationSetPath, "utf8"));
   const artifactBase = {
     generatedAt: new Date().toISOString(),
     baseUrl,
-    evaluationSetPath: path.relative(projectRoot, evaluationSetPath),
-    fileFixture: path.relative(projectRoot, fileFixture),
+    evaluationSetPath: displayPath(evaluationSetPath),
+    businessCasesIncluded: process.env.CHAT_EVAL_BUSINESS !== "0",
+    fileFixture: displayPath(fileFixture),
   };
 
   let sessionId = process.env.CHAT_EVAL_SESSION_ID;
@@ -402,7 +554,7 @@ async function main() {
       };
 
       await writeArtifact(outputPath, artifact);
-      console.log(`Saved failure artifact to ${path.relative(projectRoot, outputPath)}`);
+      console.log(`Saved failure artifact to ${displayPath(outputPath)}`);
       throw error;
     }
   }
@@ -410,7 +562,7 @@ async function main() {
   const results = [];
 
   try {
-    for (const [index, testCase] of evaluationSet.cases.entries()) {
+    for (const [index, testCase] of evaluationCases.entries()) {
       console.log(`Running ${testCase.id}...`);
       const execution = await runCaseWithAuthRetry({
         baseUrl,
@@ -422,13 +574,14 @@ async function main() {
         refreshCookie: canRefreshCookie ? refreshCookie : null,
       });
       cookie = execution.cookie;
-      const result = execution.result;
+      const result = evaluateChatEvalCase(execution.result, testCase);
       results.push(result);
       console.log(
-        `  -> ${result.status} in ${result.durationMs}ms (${result.routeHint || "no-route"})`,
+        `  -> ${result.ok ? "PASS" : "FAIL"} ${result.status} in ${result.durationMs}ms (${result.routeHint || "no-route"})`,
       );
     }
   } catch (error) {
+    addEquivalentGroupAssertions(results, evaluationCases);
     const artifact = {
       ...artifactBase,
       baseUrl,
@@ -440,9 +593,11 @@ async function main() {
     };
 
     await writeArtifact(outputPath, artifact);
-    console.log(`Saved partial failure artifact to ${path.relative(projectRoot, outputPath)}`);
+    console.log(`Saved partial failure artifact to ${displayPath(outputPath)}`);
     throw error;
   }
+
+  addEquivalentGroupAssertions(results, evaluationCases);
 
   const artifact = {
     ...artifactBase,
@@ -454,7 +609,11 @@ async function main() {
 
   await writeArtifact(outputPath, artifact);
 
-  console.log(`Saved artifact to ${path.relative(projectRoot, outputPath)}`);
+  console.log(`Saved artifact to ${displayPath(outputPath)}`);
+
+  if (artifact.summary.failureCount > 0) {
+    process.exitCode = 1;
+  }
 }
 
 main().catch((error) => {

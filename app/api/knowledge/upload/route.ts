@@ -3,6 +3,10 @@ import { drive_v3, google } from 'googleapis';
 import { Readable } from 'stream';
 import { db as prisma } from "@/lib/db";
 import { getCurrentUserWithRole } from "@/lib/auth-utils";
+import {
+  buildKnowledgeSourceState,
+  isSpreadsheetCompatibleSource,
+} from "@/lib/knowledge-source-state";
 
 const DRIVE_SCOPES = ['https://www.googleapis.com/auth/drive'];
 
@@ -257,7 +261,7 @@ export async function POST(request: Request) {
     // Determine sheet_name based on extension for filtering later
     const ext = file.name.split('.').pop()?.toUpperCase() || "FILE";
 
-    await prisma.knowledge_sources.create({
+    const knowledgeSource = await prisma.knowledge_sources.create({
       data: {
         drive_file_id: uploadedFile.id,
         drive_name: uploadedFile.name,
@@ -275,6 +279,7 @@ export async function POST(request: Request) {
       },
     });
 
+    let fileSearchStorageSeeded = false;
     if (!existingSearchStorage) {
       await prisma.file_search_storage.create({
         data: {
@@ -283,6 +288,7 @@ export async function POST(request: Request) {
           hash: sizeString,
         },
       });
+      fileSearchStorageSeeded = true;
     }
 
     // Step 3: Trigger the n8n vectorization workflow
@@ -291,6 +297,7 @@ export async function POST(request: Request) {
       triggered: boolean;
       status?: number;
       ok?: boolean;
+      accepted?: boolean;
       error?: string;
     } = { triggered: false };
 
@@ -316,21 +323,56 @@ export async function POST(request: Request) {
           triggered: true,
           status: ingestionResponse.status,
           ok: ingestionResponse.ok,
+          accepted: ingestionResponse.ok,
         };
       } catch (n8nError) {
         console.error('Failed to trigger n8n ingestion webhook:', n8nError);
         ingestionStatus = {
           triggered: true,
+          ok: false,
+          accepted: false,
           error: n8nError instanceof Error ? n8nError.message : String(n8nError),
         };
       }
     }
+
+    const ingestionFailed = ingestionStatus.triggered && ingestionStatus.ok === false;
+    const sourceState = buildKnowledgeSourceState({
+      driveVisible: true,
+      metadataSaved: true,
+      hasFileSearchStore: false,
+      hasKnowledgeChunks: false,
+      rawReadable: false,
+      rawReadChecked: false,
+      n8nIngested: ingestionFailed ? false : null,
+      ingestionError: ingestionStatus.error || (
+        ingestionStatus.status && ingestionStatus.ok === false
+          ? `HTTP ${ingestionStatus.status}`
+          : null
+      ),
+      spreadsheetCompatible: isSpreadsheetCompatibleSource(ext),
+    });
 
     // Respond to the client immediately
     return NextResponse.json({
       message: 'File uploaded successfully. Processing has been initiated.',
       fileId: uploadedFile.id,
       fileName: uploadedFile.name,
+      sourceState,
+      driveUploadStatus: {
+        uploaded: true,
+        fileId: uploadedFile.id,
+        fileName: uploadedFile.name,
+        webViewLink: uploadedFile.webViewLink || null,
+        webContentLink: uploadedFile.webContentLink || null,
+      },
+      metadataStatus: {
+        saved: true,
+        sourceId: knowledgeSource.id,
+        fileSearchStorageSeeded,
+        fileSearchStorageExisted: Boolean(existingSearchStorage),
+      },
+      ingestionStatus,
       ingestion: ingestionStatus,
     });
 

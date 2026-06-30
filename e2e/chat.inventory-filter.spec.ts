@@ -24,20 +24,33 @@ test("chat answers filtered inventory prompts and contextual follow-ups", async 
         status: response.status,
         routeHint: response.headers.get("x-chat-route-hint") || body?._meta?.routeHint || null,
         output: String(body.output || body.text || body.message || body.error || ""),
+        webSearchUsed: body?._meta?.webSearchUsed === true,
       };
     }
 
     const sessionId = `inventory-filter-${crypto.randomUUID()}`;
     const filtered = await ask(sessionId, "Trong tồn kho điều khiển RBC có bao nhiêu loại?");
+    const panasonic = await ask(sessionId, "Hàng panasonic trong kho có bao nhiêu loại?");
+    const pananonicTypo = await ask(sessionId, "Hàng pananonic trong kho có bao nhiêu loại?");
     const followUp = await ask(sessionId, "cái này đủ chưa?");
 
-    return { filtered, followUp };
+    return { filtered, panasonic, pananonicTypo, followUp };
   });
 
   expect(result.filtered.status).toBe(200);
   expect(result.filtered.routeHint).toBe("local_inventory_filtered");
   expect(result.filtered.output).toContain("RBC");
   expect(result.filtered.output).not.toContain("Tổng tồn hiện tại");
+  expect(result.filtered.webSearchUsed).toBe(false);
+
+  expect(result.panasonic.status).toBe(200);
+  expect(result.pananonicTypo.status).toBe(200);
+  expect(result.panasonic.routeHint).toBe("local_inventory_filtered");
+  expect(result.pananonicTypo.routeHint).toBe(result.panasonic.routeHint);
+  expect(result.panasonic.output).toContain("Panasonic");
+  expect(result.pananonicTypo.output).toContain("Panasonic");
+  expect(result.panasonic.webSearchUsed).toBe(false);
+  expect(result.pananonicTypo.webSearchUsed).toBe(false);
 
   expect(result.followUp.status).toBe(200);
   expect(result.followUp.routeHint).toBe("local_followup_assessment");

@@ -3,6 +3,11 @@ import { google } from "googleapis";
 import { db as prisma } from "@/lib/db";
 import { Prisma } from "@prisma/client";
 import { getCurrentUserWithRole } from "@/lib/auth-utils";
+import {
+  buildKnowledgeSourceState,
+  isSpreadsheetCompatibleSource,
+  type KnowledgeSourceState,
+} from "@/lib/knowledge-source-state";
 
 /**
  * @swagger
@@ -43,9 +48,24 @@ type KnowledgeSourceRow = Record<string, unknown> & {
 type KnowledgeSourceItem = Record<string, unknown> & {
   id?: string | null;
   drive_file_id?: string | null;
+  sheet_name?: string | null;
+  sourceState?: KnowledgeSourceState;
+};
+
+type SourceIndexFact = {
+  hasFileSearchStore: boolean;
+  hasKnowledgeChunks: boolean;
+};
+
+type RawReadProbeResult = {
+  checked: boolean;
+  readable: boolean;
+  reason?: string;
 };
 
 const DRIVE_FOLDER_MIME_TYPE = "application/vnd.google-apps.folder";
+const GOOGLE_SHEET_MIME_TYPE = "application/vnd.google-apps.spreadsheet";
+const RAW_READ_PROBE_TIMEOUT_MS = 2_500;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function parseDriveServiceAccountCredentials() {
@@ -118,13 +138,25 @@ function mergeKnowledgeSources(
 ) {
   const seen = new Set<string>();
   const merged: KnowledgeSourceItem[] = [];
+  const driveByKey = new Map<string, KnowledgeSourceItem>();
+
+  for (const source of driveSources) {
+    const key = source.drive_file_id || source.id || "";
+    if (key) {
+      driveByKey.set(key, source);
+    }
+  }
 
   for (const source of dbSources) {
     const key = source.drive_file_id || source.id || "";
     if (key) {
       seen.add(key);
     }
-    merged.push(source);
+    const matchingDriveSource = key ? driveByKey.get(key) : null;
+    merged.push({
+      ...source,
+      web_view_link: source.web_view_link || matchingDriveSource?.web_view_link || null,
+    });
   }
 
   for (const source of driveSources) {
@@ -139,6 +171,211 @@ function mergeKnowledgeSources(
   }
 
   return merged;
+}
+
+function getSourceKey(source: KnowledgeSourceItem) {
+  const key = source.drive_file_id || source.id;
+  return typeof key === "string" && key.trim().length > 0 ? key : null;
+}
+
+function isWebSource(source: KnowledgeSourceItem) {
+  return source.sheet_name === "WEB_URL" || /^https?:\/\//i.test(String(source.drive_file_id || ""));
+}
+
+async function probeRawReadability(
+  driveFileId: string,
+  memo: Map<string, Promise<RawReadProbeResult>>,
+): Promise<RawReadProbeResult> {
+  const existing = memo.get(driveFileId);
+  if (existing) {
+    return existing;
+  }
+
+  const probe = (async (): Promise<RawReadProbeResult> => {
+    const authCandidates = buildDriveReadonlyAuthCandidates();
+    if (authCandidates.length === 0) {
+      return {
+        checked: false,
+        readable: false,
+        reason: "missing_drive_readonly_credentials",
+      };
+    }
+
+    let lastError: unknown = null;
+    for (const auth of authCandidates) {
+      try {
+        const drive = google.drive({ version: "v3", auth });
+        const response = await drive.files.get(
+          {
+            fileId: driveFileId,
+            fields: "id,mimeType,size,capabilities/canDownload,exportLinks",
+            supportsAllDrives: true,
+          },
+          {
+            timeout: RAW_READ_PROBE_TIMEOUT_MS,
+          },
+        );
+        const file = response.data;
+        const mimeType = file.mimeType || "";
+        const canDownload = file.capabilities?.canDownload !== false;
+        const hasExportLink = Boolean(file.exportLinks && Object.keys(file.exportLinks).length > 0);
+
+        return {
+          checked: true,
+          readable: mimeType === GOOGLE_SHEET_MIME_TYPE ? hasExportLink || canDownload : canDownload,
+        };
+      } catch (error) {
+        lastError = error;
+      }
+    }
+
+    console.warn("[knowledge-source-raw-read-probe-failed]", {
+      driveFileId,
+      error: lastError,
+    });
+    return {
+      checked: true,
+      readable: false,
+      reason: "drive_metadata_probe_failed",
+    };
+  })();
+
+  memo.set(driveFileId, probe);
+  return probe;
+}
+
+async function loadSourceIndexFacts(driveFileIds: string[]) {
+  const facts = new Map<string, SourceIndexFact>();
+  const ids = Array.from(new Set(driveFileIds.filter((id) => id.trim().length > 0)));
+
+  if (ids.length === 0) {
+    return facts;
+  }
+
+  for (const id of ids) {
+    facts.set(id, {
+      hasFileSearchStore: false,
+      hasKnowledgeChunks: false,
+    });
+  }
+
+  try {
+    const fileSearchRows = await prisma.file_search_storage.findMany({
+      where: {
+        drive_file_id: {
+          in: ids,
+        },
+      },
+      select: {
+        drive_file_id: true,
+        file_search_name: true,
+      },
+    });
+
+    for (const row of fileSearchRows) {
+      if (!row.drive_file_id) {
+        continue;
+      }
+
+      const fileSearchName = row.file_search_name || "";
+      const current = facts.get(row.drive_file_id) || {
+        hasFileSearchStore: false,
+        hasKnowledgeChunks: false,
+      };
+
+      facts.set(row.drive_file_id, {
+        ...current,
+        hasFileSearchStore:
+          current.hasFileSearchStore ||
+          fileSearchName.startsWith("fileSearchStores/") ||
+          fileSearchName.includes("/documents/"),
+      });
+    }
+  } catch (error) {
+    console.warn("[knowledge-source-state-file-search-facts-unavailable]", { error });
+  }
+
+  try {
+    const chunkRows = await prisma.$queryRaw<Array<{ drive_file_id: string | null }>>`
+      SELECT
+        COALESCE(
+          metadata->>'drive_file_id',
+          metadata->>'driveFileId',
+          metadata->>'file_id',
+          metadata->>'fileId'
+        ) AS drive_file_id
+      FROM public.knowledge_chunks
+      WHERE COALESCE(
+          metadata->>'drive_file_id',
+          metadata->>'driveFileId',
+          metadata->>'file_id',
+          metadata->>'fileId'
+        ) IN (${Prisma.join(ids)})
+      GROUP BY 1
+    `;
+
+    for (const row of chunkRows) {
+      if (!row.drive_file_id) {
+        continue;
+      }
+
+      const current = facts.get(row.drive_file_id) || {
+        hasFileSearchStore: false,
+        hasKnowledgeChunks: false,
+      };
+
+      facts.set(row.drive_file_id, {
+        ...current,
+        hasKnowledgeChunks: true,
+      });
+    }
+  } catch (error) {
+    console.warn("[knowledge-source-state-chunk-facts-unavailable]", { error });
+  }
+
+  return facts;
+}
+
+async function addSourceStates(
+  sources: KnowledgeSourceItem[],
+  driveVisibleIds: Set<string>,
+  options: { loadIndexFacts?: boolean } = {},
+) {
+  const loadIndexFacts = options.loadIndexFacts !== false;
+  const driveFileIds = sources
+    .map((source) => source.drive_file_id)
+    .filter((id): id is string => typeof id === "string" && !/^https?:\/\//i.test(id));
+  const indexFacts = loadIndexFacts ? await loadSourceIndexFacts(driveFileIds) : new Map<string, SourceIndexFact>();
+  const rawReadProbeMemo = new Map<string, Promise<RawReadProbeResult>>();
+
+  return Promise.all(sources.map(async (source) => {
+    const key = getSourceKey(source);
+    const driveFileId = typeof source.drive_file_id === "string" ? source.drive_file_id : null;
+    const facts = driveFileId ? indexFacts.get(driveFileId) : null;
+    const metadataSaved = source.source !== "google_drive_fallback";
+    const webSource = isWebSource(source);
+    const driveVisible = webSource ? false : Boolean(key && driveVisibleIds.has(key));
+    const hasVectorIndex = facts?.hasFileSearchStore === true || facts?.hasKnowledgeChunks === true;
+    const spreadsheetCompatible = isSpreadsheetCompatibleSource(source.sheet_name);
+    const rawReadProbe =
+      metadataSaved && hasVectorIndex && spreadsheetCompatible && driveFileId && !webSource
+        ? await probeRawReadability(driveFileId, rawReadProbeMemo)
+        : null;
+
+    return {
+      ...source,
+      sourceState: buildKnowledgeSourceState({
+        driveVisible,
+        metadataSaved,
+        hasFileSearchStore: facts?.hasFileSearchStore,
+        hasKnowledgeChunks: facts?.hasKnowledgeChunks,
+        rawReadable: rawReadProbe?.readable,
+        rawReadChecked: rawReadProbe?.checked,
+        webSource,
+        spreadsheetCompatible,
+      }),
+    };
+  }));
 }
 
 async function listDriveKnowledgeSources(type: string | null) {
@@ -269,6 +506,11 @@ export async function GET(req: Request) {
 
       const driveSources = await listDriveKnowledgeSources(type);
       if (driveSources && driveSources.length > 0) {
+        const driveVisibleIds = new Set(
+          driveSources
+            .map((source) => getSourceKey(source))
+            .filter((id): id is string => Boolean(id)),
+        );
         const allSourcesResult = await prisma.$queryRaw<KnowledgeSourceRow[]>`
           SELECT
             *,
@@ -284,24 +526,33 @@ export async function GET(req: Request) {
           return rest;
         });
         const merged = mergeKnowledgeSources(allSources, driveSources);
-        const pageItems = merged.slice(
-          paginationParams.skip,
-          paginationParams.skip + paginationParams.limit,
-        );
+        const sourcesWithState = await addSourceStates(merged, driveVisibleIds);
         return NextResponse.json(formatPaginatedResponse(
-          pageItems,
-          merged.length,
+          sourcesWithState.slice(
+            paginationParams.skip,
+            paginationParams.skip + paginationParams.limit,
+          ),
+          sourcesWithState.length,
           paginationParams,
         ));
       }
 
-      return NextResponse.json(formatPaginatedResponse(sources, totalCount, paginationParams));
+      const sourcesWithState = await addSourceStates(sources, new Set());
+      return NextResponse.json(formatPaginatedResponse(sourcesWithState, totalCount, paginationParams));
     } catch (databaseError) {
       console.warn("[knowledge-sources-db-unavailable]", { error: databaseError });
       const driveSources = await listDriveKnowledgeSources(type);
 
       if (driveSources) {
-        const pageItems = driveSources.slice(
+        const driveVisibleIds = new Set(
+          driveSources
+            .map((source) => getSourceKey(source))
+            .filter((id): id is string => Boolean(id)),
+        );
+        const sourcesWithState = await addSourceStates(driveSources, driveVisibleIds, {
+          loadIndexFacts: false,
+        });
+        const pageItems = sourcesWithState.slice(
           paginationParams.skip,
           paginationParams.skip + paginationParams.limit,
         );

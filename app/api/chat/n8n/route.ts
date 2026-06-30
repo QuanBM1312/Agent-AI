@@ -22,6 +22,11 @@ import {
 } from "@/lib/business-analysis-planner";
 import type { BusinessAnalysisPlan } from "@/lib/business-analysis-planner";
 import {
+  buildN8nSourcePlanPayload,
+  buildQueryPlan,
+  buildQueryRoutingPolicy,
+} from "@/lib/query-planner";
+import {
   isGeminiWebSearchConfigured,
   runGeminiFileSearchCalculation,
   runGeminiSpreadsheetCalculation,
@@ -2333,6 +2338,11 @@ export async function POST(req: NextRequest) {
             .filter(Boolean)
             .join("\n\n")
         : chatInput;
+    const queryPlan =
+      requestType === "chat" && !hasAttachment
+        ? buildQueryPlan(userContent)
+        : null;
+    const queryRoutingPolicy = buildQueryRoutingPolicy(queryPlan);
     const businessAnalysisPlan =
       requestType === "chat" && !hasAttachment
         ? detectBusinessAnalysisPlan(userContent)
@@ -2342,8 +2352,7 @@ export async function POST(req: NextRequest) {
     if (
       requestType === "chat" &&
       !hasAttachment &&
-      isInventorySummaryPrompt(userContent) &&
-      businessAnalysisPlan?.intent !== "inventory_analysis"
+      queryRoutingPolicy.useLocalInventoryLookup
     ) {
       const inventoryStartedAt = performance.now();
       try {
@@ -2372,7 +2381,7 @@ export async function POST(req: NextRequest) {
     const needsInternalFileAnalysis =
       requestType === "chat" &&
       !hasAttachment &&
-      (isSpreadsheetCalculationDataPathPrompt(userContent) || Boolean(businessAnalysisPlan));
+      (queryRoutingPolicy.needsInternalFileAnalysis || isSpreadsheetCalculationDataPathPrompt(userContent));
     if (needsInternalFileAnalysis) {
       const fileResolveStartedAt = performance.now();
       try {
@@ -2535,7 +2544,7 @@ export async function POST(req: NextRequest) {
     if (
       requestType === "chat" &&
       !hasAttachment &&
-      isInternalPriceLookupPrompt(userContent)
+      queryRoutingPolicy.blockInternalPriceWebFallback
     ) {
       return await persistAndReturnResolution(buildInternalPriceUnavailableResolution(), {
         spreadsheetCalculationUsed: false,
@@ -2548,7 +2557,7 @@ export async function POST(req: NextRequest) {
     // can still provide a verified stock baseline and explicitly name missing
     // dimensions such as warehouse/location.
     if (
-      businessAnalysisPlan?.intent === "inventory_analysis" &&
+      queryRoutingPolicy.useInventoryBusinessFallback &&
       requestType === "chat" &&
       !hasAttachment &&
       isInventorySummaryPrompt(userContent)
@@ -2582,6 +2591,28 @@ export async function POST(req: NextRequest) {
     if (previousAgent0ContextId) {
       outgoingFormData.append("agent0_context_id", previousAgent0ContextId);
     }
+    const n8nSourcePlanPayload = buildN8nSourcePlanPayload({
+      queryPlan,
+      routingPolicy: queryRoutingPolicy,
+      businessAnalysisPlan,
+      hasAttachment,
+      candidateFiles: calculationDriveCandidates,
+      calculationFileSearchStoreNames,
+      needsInternalFileAnalysis,
+      calculationDriveSearched,
+      geminiWebSearchEnabled,
+      onSerializationError: (field, error) => {
+        console.warn("[chat-n8n-source-plan-serialization-failed]", {
+          requestId,
+          sessionId,
+          field,
+          error: serializeErrorForClient(error),
+        });
+      },
+    });
+    outgoingFormData.append("source_plan", n8nSourcePlanPayload.sourcePlan);
+    outgoingFormData.append("candidate_files", n8nSourcePlanPayload.candidateFiles);
+    outgoingFormData.append("answer_contract", n8nSourcePlanPayload.answerContract);
     if (file) outgoingFormData.append("file", file);
     if (fileUrl) outgoingFormData.append("fileUrl", fileUrl); // Provide URL to n8n as well
 
