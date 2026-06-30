@@ -270,27 +270,6 @@ export async function POST(request: Request) {
       }
     });
 
-    const existingSearchStorage = await prisma.file_search_storage.findFirst({
-      where: {
-        drive_file_id: uploadedFile.id,
-      },
-      select: {
-        id: true,
-      },
-    });
-
-    let fileSearchStorageSeeded = false;
-    if (!existingSearchStorage) {
-      await prisma.file_search_storage.create({
-        data: {
-          drive_file_id: uploadedFile.id,
-          drive_name: uploadedFile.name,
-          hash: sizeString,
-        },
-      });
-      fileSearchStorageSeeded = true;
-    }
-
     // Step 3: Trigger the n8n vectorization workflow
     const n8nWebhookUrl = process.env.N8N_INGESTION_WEBHOOK_URL;
     let ingestionStatus: {
@@ -369,8 +348,6 @@ export async function POST(request: Request) {
       metadataStatus: {
         saved: true,
         sourceId: knowledgeSource.id,
-        fileSearchStorageSeeded,
-        fileSearchStorageExisted: Boolean(existingSearchStorage),
       },
       ingestionStatus,
       ingestion: ingestionStatus,

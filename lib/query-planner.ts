@@ -73,6 +73,7 @@ export type QueryRoutingPolicy = {
   needsInternalFileAnalysis: boolean;
   blockInternalPriceWebFallback: boolean;
   useInventoryBusinessFallback: boolean;
+  useAgent0DeepLane: boolean;
 };
 
 type N8nCandidateFileInput = Record<string, unknown>;
@@ -164,6 +165,13 @@ function buildPlan(params: Omit<QueryPlan, "retrievalTerms"> & { retrievalTerms?
 }
 
 export function buildQueryRoutingPolicy(plan: QueryPlan | null): QueryRoutingPolicy {
+  const useAgent0DeepLane =
+    plan?.intent === "internal_price_lookup" ||
+    plan?.intent === "profit_loss" ||
+    plan?.intent === "contract_status" ||
+    plan?.intent === "project_progress" ||
+    plan?.intent === "risk_summary";
+
   return {
     useLocalInventoryLookup: plan?.intent === "inventory_lookup",
     needsInternalFileAnalysis:
@@ -176,6 +184,7 @@ export function buildQueryRoutingPolicy(plan: QueryPlan | null): QueryRoutingPol
       plan?.intent === "inventory_analysis",
     blockInternalPriceWebFallback: plan?.intent === "internal_price_lookup",
     useInventoryBusinessFallback: plan?.intent === "inventory_analysis",
+    useAgent0DeepLane,
   };
 }
 

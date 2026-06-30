@@ -97,6 +97,89 @@ test("alternative assertion groups allow missing-source refusal instead of formu
   assert.equal(evaluated.ok, true);
 });
 
+test("business evidence requires a real source signal, not only HTTP success", () => {
+  const missingEvidence = evaluateChatEvalCase(
+    result("Hợp đồng A đang lỗ 20 triệu."),
+    {
+      id: "verified-business-answer",
+      requiredEvidence: true,
+    },
+  );
+
+  assert.equal(missingEvidence.ok, false);
+  assert.deepEqual(missingEvidence.failureClasses, ["evidence"]);
+
+  const sourced = evaluateChatEvalCase(
+    result("Hợp đồng A đang lỗ 20 triệu.", {
+      responseBody: {
+        output: "Hợp đồng A đang lỗ 20 triệu.",
+        citations: [{ title: "Bao cao hop dong Q1.xlsx", sheet: "Q1" }],
+      },
+    }),
+    {
+      id: "verified-business-answer",
+      requiredEvidence: true,
+    },
+  );
+
+  assert.equal(sourced.ok, true);
+});
+
+test("route assertions use response metadata when the runner did not receive a header", () => {
+  const evaluated = evaluateChatEvalCase(
+    result("Panasonic có 1 mã.", {
+      routeHint: null,
+      responseBody: {
+        output: "Panasonic có 1 mã.",
+        _meta: { routeHint: "local_inventory_filtered" },
+      },
+    }),
+    {
+      id: "route-from-meta",
+      allowedRoutes: ["local_inventory_filtered"],
+      forbiddenWeb: true,
+    },
+  );
+
+  assert.equal(evaluated.ok, true);
+});
+
+test("verification status and question-count invariants are classified for production gating", () => {
+  const passing = evaluateChatEvalCase(
+    result("1. Bạn có file doanh thu không? 2. Bạn có file chi phí không?", {
+      responseBody: {
+        output: "1. Bạn có file doanh thu không? 2. Bạn có file chi phí không?",
+        _meta: { verificationStatus: "needs_more_data" },
+      },
+    }),
+    {
+      id: "ask-max-three",
+      maxQuestions: 3,
+      requiredVerificationStatus: ["needs_more_data", "verified"],
+    },
+  );
+
+  assert.equal(passing.ok, true);
+  assert.equal(passing.exposedVerificationStatus, "needs_more_data");
+
+  const failing = evaluateChatEvalCase(
+    result("Câu 1? Câu 2? Câu 3? Câu 4?", {
+      responseBody: {
+        output: "Câu 1? Câu 2? Câu 3? Câu 4?",
+        _meta: { verificationStatus: "unverified" },
+      },
+    }),
+    {
+      id: "ask-max-three",
+      maxQuestions: 3,
+      requiredVerificationStatus: "needs_more_data",
+    },
+  );
+
+  assert.equal(failing.ok, false);
+  assert.deepEqual(failing.failureClasses, ["ui", "evidence"]);
+});
+
 test("equivalent group assertion requires same route and same no-web behavior", () => {
   const baseCase = {
     equivalentGroup: "panasonic-brand-lookup",

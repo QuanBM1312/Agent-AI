@@ -32,6 +32,20 @@ test("metadata rows without proven vector data are index pending", () => {
   assert.equal(state.usableForRag, false);
 });
 
+test("metadata-only rows are not treated as pending Drive-ingested sources", () => {
+  const state = buildKnowledgeSourceState({
+    driveVisible: false,
+    metadataSaved: true,
+    hasFileSearchStore: false,
+    hasKnowledgeChunks: false,
+  });
+
+  assert.equal(state.status, "metadata_only");
+  assert.equal(state.vectorIndexed, false);
+  assert.equal(state.usableForRag, false);
+  assert.equal(state.usableForCalculation, false);
+});
+
 test("upload ingestion failed is explicit and blocks usability", () => {
   const state = buildKnowledgeSourceState({
     driveVisible: true,

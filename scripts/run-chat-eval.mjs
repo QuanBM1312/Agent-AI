@@ -24,7 +24,39 @@ const DEFAULT_FILE_FIXTURE = path.join(
   "sample-file-backed.txt",
 );
 
-const args = new Set(process.argv.slice(2));
+const rawArgs = process.argv.slice(2);
+const args = new Set(rawArgs);
+
+function readOption(name) {
+  const equalsPrefix = `${name}=`;
+  const equalsValue = rawArgs.find((arg) => arg.startsWith(equalsPrefix));
+  if (equalsValue) {
+    return equalsValue.slice(equalsPrefix.length);
+  }
+
+  const index = rawArgs.indexOf(name);
+  if (index === -1) {
+    return null;
+  }
+
+  const value = rawArgs[index + 1];
+  return value && !value.startsWith("--") ? value : "";
+}
+
+const explicitCasesMode = readOption("--cases");
+const casesMode =
+  explicitCasesMode === null
+    ? process.env.CHAT_EVAL_BUSINESS === "0"
+      ? "canonical"
+      : "all"
+    : explicitCasesMode;
+
+if (!["canonical", "business", "all"].includes(casesMode)) {
+  console.error(
+    `Invalid --cases value "${casesMode || "(missing)"}". Expected canonical, business, or all.`,
+  );
+  process.exit(1);
+}
 
 if (args.has("--help")) {
   console.log(`Usage:
@@ -41,31 +73,165 @@ Environment variables:
   CHAT_EVAL_OUTPUT      Output artifact path. Default: /tmp/agent-ai-chat-eval-latest.json
   CHAT_EVAL_FILE_PATH   File fixture for file-backed case. Default: docs/artifacts/chat-eval/sample-file-backed.txt
   CHAT_EVAL_SESSION_ID  Reuse an existing chat session instead of creating a fresh one
-  CHAT_EVAL_BUSINESS    Include built-in SPEC-10 business cases. Default: 1
+  CHAT_EVAL_BUSINESS    Backward-compatible: 0 means --cases canonical when --cases is omitted.
 
 Options:
   --list-cases         Print the resolved evaluation case ids without calling the app.
+  --cases <mode>       canonical | business | all. Default: all.
 `);
   process.exit(0);
 }
 
+const INTERNAL_FORBIDDEN_ROUTES = [
+  "gemini_web_search",
+  "gemini_web_offer",
+  "local_external_limit",
+];
+const INTERNAL_FILE_ROUTES = [
+  "agent0_deep",
+  "calculation_needs_data",
+  "calculation_drive_candidates_need_selection",
+  "calculation_drive_source_not_found",
+  "calculation_drive_source_not_found_upstream_unavailable",
+  "drive_spreadsheet_price_filter",
+  "gemini_file_search_calculation",
+  "gemini_spreadsheet_calculation",
+  "local_business_data_boundary",
+  "local_internal_unavailable",
+  "spreadsheet_calculation",
+  "spreadsheet_calculation_needs_columns",
+];
+const INVENTORY_ROUTES = [
+  "agent0_deep",
+  "local_inventory_filtered",
+  "local_inventory_filter_not_found",
+  "local_inventory_summary",
+  "local_internal_unavailable",
+  "local_missing_data",
+];
+const PROJECT_CONTRACT_ROUTES = [
+  "agent0_deep",
+  "calculation_drive_candidates_need_selection",
+  "calculation_drive_source_not_found",
+  "calculation_drive_source_not_found_upstream_unavailable",
+  "gemini_file_search_calculation",
+  "local_business_data_boundary",
+  "local_internal_unavailable",
+  "local_missing_data",
+];
+const MISSING_SOURCE_WARNING_GROUPS = [
+  [
+    "chưa thấy bảng phù hợp",
+    "chưa đủ",
+    "không đủ nguồn",
+    "không đủ dữ liệu",
+    "thiếu nguồn",
+    "thiếu dữ liệu",
+    "không tìm thấy",
+  ],
+  ["nguồn", "dữ liệu", "file", "bảng", "hồ sơ"],
+];
+
+function internalCase(overrides) {
+  return {
+    forbiddenRoutes: INTERNAL_FORBIDDEN_ROUTES,
+    forbiddenWeb: true,
+    ...overrides,
+  };
+}
+
+function answerOrMissingSource({ name, requiredSignals = [], requiredFormula = false }) {
+  return {
+    name,
+    class: "source-state",
+    message:
+      "Expected either a grounded answer with required signals/evidence, or an explicit missing-source warning",
+    any: [
+      {
+        requiredSignals,
+        requiredEvidence: true,
+        ...(requiredFormula ? { requiredFormula: true } : {}),
+      },
+      {
+        requiredWarningsAny: MISSING_SOURCE_WARNING_GROUPS,
+      },
+    ],
+  };
+}
+
 const BUSINESS_EVAL_CASES = [
+  {
+    id: "business-source-missing-index-pending",
+    category: "business_finance",
+    input: "Quý gần nhất công ty đang lời hay lỗ? Nêu công thức và nguồn dữ liệu.",
+    expectedIntent: "profit_loss",
+    allowedRoutes: INTERNAL_FILE_ROUTES,
+    requiredFormula: true,
+    alternativeAssertionGroups: [
+      answerOrMissingSource({
+        name: "profit_loss_formula_with_source_or_missing_source",
+        requiredSignals: [/\b(lai|loi)\b/, /\blo\b/],
+        requiredFormula: true,
+      }),
+    ],
+    ...internalCase({}),
+  },
+  {
+    id: "business-finance-q1-profit-loss-by-contract",
+    category: "business_finance",
+    input: "Tính lãi/lỗ Quý 1 theo từng hợp đồng.",
+    expectedIntent: "profit_loss",
+    allowedRoutes: INTERNAL_FILE_ROUTES,
+    requiredFormula: true,
+    alternativeAssertionGroups: [
+      answerOrMissingSource({
+        name: "contract_profit_loss_formula_with_source_or_missing_source",
+        requiredSignals: ["hợp đồng", "quý 1"],
+        requiredFormula: true,
+      }),
+    ],
+    ...internalCase({}),
+  },
+  {
+    id: "business-finance-worst-loss-contract",
+    category: "business_finance",
+    input: "Hợp đồng nào đang lỗ nhất và vì sao?",
+    expectedIntent: "profit_loss",
+    allowedRoutes: INTERNAL_FILE_ROUTES,
+    alternativeAssertionGroups: [
+      answerOrMissingSource({
+        name: "worst_loss_contract_with_reason_or_missing_source",
+        requiredSignals: ["hợp đồng", "lỗ", /\b(vi|ly do|nguyen nhan)\b/],
+      }),
+    ],
+    ...internalCase({}),
+  },
+  {
+    id: "business-profit-loss-missing-cost",
+    category: "business_finance",
+    input: "Nếu thiếu dữ liệu chi phí, bạn có được kết luận hợp đồng đang lãi không?",
+    expectedIntent: "profit_loss",
+    allowedRoutes: ["local_business_data_boundary"],
+    requiredWarningsAny: [
+      ["thiếu dữ liệu chi phí", "thiếu chi phí", "thiếu dữ liệu giá vốn", "thiếu giá vốn"],
+      ["không được kết luận", "không thể kết luận", "chưa được kết luận", "không kết luận"],
+    ],
+    requiredFormula: true,
+    mustNotContainAny: [
+      /ket luan\s+(la|rang)\b.*\b(co lai|dang lai)\b/,
+      /\bdang co lai\b/,
+    ],
+    ...internalCase({}),
+  },
   {
     id: "business-inventory-rbc-per-warehouse",
     category: "business_inventory",
     input: "Hàng RBC còn tồn bao nhiêu ở từng kho?",
     expectedIntent: "inventory_analysis",
-    allowedRoutes: [
-      "local_inventory_filtered",
-      "calculation_drive_candidates_need_selection",
-      "calculation_drive_source_not_found",
-      "calculation_drive_source_not_found_upstream_unavailable",
-      "local_internal_unavailable",
-    ],
-    forbiddenRoutes: ["gemini_web_search", "gemini_web_offer"],
-    forbiddenWeb: true,
+    allowedRoutes: INVENTORY_ROUTES,
     requiredSignals: ["RBC"],
     requiredWarningsAny: [["kho", "vị trí kho", "warehouse", "chiều kho"]],
+    ...internalCase({}),
   },
   {
     id: "business-inventory-panasonic",
@@ -74,9 +240,8 @@ const BUSINESS_EVAL_CASES = [
     expectedIntent: "inventory_lookup",
     equivalentGroup: "panasonic-brand-lookup",
     allowedRoutes: ["local_inventory_filtered", "local_inventory_filter_not_found"],
-    forbiddenRoutes: ["gemini_web_search", "gemini_web_offer"],
-    forbiddenWeb: true,
     requiredSignals: ["panasonic"],
+    ...internalCase({}),
   },
   {
     id: "business-inventory-pananonic-typo",
@@ -85,9 +250,123 @@ const BUSINESS_EVAL_CASES = [
     expectedIntent: "inventory_lookup",
     equivalentGroup: "panasonic-brand-lookup",
     allowedRoutes: ["local_inventory_filtered", "local_inventory_filter_not_found"],
-    forbiddenRoutes: ["gemini_web_search", "gemini_web_offer"],
-    forbiddenWeb: true,
     requiredSignals: ["panasonic"],
+    ...internalCase({}),
+  },
+  {
+    id: "business-inventory-negative-or-below-minimum",
+    category: "business_inventory",
+    input: "Có mặt hàng nào âm kho hoặc dưới ngưỡng tối thiểu không?",
+    expectedIntent: "inventory_analysis",
+    allowedRoutes: INVENTORY_ROUTES,
+    alternativeAssertionGroups: [
+      answerOrMissingSource({
+        name: "inventory_risk_answer_or_missing_source",
+        requiredSignals: [/am kho|ton am/, /nguong toi thieu|duoi nguong|min/],
+      }),
+    ],
+    ...internalCase({}),
+  },
+  {
+    id: "business-inventory-stale-stock-warning",
+    category: "business_inventory",
+    input: "Nếu tồn kho chưa cập nhật hôm nay, bạn phải cảnh báo gì?",
+    expectedIntent: "inventory_analysis",
+    allowedRoutes: INVENTORY_ROUTES,
+    requiredWarningsAny: [
+      ["chưa cập nhật hôm nay", "không phải dữ liệu mới nhất", "dữ liệu tồn kho chưa cập nhật"],
+      ["cảnh báo", "không kết luận", "cần xác nhận", "kiểm tra lại"],
+    ],
+    ...internalCase({}),
+  },
+  {
+    id: "business-project-x-completion-status",
+    category: "business_project",
+    input: "Dự án X đã xong chưa?",
+    expectedIntent: "project_progress",
+    allowedRoutes: PROJECT_CONTRACT_ROUTES,
+    alternativeAssertionGroups: [
+      answerOrMissingSource({
+        name: "project_status_with_evidence_or_missing_source",
+        requiredSignals: ["dự án x"],
+      }),
+    ],
+    ...internalCase({}),
+  },
+  {
+    id: "business-project-x-deadline-delay-days",
+    category: "business_project",
+    input: "Dự án X trễ deadline bao nhiêu ngày?",
+    expectedIntent: "project_progress",
+    allowedRoutes: PROJECT_CONTRACT_ROUTES,
+    alternativeAssertionGroups: [
+      answerOrMissingSource({
+        name: "project_delay_days_with_evidence_or_missing_source",
+        requiredSignals: ["dự án x", "ngày"],
+      }),
+    ],
+    ...internalCase({}),
+  },
+  {
+    id: "business-project-x-unfinished-owner",
+    category: "business_project",
+    input: "Ai phụ trách hạng mục chưa xong của dự án X?",
+    expectedIntent: "project_progress",
+    allowedRoutes: PROJECT_CONTRACT_ROUTES,
+    alternativeAssertionGroups: [
+      answerOrMissingSource({
+        name: "unfinished_owner_with_evidence_or_missing_source",
+        requiredSignals: ["phụ trách", "chưa xong"],
+      }),
+    ],
+    ...internalCase({}),
+  },
+  {
+    id: "business-contract-complete-not-settled",
+    category: "business_contract",
+    input: "Hợp đồng nào đã hoàn thành nhưng chưa quyết toán?",
+    expectedIntent: "contract_status",
+    allowedRoutes: PROJECT_CONTRACT_ROUTES,
+    alternativeAssertionGroups: [
+      answerOrMissingSource({
+        name: "complete_unsettled_contracts_with_evidence_or_missing_source",
+        requiredSignals: ["hợp đồng", "chưa quyết toán"],
+      }),
+    ],
+    ...internalCase({}),
+  },
+  {
+    id: "business-cross-domain-brief-report",
+    category: "business_cross_domain",
+    input: "Tạo báo cáo ngắn gồm tài chính, tồn kho, tiến độ, rủi ro.",
+    expectedIntent: "risk_summary",
+    allowedRoutes: [...INTERNAL_FILE_ROUTES, ...INVENTORY_ROUTES, ...PROJECT_CONTRACT_ROUTES],
+    alternativeAssertionGroups: [
+      answerOrMissingSource({
+        name: "cross_domain_report_with_evidence_or_missing_source",
+        requiredSignals: ["tài chính", "tồn kho", "tiến độ", "rủi ro"],
+      }),
+    ],
+    ...internalCase({}),
+  },
+  {
+    id: "business-cross-domain-separate-known-missing-inferred",
+    category: "business_cross_domain",
+    input: "Hãy tách rõ dữ liệu chắc chắn, dữ liệu thiếu và suy luận.",
+    expectedIntent: "risk_summary",
+    allowedRoutes: [...INTERNAL_FILE_ROUTES, ...INVENTORY_ROUTES, ...PROJECT_CONTRACT_ROUTES],
+    requiredSignals: ["chắc chắn", "thiếu", "suy luận"],
+    ...internalCase({}),
+  },
+  {
+    id: "business-cross-domain-ask-max-three-profit-questions",
+    category: "business_cross_domain",
+    input: "Hỏi lại tôi tối đa 3 câu nếu chưa đủ dữ liệu tính lãi/lỗ.",
+    expectedIntent: "profit_loss",
+    allowedRoutes: INTERNAL_FILE_ROUTES,
+    requiredWarningsAny: [["thiếu", "chưa đủ", "cần"], ["lãi/lỗ", "lợi nhuận", "doanh thu"]],
+    maxQuestions: 3,
+    ...internalCase({}),
   },
   {
     id: "business-internal-toshiba-price-no-web",
@@ -101,70 +380,10 @@ const BUSINESS_EVAL_CASES = [
       "gemini_file_search_calculation",
       "gemini_spreadsheet_calculation",
     ],
-    forbiddenRoutes: ["gemini_web_search", "gemini_web_offer", "local_external_limit"],
-    forbiddenWeb: true,
     // If the app finds an internal spreadsheet/file, the proof is the cited file/sheet
     // and no-web route. Do not require a refusal phrase unless no source is found.
     requiredWarningsAny: [["file", "sheet", "dữ liệu nội bộ", "không trả giá lấy từ web", "không dùng giá thị trường", "không trả giá web"]],
-  },
-  {
-    id: "business-profit-loss-missing-cost",
-    category: "business_finance",
-    input: "Nếu thiếu dữ liệu chi phí, bạn có được kết luận hợp đồng đang lãi không?",
-    expectedIntent: "profit_loss",
-    allowedRoutes: ["local_business_data_boundary"],
-    forbiddenRoutes: ["gemini_web_search", "gemini_web_offer"],
-    forbiddenWeb: true,
-    requiredWarningsAny: [
-      ["thiếu dữ liệu chi phí", "thiếu chi phí", "thiếu dữ liệu giá vốn", "thiếu giá vốn"],
-      ["không được kết luận", "không thể kết luận", "chưa được kết luận", "không kết luận"],
-    ],
-    requiredFormula: true,
-    mustNotContainAny: [
-      /ket luan\s+(la|rang)\b.*\b(co lai|dang lai)\b/,
-      /\bdang co lai\b/,
-    ],
-  },
-  {
-    id: "business-source-missing-index-pending",
-    category: "business_source_state",
-    input: "Quý gần nhất công ty đang lời hay lỗ? Nêu công thức và nguồn dữ liệu.",
-    expectedIntent: "profit_loss",
-    allowedRoutes: [
-      "calculation_needs_data",
-      "calculation_drive_candidates_need_selection",
-      "calculation_drive_source_not_found",
-      "calculation_drive_source_not_found_upstream_unavailable",
-      "local_internal_unavailable",
-      "local_business_data_boundary",
-      "gemini_spreadsheet_calculation",
-    ],
-    forbiddenRoutes: ["gemini_web_search", "gemini_web_offer"],
-    forbiddenWeb: true,
-    alternativeAssertionGroups: [
-      {
-        name: "formula_or_explicit_missing_source",
-        class: "source-state",
-        message:
-          "Expected either a formula, or an explicit missing-source refusal with source/data warning",
-        any: [
-          { requiredFormula: true },
-          {
-            requiredWarningsAny: [
-              [
-                "chưa thấy bảng phù hợp",
-                "chưa đủ",
-                "không đủ nguồn",
-                "không đủ dữ liệu",
-                "thiếu nguồn",
-                "thiếu dữ liệu",
-              ],
-              ["nguồn", "dữ liệu", "file", "bảng"],
-            ],
-          },
-        ],
-      },
-    ],
+    ...internalCase({}),
   },
 ];
 
@@ -451,13 +670,17 @@ async function runCaseWithAuthRetry({
 }
 
 function resolveEvaluationCases(evaluationSet) {
-  const cases = Array.isArray(evaluationSet?.cases) ? [...evaluationSet.cases] : [];
+  const canonicalCases = Array.isArray(evaluationSet?.cases) ? [...evaluationSet.cases] : [];
 
-  if (process.env.CHAT_EVAL_BUSINESS !== "0") {
-    cases.push(...BUSINESS_EVAL_CASES);
+  if (casesMode === "canonical") {
+    return canonicalCases;
   }
 
-  return cases;
+  if (casesMode === "business") {
+    return [...BUSINESS_EVAL_CASES];
+  }
+
+  return [...canonicalCases, ...BUSINESS_EVAL_CASES];
 }
 
 function buildSummary(results) {

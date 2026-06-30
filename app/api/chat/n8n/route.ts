@@ -10,6 +10,7 @@ import {
   inferRouteHint,
   serializeErrorForClient,
 } from "@/lib/chat-observability";
+import { buildAnswerContractMetadata } from "@/lib/answer-contract";
 import { isTenantDatabaseBoundaryError } from "@/lib/db-runtime";
 import {
   buildFilteredInventoryResolution,
@@ -90,6 +91,7 @@ type RequestResolutionMeta = Record<string, unknown> & {
   webSearchProvider?: string;
   webSearchQueries?: string[];
   webSearchModel?: string;
+  toolProvider?: string;
 };
 
 function normalizeIntentText(value: string) {
@@ -1666,6 +1668,8 @@ export async function POST(req: NextRequest) {
   let queryPlan: ReturnType<typeof buildQueryPlan> | null = null;
   let sourcePlanPresent = false;
   let answerContractPresent = false;
+  let answerCandidateFileCount = 0;
+  let answerCalculationDriveSearched = false;
   const mark = (name: string, sinceMs: number) => {
     serverTiming.push({ name, durationMs: performance.now() - sinceMs });
   };
@@ -1677,6 +1681,40 @@ export async function POST(req: NextRequest) {
           answerContractPresent,
         }
       : {};
+  const buildResponseContract = (params: {
+    routeHint: string;
+    output?: string;
+    citations?: unknown;
+    responseEvidence?: unknown;
+    agent0ContextId?: string | null;
+    extraMeta?: Record<string, unknown>;
+  }) =>
+    buildAnswerContractMetadata({
+      queryPlan,
+      routeHint: params.routeHint,
+      output: params.output,
+      citations: params.citations,
+      responseEvidence: params.responseEvidence,
+      degradedFrom:
+        typeof params.extraMeta?.degradedFrom === "string"
+          ? params.extraMeta.degradedFrom
+          : undefined,
+      toolProvider:
+        typeof params.extraMeta?.toolProvider === "string"
+          ? params.extraMeta.toolProvider
+          : typeof params.extraMeta?.webSearchProvider === "string"
+            ? params.extraMeta.webSearchProvider
+          : undefined,
+      agent0ContextId: params.agent0ContextId,
+      calculationDriveSearched: answerCalculationDriveSearched,
+      candidateFileCount: answerCandidateFileCount,
+      sourcePlanPresent,
+      answerContractPresent,
+      toolExecutionProof:
+        typeof params.extraMeta?.toolExecutionProof === "boolean"
+          ? params.extraMeta.toolExecutionProof
+          : undefined,
+    });
   const jsonWithTelemetry = (
     body: Record<string, unknown>,
     status: number,
@@ -1691,6 +1729,7 @@ export async function POST(req: NextRequest) {
           requestId,
           durationMs,
           routeHint,
+          queryIntent: queryPlan?.intent ?? null,
           stagePlan: responseStagePlan,
           serverTiming,
           ...buildEvalDebugMeta(),
@@ -1950,6 +1989,18 @@ export async function POST(req: NextRequest) {
               typeof context?.routeHint === "string"
                 ? context.routeHint
                 : "duplicate_replay",
+            queryIntent:
+              typeof context?.queryIntent === "string" ? context.queryIntent : undefined,
+            verificationStatus:
+              typeof context?.verificationStatus === "string"
+                ? context.verificationStatus
+                : undefined,
+            evidence: Array.isArray(context?.evidence) ? context.evidence : undefined,
+            missingData: Array.isArray(context?.missingData) ? context.missingData : undefined,
+            warnings: Array.isArray(context?.warnings) ? context.warnings : undefined,
+            executionTrace: Array.isArray(context?.executionTrace)
+              ? context.executionTrace
+              : undefined,
             stage:
               typeof context?.stage === "string" ? context.stage : "completed",
           },
@@ -2165,7 +2216,18 @@ export async function POST(req: NextRequest) {
       extraContext: RequestResolutionMeta = {},
     ) => {
       const totalDurationMs = performance.now() - startedAt;
-      await persistAssistantResponse(resolution, extraContext);
+      const responseContract = buildResponseContract({
+        routeHint: resolution.routeHint,
+        output: resolution.output,
+        citations: resolution.citations,
+        extraMeta: extraContext,
+      });
+      const responseContext = {
+        ...responseContract,
+        queryIntent: queryPlan?.intent ?? null,
+        ...extraContext,
+      };
+      await persistAssistantResponse(resolution, responseContext);
 
       console.info("[chat-request-metric]", JSON.stringify({
         requestId,
@@ -2184,10 +2246,11 @@ export async function POST(req: NextRequest) {
         {
           output: resolution.output,
           citations: resolution.citations ?? [],
+          ...responseContract,
         },
         200,
         resolution.routeHint,
-        extraContext,
+        responseContext,
       );
     };
 
@@ -2407,8 +2470,10 @@ export async function POST(req: NextRequest) {
         calculationDriveSearched = true;
         const candidates = await resolveCalculationDriveCandidates(userContent, businessAnalysisPlan);
         calculationDriveCandidates = candidates;
+        answerCandidateFileCount = candidates.length;
+        answerCalculationDriveSearched = true;
 
-        if (!businessAnalysisPlan) {
+        if (!businessAnalysisPlan && !queryRoutingPolicy.useAgent0DeepLane) {
           const driveSpreadsheetResolution = await resolveDriveSpreadsheetCalculation({
             prompt: userContent,
             candidates,
@@ -2469,6 +2534,10 @@ export async function POST(req: NextRequest) {
       mark("calculation_file_search_store", fileSearchStoreStartedAt);
     }
 
+    const shouldUseAgent0DeepLane =
+      queryRoutingPolicy.useAgent0DeepLane &&
+      calculationDriveCandidates.length > 0;
+
     const recentConversationContext =
       requestType === "chat" && !hasAttachment && isFollowUpPrompt(userContent)
         ? buildRecentConversationContext(recentMessages)
@@ -2489,6 +2558,7 @@ export async function POST(req: NextRequest) {
       requestType === "chat" &&
       !hasAttachment &&
       calculationDriveContext.includes("[RAW_DRIVE_SPREADSHEET_CONTEXT_BEGIN]") &&
+      !shouldUseAgent0DeepLane &&
       geminiWebSearchEnabled
     ) {
       const geminiSpreadsheetStartedAt = performance.now();
@@ -2523,6 +2593,7 @@ export async function POST(req: NextRequest) {
       requestType === "chat" &&
       !hasAttachment &&
       calculationFileSearchStoreNames.length > 0 &&
+      !shouldUseAgent0DeepLane &&
       geminiWebSearchEnabled
     ) {
       const geminiFileSearchStartedAt = performance.now();
@@ -2563,7 +2634,8 @@ export async function POST(req: NextRequest) {
     if (
       requestType === "chat" &&
       !hasAttachment &&
-      queryRoutingPolicy.blockInternalPriceWebFallback
+      queryRoutingPolicy.blockInternalPriceWebFallback &&
+      !shouldUseAgent0DeepLane
     ) {
       return await persistAndReturnResolution(buildInternalPriceUnavailableResolution(), {
         spreadsheetCalculationUsed: false,
@@ -2668,6 +2740,15 @@ export async function POST(req: NextRequest) {
           ? "n8n_timeout"
           : "n8n_fetch_error";
       await persistAssistantResponse(degradedResolution, {
+        ...buildResponseContract({
+          routeHint: degradedResolution.routeHint,
+          output: degradedResolution.output,
+          citations: degradedResolution.citations,
+          extraMeta: {
+            degradedFrom: fallbackReason,
+          },
+        }),
+        queryIntent: queryPlan?.intent ?? null,
         degradedFrom: fallbackReason,
         degradedReason: serializeErrorForClient(error),
       });
@@ -2684,10 +2765,21 @@ export async function POST(req: NextRequest) {
         {
           output: degradedResolution.output,
           citations: degradedResolution.citations ?? [],
+          ...buildResponseContract({
+            routeHint: degradedResolution.routeHint,
+            output: degradedResolution.output,
+            citations: degradedResolution.citations,
+            extraMeta: {
+              degradedFrom: fallbackReason,
+            },
+          }),
         },
         200,
         degradedResolution.routeHint,
-        { degradedFrom: fallbackReason }
+        {
+          queryIntent: queryPlan?.intent ?? null,
+          degradedFrom: fallbackReason,
+        }
       );
     } finally {
       clearTimeout(n8nTimeoutId);
@@ -2705,6 +2797,15 @@ export async function POST(req: NextRequest) {
       });
       const totalDurationMs = performance.now() - startedAt;
       await persistAssistantResponse(degradedResolution, {
+        ...buildResponseContract({
+          routeHint: degradedResolution.routeHint,
+          output: degradedResolution.output,
+          citations: degradedResolution.citations,
+          extraMeta: {
+            degradedFrom: "n8n_non_ok",
+          },
+        }),
+        queryIntent: queryPlan?.intent ?? null,
         degradedFrom: "n8n_non_ok",
         degradedReason: `n8n responded with ${n8nResponse.status}: ${errText}`,
       });
@@ -2722,10 +2823,19 @@ export async function POST(req: NextRequest) {
         {
           output: degradedResolution.output,
           citations: degradedResolution.citations ?? [],
+          ...buildResponseContract({
+            routeHint: degradedResolution.routeHint,
+            output: degradedResolution.output,
+            citations: degradedResolution.citations,
+            extraMeta: {
+              degradedFrom: "n8n_non_ok",
+            },
+          }),
         },
         200,
         degradedResolution.routeHint,
         {
+          queryIntent: queryPlan?.intent ?? null,
           degradedFrom: "n8n_non_ok",
           upstreamStatus: n8nResponse.status,
         }
@@ -2760,6 +2870,32 @@ export async function POST(req: NextRequest) {
     });
     const agent0ContextId = readAgent0ContextId(normalizedData);
     const totalDurationMs = performance.now() - startedAt;
+    const responseEvidence =
+      Array.isArray(normalizedData.evidence)
+        ? normalizedData.evidence
+        : Array.isArray(normalizedData.sourceEvidence)
+          ? normalizedData.sourceEvidence
+          : Array.isArray(normalizedData.sources)
+            ? normalizedData.sources
+            : undefined;
+    const n8nResponseContract = buildResponseContract({
+      routeHint,
+      output: aiContent,
+      citations,
+      responseEvidence,
+      agent0ContextId,
+      extraMeta: {
+        toolProvider: "n8n",
+        webSearchUsed:
+          typeof normalizedData.webSearchUsed === "boolean"
+            ? normalizedData.webSearchUsed
+            : undefined,
+        webSearchProvider:
+          typeof normalizedData.webSearchProvider === "string"
+            ? normalizedData.webSearchProvider
+            : undefined,
+      },
+    });
 
     if (
       requestType === "chat" &&
@@ -2809,6 +2945,8 @@ export async function POST(req: NextRequest) {
               stage: "completed",
               durationMs: totalDurationMs,
               citations: Array.isArray(citations) ? citations : [],
+              queryIntent: queryPlan?.intent ?? null,
+              ...n8nResponseContract,
               ...(agent0ContextId ? { agent0ContextId } : {}),
             },
           }
@@ -2834,7 +2972,12 @@ export async function POST(req: NextRequest) {
       outcome: "ok",
     }));
 
-    return jsonWithTelemetry(normalizedData, 200, routeHint, {
+    return jsonWithTelemetry({
+      ...normalizedData,
+      ...n8nResponseContract,
+    }, 200, routeHint, {
+      queryIntent: queryPlan?.intent ?? null,
+      ...n8nResponseContract,
       ...(agent0ContextId ? { agent0ContextId } : {}),
     });
 

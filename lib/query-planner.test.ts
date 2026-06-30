@@ -39,6 +39,7 @@ test("multi-domain short report routes to risk summary before single-domain rout
     needsInternalFileAnalysis: true,
     blockInternalPriceWebFallback: false,
     useInventoryBusinessFallback: false,
+    useAgent0DeepLane: true,
   });
 });
 
@@ -63,6 +64,7 @@ test("profit/loss with revenue, cost, and cost basis routes before price lookup"
   assert.ok(plan.sourceRequirements.includes("cost"));
   assert.equal(buildQueryRoutingPolicy(plan).needsInternalFileAnalysis, true);
   assert.equal(buildQueryRoutingPolicy(plan).blockInternalPriceWebFallback, false);
+  assert.equal(buildQueryRoutingPolicy(plan).useAgent0DeepLane, true);
 });
 
 test("RBC stock question produces inventory lookup with model entity", () => {
@@ -90,6 +92,7 @@ test("per-warehouse RBC stock question includes warehouse dimension requirement"
   assert.ok(plan.sourceRequirements.includes("warehouse_dimension"));
   assert.ok(plan.blockedFallbacks.includes("web_search"));
   assert.equal(buildQueryRoutingPolicy(plan).useInventoryBusinessFallback, true);
+  assert.equal(buildQueryRoutingPolicy(plan).useAgent0DeepLane, false);
 });
 
 test("internal Toshiba price blocks web", () => {
@@ -110,6 +113,7 @@ test("internal Toshiba price remains a price lookup", () => {
   assert.ok(plan.blockedFallbacks.includes("web_search"));
   assert.equal(buildQueryRoutingPolicy(plan).needsInternalFileAnalysis, true);
   assert.equal(buildQueryRoutingPolicy(plan).blockInternalPriceWebFallback, true);
+  assert.equal(buildQueryRoutingPolicy(plan).useAgent0DeepLane, true);
 });
 
 test("internal Toshiba price with market-price ban stays internal and no-web", () => {
@@ -132,6 +136,7 @@ test("profit/loss requires revenue and cost", () => {
   assert.ok(plan.sourceRequirements.includes("cost"));
   assert.ok(plan.answerContract.includes("do_not_conclude_profit_without_cost"));
   assert.ok(plan.blockedFallbacks.includes("web_search"));
+  assert.equal(buildQueryRoutingPolicy(plan).useAgent0DeepLane, true);
 });
 
 test("public market question allows web", () => {

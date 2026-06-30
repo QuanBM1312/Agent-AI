@@ -205,6 +205,22 @@ export async function GET(request: Request) {
                   typeof context.webSearchPendingPrompt === "string"
                     ? context.webSearchPendingPrompt
                     : undefined,
+                verificationStatus:
+                  typeof context.verificationStatus === "string"
+                    ? context.verificationStatus
+                    : undefined,
+                evidence: Array.isArray(context.evidence)
+                  ? context.evidence
+                  : undefined,
+                missingData: Array.isArray(context.missingData)
+                  ? context.missingData
+                  : undefined,
+                warnings: Array.isArray(context.warnings)
+                  ? context.warnings
+                  : undefined,
+                executionTrace: Array.isArray(context.executionTrace)
+                  ? context.executionTrace
+                  : undefined,
               }
             : undefined,
       };

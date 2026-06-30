@@ -90,6 +90,21 @@ export function buildKnowledgeSourceState(
     };
   }
 
+  if (metadataSaved && !driveVisible && !vectorIndexed) {
+    return {
+      driveVisible,
+      metadataSaved,
+      vectorIndexed,
+      rawReadable,
+      rawReadChecked,
+      n8nIngested,
+      usableForCalculation: false,
+      usableForRag: false,
+      status: "metadata_only",
+      statusMessage: "Chi co metadata, chua xac minh Drive/index.",
+    };
+  }
+
   if (metadataSaved && !vectorIndexed) {
     return {
       driveVisible,

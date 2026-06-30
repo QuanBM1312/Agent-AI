@@ -25,6 +25,13 @@ import {
 } from "@/lib/chat-observability"
 import { ChatRequestStatus } from "@/components/chat-request-status"
 import { ChatTelemetryPanel } from "@/components/chat-telemetry-panel"
+import type {
+  EvidenceKind,
+  EvidenceItem,
+  ExecutionTraceEvent,
+  MissingDataItem,
+  VerificationStatus,
+} from "@/lib/answer-contract"
 
 // --- 1. Types Definition ---
 type Role = "user" | "assistant"
@@ -33,12 +40,18 @@ interface MessageRequestMeta {
   requestId: string
   durationMs?: number
   routeHint?: string
+  queryIntent?: string
   stage?: ChatStageKey
   agent0ContextId?: string
   webSearchUsed?: boolean
   webSearchProvider?: string
   webSearchPendingPrompt?: string
   degradedFrom?: string
+  verificationStatus?: VerificationStatus
+  evidence?: EvidenceItem[]
+  missingData?: MissingDataItem[]
+  warnings?: string[]
+  executionTrace?: ExecutionTraceEvent[]
 }
 
 interface Message {
@@ -68,6 +81,144 @@ interface MarkdownCodeProps extends ComponentPropsWithoutRef<"code"> {
   children?: ReactNode
 }
 
+const verificationLabels: Record<VerificationStatus, { label: string; className: string }> = {
+  verified: {
+    label: "Đã xác minh",
+    className: "border-emerald-300 bg-emerald-50 text-emerald-700",
+  },
+  partial: {
+    label: "Một phần",
+    className: "border-amber-300 bg-amber-50 text-amber-700",
+  },
+  missing: {
+    label: "Thiếu nguồn",
+    className: "border-orange-300 bg-orange-50 text-orange-700",
+  },
+  tool_unavailable: {
+    label: "Tool lỗi",
+    className: "border-rose-300 bg-rose-50 text-rose-700",
+  },
+  unverified: {
+    label: "Chưa xác minh",
+    className: "border-slate-300 bg-slate-50 text-slate-700",
+  },
+}
+
+function isVerificationStatus(value: unknown): value is VerificationStatus {
+  return (
+    value === "verified" ||
+    value === "partial" ||
+    value === "missing" ||
+    value === "tool_unavailable" ||
+    value === "unverified"
+  )
+}
+
+function isEvidenceKind(value: unknown): value is EvidenceKind {
+  return (
+    value === "db" ||
+    value === "drive_file" ||
+    value === "spreadsheet_row" ||
+    value === "vector_chunk" ||
+    value === "n8n" ||
+    value === "agent0" ||
+    value === "web"
+  )
+}
+
+function sanitizeEvidence(value: unknown): EvidenceItem[] | undefined {
+  if (!Array.isArray(value)) {
+    return undefined
+  }
+
+  const evidence = value
+    .map((item): EvidenceItem | null => {
+      if (typeof item !== "object" || item === null) {
+        return null
+      }
+
+      const record = item as Record<string, unknown>
+      const kind = record.kind
+      const sourceName = typeof record.sourceName === "string" ? record.sourceName.trim() : ""
+      const confidence = record.confidence
+
+      if (!isEvidenceKind(kind) || !sourceName) {
+        return null
+      }
+
+      return {
+        kind,
+        sourceName: sourceName.slice(0, 160),
+        fileId: typeof record.fileId === "string" ? record.fileId.slice(0, 64) : undefined,
+        sheet: typeof record.sheet === "string" ? record.sheet.slice(0, 80) : undefined,
+        row: typeof record.row === "number" && Number.isFinite(record.row) ? record.row : undefined,
+        dbTable: typeof record.dbTable === "string" ? record.dbTable.slice(0, 120) : undefined,
+        field: typeof record.field === "string" ? record.field.slice(0, 80) : undefined,
+        confidence:
+          confidence === "low" || confidence === "medium" || confidence === "high"
+            ? confidence
+            : "low",
+      }
+    })
+    .filter((item): item is EvidenceItem => Boolean(item))
+
+  return evidence.length > 0 ? evidence : undefined
+}
+
+function shortenIdentifier(value: string) {
+  return value.length <= 16 ? value : `${value.slice(0, 8)}...${value.slice(-4)}`
+}
+
+function readRequestMeta(raw: unknown): MessageRequestMeta | undefined {
+  if (
+    typeof raw !== "object" ||
+    raw === null ||
+    typeof (raw as Record<string, unknown>).requestId !== "string"
+  ) {
+    return undefined
+  }
+
+  const meta = raw as Record<string, unknown>
+  return {
+    requestId: meta.requestId as string,
+    durationMs: typeof meta.durationMs === "number" ? meta.durationMs : undefined,
+    routeHint: typeof meta.routeHint === "string" ? meta.routeHint : undefined,
+    queryIntent: typeof meta.queryIntent === "string" ? meta.queryIntent : undefined,
+    stage: typeof meta.stage === "string" ? (meta.stage as ChatStageKey) : undefined,
+    agent0ContextId:
+      typeof meta.agent0ContextId === "string" ? meta.agent0ContextId : undefined,
+    webSearchUsed:
+      typeof meta.webSearchUsed === "boolean" ? meta.webSearchUsed : undefined,
+    webSearchProvider:
+      typeof meta.webSearchProvider === "string" ? meta.webSearchProvider : undefined,
+    webSearchPendingPrompt:
+      typeof meta.webSearchPendingPrompt === "string" ? meta.webSearchPendingPrompt : undefined,
+    degradedFrom:
+      typeof meta.degradedFrom === "string" ? meta.degradedFrom : undefined,
+    verificationStatus:
+      isVerificationStatus(meta.verificationStatus) ? meta.verificationStatus : undefined,
+    evidence: sanitizeEvidence(meta.evidence),
+    missingData: Array.isArray(meta.missingData)
+      ? (meta.missingData as MissingDataItem[])
+      : undefined,
+    warnings: Array.isArray(meta.warnings)
+      ? meta.warnings.filter((warning): warning is string => typeof warning === "string")
+      : undefined,
+    executionTrace: Array.isArray(meta.executionTrace)
+      ? (meta.executionTrace as ExecutionTraceEvent[])
+      : undefined,
+  }
+}
+
+function ContractBadge({ status }: { status: VerificationStatus }) {
+  const config = verificationLabels[status] || verificationLabels.unverified
+  return (
+    <span className={`rounded-full border px-2 py-0.5 text-[10px] font-medium ${config.className}`}>
+      {config.label}
+    </span>
+  )
+}
+
 // --- 2. Sub-components ---
 
 // Component: Hiển thị một tin nhắn
@@ -77,12 +228,17 @@ function MessageItem({ message }: { message: Message }) {
   const offeredGeminiWebSearch =
     isAI && message.requestMeta?.routeHint === "gemini_web_offer"
   const routeHint = message.requestMeta?.routeHint || ""
+  const verificationStatus = message.requestMeta?.verificationStatus
   const needsData =
     isAI &&
     (Boolean(message.requestMeta?.degradedFrom) ||
       routeHint === "calculation_needs_data" ||
       routeHint === "local_internal_unavailable" ||
       routeHint === "local_business_data_boundary")
+  const trace = message.requestMeta?.executionTrace || []
+  const evidence = message.requestMeta?.evidence || []
+  const missingData = message.requestMeta?.missingData || []
+  const warnings = message.requestMeta?.warnings || []
 
   // Cấu hình màu sắc khác nhau cho AI (nền sáng) và User (nền màu)
   const components: Components = {
@@ -139,6 +295,7 @@ function MessageItem({ message }: { message: Message }) {
               Có thể tìm web
             </span>
           )}
+          {verificationStatus && <ContractBadge status={verificationStatus} />}
           {needsData && (
             <span className="rounded-full border border-orange-300 bg-orange-50 px-2 py-0.5 text-[10px] font-medium text-orange-700">
               Cần dữ liệu xác minh
@@ -201,6 +358,68 @@ function MessageItem({ message }: { message: Message }) {
             )}
             {message.requestMeta.webSearchProvider && (
               <span> • {message.requestMeta.webSearchProvider}</span>
+            )}
+            {message.requestMeta.queryIntent && (
+              <span> • {message.requestMeta.queryIntent}</span>
+            )}
+            {(trace.length > 0 || evidence.length > 0 || missingData.length > 0 || warnings.length > 0) && (
+              <details className="mt-2 rounded-md border border-border/50 bg-background/40 p-2">
+                <summary className="cursor-pointer select-none font-medium text-foreground/70">
+                  Trace và dữ liệu
+                </summary>
+                {evidence.length > 0 && (
+                  <div className="mt-2">
+                    <p className="font-semibold text-foreground/70">Bằng chứng:</p>
+                    <ul className="mt-1 list-disc pl-4">
+                      {evidence.map((item, index) => (
+                        <li key={`${item.kind}-${item.sourceName}-${index}`}>
+                          {item.kind}: {item.sourceName}
+                          {item.sheet ? ` / sheet ${item.sheet}` : ""}
+                          {typeof item.row === "number" ? ` / dòng ${item.row}` : ""}
+                          {item.dbTable ? ` / ${item.dbTable}` : ""}
+                          {item.fileId ? ` / file ${shortenIdentifier(item.fileId)}` : ""}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+                {missingData.length > 0 && (
+                  <div className="mt-2">
+                    <p className="font-semibold text-foreground/70">Thiếu:</p>
+                    <ul className="mt-1 list-disc pl-4">
+                      {missingData.map((item, index) => (
+                        <li key={`${item.field}-${index}`}>
+                          {item.field}: {item.reason}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+                {warnings.length > 0 && (
+                  <div className="mt-2">
+                    <p className="font-semibold text-foreground/70">Cảnh báo:</p>
+                    <ul className="mt-1 list-disc pl-4">
+                      {warnings.map((warning, index) => (
+                        <li key={`${warning}-${index}`}>{warning}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+                {trace.length > 0 && (
+                  <div className="mt-2">
+                    <p className="font-semibold text-foreground/70">Các bước:</p>
+                    <ol className="mt-1 list-decimal pl-4">
+                      {trace.map((event, index) => (
+                        <li key={`${event.step}-${index}`}>
+                          {event.step}: {event.status}
+                          {event.routeHint ? ` (${event.routeHint})` : ""}
+                          {event.detail ? ` - ${event.detail}` : ""}
+                        </li>
+                      ))}
+                    </ol>
+                  </div>
+                )}
+              </details>
             )}
           </div>
         )}
@@ -303,46 +522,7 @@ export function ChatInterface({ activeSessionId, onMessageSent }: ChatInterfaceP
                 fileType === "image" || fileType === "voice"
                   ? fileType
                   : undefined,
-              requestMeta:
-                typeof messageLike.requestMeta === "object" &&
-                messageLike.requestMeta !== null &&
-                typeof (messageLike.requestMeta as Record<string, unknown>).requestId === "string"
-                  ? {
-                      requestId: (messageLike.requestMeta as Record<string, string>).requestId,
-                      durationMs:
-                        typeof (messageLike.requestMeta as Record<string, unknown>).durationMs === "number"
-                          ? ((messageLike.requestMeta as Record<string, unknown>).durationMs as number)
-                          : undefined,
-                      routeHint:
-                        typeof (messageLike.requestMeta as Record<string, unknown>).routeHint === "string"
-                          ? ((messageLike.requestMeta as Record<string, unknown>).routeHint as string)
-                          : undefined,
-                      stage:
-                        typeof (messageLike.requestMeta as Record<string, unknown>).stage === "string"
-                          ? ((messageLike.requestMeta as Record<string, unknown>).stage as ChatStageKey)
-                          : undefined,
-                      agent0ContextId:
-                        typeof (messageLike.requestMeta as Record<string, unknown>).agent0ContextId === "string"
-                          ? ((messageLike.requestMeta as Record<string, unknown>).agent0ContextId as string)
-                          : undefined,
-                      webSearchUsed:
-                        typeof (messageLike.requestMeta as Record<string, unknown>).webSearchUsed === "boolean"
-                          ? ((messageLike.requestMeta as Record<string, unknown>).webSearchUsed as boolean)
-                          : undefined,
-                      webSearchProvider:
-                        typeof (messageLike.requestMeta as Record<string, unknown>).webSearchProvider === "string"
-                          ? ((messageLike.requestMeta as Record<string, unknown>).webSearchProvider as string)
-                          : undefined,
-                      webSearchPendingPrompt:
-                        typeof (messageLike.requestMeta as Record<string, unknown>).webSearchPendingPrompt === "string"
-                          ? ((messageLike.requestMeta as Record<string, unknown>).webSearchPendingPrompt as string)
-                          : undefined,
-                      degradedFrom:
-                        typeof (messageLike.requestMeta as Record<string, unknown>).degradedFrom === "string"
-                          ? ((messageLike.requestMeta as Record<string, unknown>).degradedFrom as string)
-                          : undefined,
-                    }
-                  : undefined,
+              requestMeta: readRequestMeta(messageLike.requestMeta),
             } satisfies Message
           })
           const latestAssistantWithContext = [...normalizedMessages]
@@ -676,6 +856,28 @@ export function ChatInterface({ activeSessionId, onMessageSent }: ChatInterfaceP
         typeof meta?.webSearchPendingPrompt === "string" ? meta.webSearchPendingPrompt : undefined
       const degradedFrom =
         typeof meta?.degradedFrom === "string" ? meta.degradedFrom : undefined
+      const verificationStatus =
+        isVerificationStatus(data.verificationStatus)
+          ? data.verificationStatus
+          : isVerificationStatus(meta?.verificationStatus)
+            ? meta.verificationStatus
+            : undefined
+      const evidence = sanitizeEvidence(data.evidence) || sanitizeEvidence(meta?.evidence)
+      const missingData = Array.isArray(data.missingData)
+        ? (data.missingData as MissingDataItem[])
+        : Array.isArray(meta?.missingData)
+          ? (meta.missingData as MissingDataItem[])
+          : undefined
+      const warnings = Array.isArray(data.warnings)
+        ? (data.warnings as unknown[]).filter((warning: unknown): warning is string => typeof warning === "string")
+        : Array.isArray(meta?.warnings)
+          ? (meta.warnings as unknown[]).filter((warning: unknown): warning is string => typeof warning === "string")
+          : undefined
+      const executionTrace = Array.isArray(data.executionTrace)
+        ? (data.executionTrace as ExecutionTraceEvent[])
+        : Array.isArray(meta?.executionTrace)
+          ? (meta.executionTrace as ExecutionTraceEvent[])
+          : undefined
 
       if (routeHint === "duplicate_inflight" || routeHint === "duplicate_replay") {
         await refreshMessages()
@@ -703,6 +905,11 @@ export function ChatInterface({ activeSessionId, onMessageSent }: ChatInterfaceP
           webSearchProvider,
           webSearchPendingPrompt,
           degradedFrom,
+          verificationStatus,
+          evidence,
+          missingData,
+          warnings,
+          executionTrace,
         },
       }
 
