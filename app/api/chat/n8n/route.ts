@@ -552,9 +552,9 @@ async function resolveInventoryDbCalculation(prompt: string): Promise<LocalChatR
         (negativeItems.length > 5 ? ", ..." : "") + ")."
       : "Không thấy mặt hàng âm kho trong dữ liệu hiện tại.",
     lowItems.length > 0
-      ? "Mặt hàng dưới/ngang ngưỡng 5: " +
+      ? "Mặt hàng dưới ngưỡng tối thiểu hoặc bằng ngưỡng 5: " +
         lowItems.map((item) => item.name + ": " + item.currentStock.toLocaleString("vi-VN") + " " + item.unit).join("; ") + "."
-      : "Không thấy mặt hàng nào ở ngưỡng thấp <= 5 trong dữ liệu hiện tại.",
+      : "Không thấy mặt hàng nào dưới ngưỡng tối thiểu <= 5 trong dữ liệu hiện tại.",
   ];
 
   return {
