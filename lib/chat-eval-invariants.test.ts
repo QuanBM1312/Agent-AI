@@ -43,6 +43,29 @@ test("warning groups accept equivalent wording instead of brittle exact prose", 
   });
 });
 
+test("warning groups include response warning contract, not only body text", () => {
+  const evaluated = evaluateChatEvalCase(
+    result("Tôi chưa tìm thấy giá cụ thể trong các file được cung cấp.", {
+      responseBody: {
+        output: "Tôi chưa tìm thấy giá cụ thể trong các file được cung cấp.",
+        warnings: [
+          "Web fallback is blocked for this internal business prompt.",
+          "Drive visibility is not treated as indexed or calculation-ready evidence.",
+        ],
+      },
+    }),
+    {
+      id: "warning-contract",
+      requiredWarningsAny: [
+        ["không trả giá lấy từ web", "không dùng giá thị trường", "web fallback is blocked"],
+        ["drive visibility", "dữ liệu nội bộ", "file"],
+      ],
+    },
+  );
+
+  assert.equal(evaluated.ok, true);
+});
+
 test("expected intent is only pass/fail when response metadata exposes it", () => {
   const pending = evaluateChatEvalCase(result("Có dữ liệu nội bộ."), {
     id: "pending-intent",

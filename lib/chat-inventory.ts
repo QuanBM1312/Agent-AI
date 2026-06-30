@@ -54,6 +54,8 @@ export function extractInventoryLookupTerms(prompt: string) {
     "hang ton",
     "hien",
     "hien tai",
+    "hoac",
+    "khong",
     "kho",
     "kho hang",
     "la",

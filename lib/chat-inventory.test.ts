@@ -61,6 +61,13 @@ test("warehouse report wording does not become a product-name filter", () => {
   );
 });
 
+test("inventory risk wording does not become a product-name filter", () => {
+  assert.deepEqual(
+    extractInventoryLookupTerms("Có mặt hàng nào âm kho hoặc dưới ngưỡng tối thiểu không?"),
+    [],
+  );
+});
+
 test("filtered inventory answers product-family count instead of global stock summary", () => {
   const res = buildFilteredInventoryResolution({
     prompt: "Trong tồn kho điều khiển RBC có bao nhiêu loại?",
