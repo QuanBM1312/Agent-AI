@@ -167,6 +167,53 @@ test("public market question allows web", () => {
   assert.ok(!plan.blockedFallbacks.includes("web_search"));
 });
 
+test("technical error-code questions route to internal manuals, not general chat", () => {
+  const plan = buildQueryPlan("Mã lỗi SMMSi E19 xử lý thế nào?");
+
+  assert.equal(plan.intent, "technical_support");
+  assert.ok(plan.sourceRequirements.includes("technical_manual"));
+  assert.ok(plan.allowedTools.includes("drive_file_search"));
+  assert.ok(plan.blockedFallbacks.includes("web_search"));
+  assert.equal(buildQueryRoutingPolicy(plan).useAgent0DeepLane, true);
+});
+
+test("installation and operation questions route to technical support", () => {
+  const plan = buildQueryPlan("Hướng dẫn lắp đặt và cài đặt chạy máy VRF Toshiba");
+
+  assert.equal(plan.intent, "technical_support");
+  assert.ok(plan.sourceRequirements.includes("installation_guide"));
+  assert.equal(buildQueryRoutingPolicy(plan).needsInternalFileAnalysis, true);
+});
+
+test("maintenance and warranty procedures route to internal documents", () => {
+  const maintenance = buildQueryPlan("Quy trình bảo trì bảo dưỡng điều hòa cục bộ định kỳ như thế nào?");
+  const warranty = buildQueryPlan("Quy trình bảo hành sản phẩm cần làm gì?");
+
+  assert.equal(maintenance.intent, "maintenance_warranty");
+  assert.ok(maintenance.sourceRequirements.includes("maintenance_procedure"));
+  assert.equal(warranty.intent, "maintenance_warranty");
+  assert.ok(warranty.sourceRequirements.includes("warranty_policy"));
+});
+
+test("sales process and customer care scripts route to internal sales process", () => {
+  const plan = buildQueryPlan("Quy trình xử lý đơn hàng và kịch bản chăm sóc khách hàng là gì?");
+
+  assert.equal(plan.intent, "sales_process");
+  assert.ok(plan.sourceRequirements.includes("sales_process_doc"));
+  assert.ok(plan.sourceRequirements.includes("customer_data"));
+  assert.equal(buildQueryRoutingPolicy(plan).useAgent0DeepLane, true);
+});
+
+test("company profile and policy questions route to company policy", () => {
+  const profile = buildQueryPlan("Hồ sơ năng lực công ty Thăng Long gồm những gì?");
+  const policy = buildQueryPlan("Quy chế tài chính và quỹ công đoàn quy định thế nào?");
+
+  assert.equal(profile.intent, "company_policy");
+  assert.equal(policy.intent, "company_policy");
+  assert.ok(profile.sourceRequirements.includes("company_policy_doc"));
+  assert.ok(policy.blockedFallbacks.includes("web_search"));
+});
+
 test("n8n source-plan payload emits risk summary multi-source contract", () => {
   const queryPlan = buildQueryPlan("Tạo báo cáo ngắn gồm: tài chính, tồn kho, tiến độ, rủi ro.");
   const payload = buildN8nSourcePlanPayload({

@@ -18,6 +18,16 @@ export type SourceDomain =
   | "contract"
   | "report"
   | "customer"
+  | "technical"
+  | "installation"
+  | "maintenance"
+  | "warranty"
+  | "error_code"
+  | "sales_process"
+  | "company_profile"
+  | "policy"
+  | "hr"
+  | "service_job"
   | "unknown";
 
 export type SourceCatalogOrigin =
@@ -145,6 +155,46 @@ export function classifySourceDomains(input: {
     domains.add("customer");
   }
 
+  if (/\b(ky thuat|technical|vrf|smms|svm|service manual|quick reference|pcb|gateway|ma loi|bang tra cuu ma loi|error code|sua chua|thay bo mach|thay may nen|thu hoi ga)\b/.test(text)) {
+    domains.add("technical");
+  }
+
+  if (/\b(lap dat|cai dat|chay may|van hanh|address setup|installation|operation|install)\b/.test(text)) {
+    domains.add("installation");
+  }
+
+  if (/\b(bao tri|bao duong|dinh ky|check list|checklist|dung cu|maintenance)\b/.test(text)) {
+    domains.add("maintenance");
+  }
+
+  if (/\b(bao hanh|bh san pham|warranty)\b/.test(text)) {
+    domains.add("warranty");
+  }
+
+  if (/\b(ma loi|bang tra cuu ma loi|error code|quick reference|service manual|svm|smms|pcb)\b/.test(text)) {
+    domains.add("error_code");
+  }
+
+  if (/\b(quy trinh ban hang|xu ly don hang|kich ban cham soc|lien he khach hang|dam phan|sale process|sales process|sales?|kinh doanh)\b/.test(text)) {
+    domains.add("sales_process");
+  }
+
+  if (/\b(ho so nang luc|profile|company profile|so do to chuc|organization chart|to chuc cong ty)\b/.test(text)) {
+    domains.add("company_profile");
+  }
+
+  if (/\b(quy che|chinh sach|cong doan|policy|regulation|hcns)\b/.test(text)) {
+    domains.add("policy");
+  }
+
+  if (/\b(hcns|nhan su|hanh chinh|cong doan|hr|human resources)\b/.test(text)) {
+    domains.add("hr");
+  }
+
+  if (/\b(lich hen|cong viec ky thuat|bao cao ky thuat|job|service job|technician)\b/.test(text)) {
+    domains.add("service_job");
+  }
+
   return domains.size > 0 ? Array.from(domains) : ["unknown"];
 }
 
@@ -154,7 +204,7 @@ export function classifyPriceSourceKind(input: {
   pathHint?: string | null;
 }) {
   const text = sourceCatalogText([input.name, input.fileSearchName, input.pathHint].filter(Boolean).join(" "));
-  if (/\b(gia dich vu|dich vu|vat tu|service|materials? and services?)\b/.test(text)) {
+  if (/\b(gia dich vu|dich vu|vat tu|service|materials? and services?|sua chua|bao duong|bao tri|lap dat nho le)\b/.test(text)) {
     return "service_price" as const;
   }
   if (/\b(bang gia|bao gia|phieu tinh gia|niem yet|don gia|quote|quotation|product price|pricing)\b/.test(text)) {

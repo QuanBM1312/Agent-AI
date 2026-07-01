@@ -19,6 +19,40 @@ test("classifies business source domains from names and paths", () => {
   assert.ok(classifySourceDomains({ name: "Hợp đồng nghiệm thu và quyết toán.xlsx" }).includes("contract"));
 });
 
+test("classifies real Drive technical, sales, and company folders", () => {
+  assert.deepEqual(
+    classifySourceDomains({
+      name: "KỸ THUẬT/Bảng tra cứu mã lỗi/SMMSi Error Code Quick Reference.pdf",
+      pathHint: "KỸ THUẬT/Bảng tra cứu mã lỗi/SMMSi Error Code Quick Reference.pdf",
+    }),
+    ["technical", "error_code"],
+  );
+  assert.ok(
+    classifySourceDomains({
+      name: "KỸ THUẬT/Hướng dẫn lắp đặt và vận hành/TLE-LAP ĐẶT.xlsx",
+      pathHint: "KỸ THUẬT/Hướng dẫn lắp đặt và vận hành/TLE-LAP ĐẶT.xlsx",
+    }).includes("installation"),
+  );
+  assert.ok(
+    classifySourceDomains({
+      name: "KỸ THUẬT/Quy trình BT định kỳ/D5. QUY TRÌNH BẢO TRÌ , BẢO DƯỠNG ĐIỀU HÒA CỤC BỘ ĐỊNH KỲ.docx",
+      pathHint: "KỸ THUẬT/Quy trình BT định kỳ/D5. QUY TRÌNH BẢO TRÌ , BẢO DƯỠNG ĐIỀU HÒA CỤC BỘ ĐỊNH KỲ.docx",
+    }).includes("maintenance"),
+  );
+  assert.ok(
+    classifySourceDomains({
+      name: "SALE/QT.SA.01-Quy trình bán hàng Kinh doanh.docx",
+      pathHint: "SALE/QT.SA.01-Quy trình bán hàng Kinh doanh.docx",
+    }).includes("sales_process"),
+  );
+  assert.ok(
+    classifySourceDomains({
+      name: "HCNS/HỒ SƠ NĂNG LỰC THĂNG LONG MỚI NHẤT T4.2025.pdf",
+      pathHint: "HCNS/HỒ SƠ NĂNG LỰC THĂNG LONG MỚI NHẤT T4.2025.pdf",
+    }).includes("company_profile"),
+  );
+});
+
 test("distinguishes product price files from service price files", () => {
   assert.equal(
     classifyPriceSourceKind({ name: "Phiếu tính giá điều hòa Toshiba.xlsx" }),
@@ -26,6 +60,10 @@ test("distinguishes product price files from service price files", () => {
   );
   assert.equal(
     classifyPriceSourceKind({ name: "materials and services - giá dịch vụ.xlsx" }),
+    "service_price",
+  );
+  assert.equal(
+    classifyPriceSourceKind({ name: "050924_BẢNG GIÁ NIÊM YẾT SỬA CHỮA, BẢO DƯỠNG, LẮP ĐẶT NHỎ LẺ.xlsx" }),
     "service_price",
   );
 });

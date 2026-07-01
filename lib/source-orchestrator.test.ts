@@ -206,3 +206,58 @@ test("route policy sends risk summary multi-domain candidates to Agent0", () => 
   assert.equal(probe.outgoingCandidates.length, 3);
   assert.ok(probe.outgoingCandidates.some((candidate: { expectedUse?: string }) => candidate.expectedUse === "risk_summary"));
 });
+
+test("route policy sends technical error-code candidates to Agent0", () => {
+  const probe = buildRouteProbe("Mã lỗi SMMSi E19 xử lý thế nào?", [
+    {
+      driveFileId: "err-smms",
+      driveName: "KỸ THUẬT/Bảng tra cứu mã lỗi/SMMSi Error Code Quick Reference.pdf",
+      source: "drive_fallback",
+    },
+  ]);
+
+  assert.equal(probe.plan.intent, "technical_support");
+  assert.equal(probe.decision.recommendedLane, "agent0_deep");
+  assert.equal(probe.routePolicy.shouldUseAgent0DeepLane, true);
+  assert.equal(probe.outgoingCandidates[0].expectedUse, "technical_support");
+  assert.ok(probe.outgoingCandidates[0].likelyDomains.includes("error_code"));
+});
+
+test("route policy sends sales process documents to Agent0", () => {
+  const probe = buildRouteProbe("Quy trình xử lý đơn hàng và kịch bản chăm sóc khách hàng là gì?", [
+    {
+      driveFileId: "sale-process",
+      driveName: "SALE/QT.SA.01-Quy trình xử lý đơn hàng.docx",
+      source: "drive_fallback",
+    },
+    {
+      driveFileId: "care-script",
+      driveName: "SALE/Kịch bản chăm sóc và liên hệ khách hàng- Nguyễn Hà.xlsx",
+      source: "drive_fallback",
+    },
+  ]);
+
+  assert.equal(probe.plan.intent, "sales_process");
+  assert.equal(probe.decision.recommendedLane, "agent0_deep");
+  assert.ok(probe.outgoingCandidates.some((candidate: { expectedUse?: string }) => candidate.expectedUse === "sales_process"));
+  assert.ok(probe.outgoingCandidates.some((candidate: { likelyDomains?: string[] }) => candidate.likelyDomains?.includes("customer")));
+});
+
+test("route policy sends company policy/profile documents to Agent0", () => {
+  const probe = buildRouteProbe("Hồ sơ năng lực và sơ đồ tổ chức công ty gồm những gì?", [
+    {
+      driveFileId: "profile",
+      driveName: "HCNS/HỒ SƠ NĂNG LỰC THĂNG LONG MỚI NHẤT T4.2025.pdf",
+      source: "drive_fallback",
+    },
+    {
+      driveFileId: "org",
+      driveName: "HCNS/Sơ đồ tổ chức Công ty.docx",
+      source: "drive_fallback",
+    },
+  ]);
+
+  assert.equal(probe.plan.intent, "company_policy");
+  assert.equal(probe.decision.recommendedLane, "agent0_deep");
+  assert.ok(probe.outgoingCandidates.every((candidate: { expectedUse?: string }) => candidate.expectedUse === "company_policy"));
+});

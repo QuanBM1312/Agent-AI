@@ -14,6 +14,12 @@ export type QueryIntent =
   | "contract_status"
   | "project_progress"
   | "risk_summary"
+  | "technical_support"
+  | "maintenance_warranty"
+  | "sales_process"
+  | "company_policy"
+  | "service_job_status"
+  | "customer_lookup"
   | "external_web"
   | "general";
 
@@ -41,6 +47,14 @@ export type SourceRequirement =
   | "cost"
   | "contract_status"
   | "project_progress"
+  | "technical_manual"
+  | "installation_guide"
+  | "maintenance_procedure"
+  | "warranty_policy"
+  | "sales_process_doc"
+  | "company_policy_doc"
+  | "service_job_data"
+  | "customer_data"
   | "raw_spreadsheet"
   | "external_web";
 
@@ -176,7 +190,13 @@ export function buildQueryRoutingPolicy(plan: QueryPlan | null): QueryRoutingPol
     plan?.intent === "profit_loss" ||
     plan?.intent === "contract_status" ||
     plan?.intent === "project_progress" ||
-    plan?.intent === "risk_summary";
+    plan?.intent === "risk_summary" ||
+    plan?.intent === "technical_support" ||
+    plan?.intent === "maintenance_warranty" ||
+    plan?.intent === "sales_process" ||
+    plan?.intent === "company_policy" ||
+    plan?.intent === "service_job_status" ||
+    plan?.intent === "customer_lookup";
 
   return {
     useLocalInventoryLookup: plan?.intent === "inventory_lookup",
@@ -187,7 +207,13 @@ export function buildQueryRoutingPolicy(plan: QueryPlan | null): QueryRoutingPol
       plan?.intent === "contract_status" ||
       plan?.intent === "project_progress" ||
       plan?.intent === "risk_summary" ||
-      plan?.intent === "inventory_analysis",
+      plan?.intent === "inventory_analysis" ||
+      plan?.intent === "technical_support" ||
+      plan?.intent === "maintenance_warranty" ||
+      plan?.intent === "sales_process" ||
+      plan?.intent === "company_policy" ||
+      plan?.intent === "service_job_status" ||
+      plan?.intent === "customer_lookup",
     blockInternalPriceWebFallback: plan?.intent === "internal_price_lookup",
     useInventoryBusinessFallback: plan?.intent === "inventory_analysis",
     useAgent0DeepLane,
@@ -402,6 +428,27 @@ export function buildQueryPlan(prompt: string, context: QueryPlannerContext = {}
   const inventoryAnalysisSignal = includesAny(normalized, [
     /\b(tung kho|moi kho|theo kho|o kho|nhap xuat ton|the kho|kiem ke|doi chieu.*kho|kho.*doi chieu|am kho|duoi nguong|nguong toi thieu|ton kho.*hom nay|cap nhat.*ton kho|lan cap nhat.*kho|bao cao.*kho|tong hop.*kho|phan tich.*kho|kho hang.*bao cao|kho hang.*tong hop)\b/,
   ]);
+  const technicalSupportSignal = includesAny(normalized, [
+    /\b(ky thuat|ma loi|bang tra cuu ma loi|error code|loi\s+[a-z0-9-]+|vrf|smms|svm|service manual|quick reference|pcb|gateway|thay bo mach|thay may nen|thu hoi ga|sua chua.*vrf|huong dan.*sua chua)\b/,
+  ]);
+  const installationGuideSignal = includesAny(normalized, [
+    /\b(lap dat|cai dat|chay may|van hanh|address setup|huong dan.*lap dat|huong dan.*van hanh|installation|operation)\b/,
+  ]);
+  const maintenanceWarrantySignal = includesAny(normalized, [
+    /\b(bao hanh|bao tri|bao duong|dinh ky|check list|checklist|quy trinh.*bao hanh|quy trinh.*bao tri|quy trinh.*bao duong|warranty|maintenance)\b/,
+  ]);
+  const salesProcessSignal = includesAny(normalized, [
+    /\b(quy trinh ban hang|xu ly don hang|don hang|kich ban cham soc|lien he khach hang|dam phan|kinh doanh|sale process|sales process)\b/,
+  ]);
+  const companyPolicySignal = includesAny(normalized, [
+    /\b(ho so nang luc|so do to chuc|quy che|chinh sach|cong doan|hcns|nhan su|hanh chinh|company profile|organization chart|policy)\b/,
+  ]);
+  const serviceJobSignal = includesAny(normalized, [
+    /\b(lich hen|cong viec ky thuat|bao cao ky thuat|ky thuat vien|technician|job code|job|lich bao hanh|lich sua chua|lich lap dat)\b/,
+  ]);
+  const customerLookupSignal = includesAny(normalized, [
+    /\b(khach hang|lien he|nguoi lien he|so dien thoai|crm|customer|client)\b/,
+  ]);
 
   if (explicitWebIntent && !/\b(noi bo|he thong|file|drive|bao gia noi bo)\b/.test(normalized)) {
     return buildPlan({
@@ -559,6 +606,132 @@ export function buildQueryPlan(prompt: string, context: QueryPlannerContext = {}
         "xuat",
         "nhap",
         "kho hang",
+        ...entityTerms(entities),
+      ]),
+    });
+  }
+
+  if ((technicalSupportSignal || installationGuideSignal) && !priceSignal) {
+    return buildPlan({
+      intent: "technical_support",
+      entities,
+      sourceRequirements: unique([
+        "technical_manual",
+        installationGuideSignal ? "installation_guide" : "technical_manual",
+      ]),
+      allowedTools: ["drive_file_search", "raw_spreadsheet", "gemini_file_search"],
+      blockedFallbacks: ["web_search", "general_answer", "drive_visible_as_indexed"],
+      answerContract: ["separate_verified_missing_inferred", "cite_internal_sources"],
+      requiresMultipleSources: true,
+      confidence: "high",
+      retrievalTerms: unique([
+        "ky thuat",
+        "ma loi",
+        "error code",
+        "service manual",
+        "quick reference",
+        "vrf",
+        "smms",
+        "svm",
+        "lap dat",
+        "cai dat",
+        "chay may",
+        "van hanh",
+        ...entityTerms(entities),
+      ]),
+    });
+  }
+
+  if (maintenanceWarrantySignal && !priceSignal) {
+    return buildPlan({
+      intent: "maintenance_warranty",
+      entities,
+      sourceRequirements: unique([
+        /\b(bao hanh|warranty)\b/.test(normalized) ? "warranty_policy" : "maintenance_procedure",
+        "technical_manual",
+      ]),
+      allowedTools: ["drive_file_search", "raw_spreadsheet", "gemini_file_search"],
+      blockedFallbacks: ["web_search", "general_answer", "drive_visible_as_indexed"],
+      answerContract: ["separate_verified_missing_inferred", "cite_internal_sources"],
+      requiresMultipleSources: true,
+      confidence: "high",
+      retrievalTerms: unique([
+        "bao hanh",
+        "bao tri",
+        "bao duong",
+        "dinh ky",
+        "check list",
+        "quy trinh",
+        "dung cu",
+        ...entityTerms(entities),
+      ]),
+    });
+  }
+
+  if (serviceJobSignal) {
+    return buildPlan({
+      intent: "service_job_status",
+      entities,
+      sourceRequirements: ["service_job_data"],
+      allowedTools: ["drive_file_search", "raw_spreadsheet", "gemini_file_search", "n8n"],
+      blockedFallbacks: ["web_search", "general_answer", "drive_visible_as_indexed"],
+      answerContract: ["separate_verified_missing_inferred", "cite_internal_sources"],
+      requiresMultipleSources: true,
+      confidence: "medium",
+      retrievalTerms: unique([
+        "lich hen",
+        "cong viec ky thuat",
+        "bao cao ky thuat",
+        "job",
+        "technician",
+        ...entityTerms(entities),
+      ]),
+    });
+  }
+
+  if (salesProcessSignal) {
+    return buildPlan({
+      intent: "sales_process",
+      entities,
+      sourceRequirements: unique([
+        "sales_process_doc",
+        customerLookupSignal ? "customer_data" : "sales_process_doc",
+      ]),
+      allowedTools: ["drive_file_search", "raw_spreadsheet", "gemini_file_search"],
+      blockedFallbacks: ["web_search", "general_answer", "drive_visible_as_indexed"],
+      answerContract: ["separate_verified_missing_inferred", "cite_internal_sources"],
+      requiresMultipleSources: true,
+      confidence: "high",
+      retrievalTerms: unique([
+        "quy trinh ban hang",
+        "xu ly don hang",
+        "kich ban cham soc",
+        "lien he khach hang",
+        "dam phan",
+        "kinh doanh",
+        ...entityTerms(entities),
+      ]),
+    });
+  }
+
+  if (companyPolicySignal) {
+    return buildPlan({
+      intent: "company_policy",
+      entities,
+      sourceRequirements: ["company_policy_doc"],
+      allowedTools: ["drive_file_search", "raw_spreadsheet", "gemini_file_search"],
+      blockedFallbacks: ["web_search", "general_answer", "drive_visible_as_indexed"],
+      answerContract: ["separate_verified_missing_inferred", "cite_internal_sources"],
+      requiresMultipleSources: false,
+      confidence: "high",
+      retrievalTerms: unique([
+        "ho so nang luc",
+        "so do to chuc",
+        "quy che",
+        "chinh sach",
+        "cong doan",
+        "hcns",
+        "nhan su",
         ...entityTerms(entities),
       ]),
     });
