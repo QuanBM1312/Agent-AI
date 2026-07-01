@@ -853,9 +853,13 @@ function buildCalculationDriveContext(
   }
 
   const lines = candidates.map((candidate, index) => {
+    const command = `python3 /a0/tools/read_drive_file.py --file-id "${candidate.driveFileId}" --format markdown --max-rows ${
+      businessPlan ? 160 : 120
+    } --max-sheets 8`;
     return [
       `${index + 1}. file="${candidate.driveName || candidate.fileSearchName || "unknown"}"`,
       `drive_file_id="${candidate.driveFileId}"`,
+      `exact_read_command="${command}"`,
       candidate.fileSearchName ? `search_name="${candidate.fileSearchName}"` : "",
       candidate.expectedUse ? `expected_use="${candidate.expectedUse}"` : "",
       candidate.sourceStateStatus ? `source_state="${candidate.sourceStateStatus}"` : "",
@@ -884,8 +888,8 @@ function buildCalculationDriveContext(
     "The app resolved these likely Google Drive source files for this internal file analysis/calculation. Use these IDs before trying Supabase discovery.",
     ...lines,
     businessPlan
-      ? `Agent0 instruction: this is a multi-source business analysis (${businessPlan.intent}). Run \`python3 /a0/tools/read_drive_file.py --file-id "<drive_file_id>" --format markdown --max-rows 160 --max-sheets 8\` on up to ${businessPlan.rawFileLimit} plausible candidates, compare their periods/sheets/columns, then answer only from verified rows. If the files do not contain the needed dimensions, say exactly which source category is missing.`
-      : "Agent0 instruction: run `python3 /a0/tools/read_drive_file.py --file-id \"<drive_file_id>\" --format markdown --max-rows 120 --max-sheets 8` on the most relevant candidate, then analyze/filter/count/compare/calculate from the returned rows. If several candidates are plausible, inspect the top 2 before answering.",
+      ? `Agent0 instruction: this is a multi-source business analysis (${businessPlan.intent}). Copy and run the exact_read_command values above for up to ${businessPlan.rawFileLimit} plausible candidates; do not retype or alter drive_file_id strings. Compare their periods/sheets/columns, then answer only from verified rows. If the files do not contain the needed dimensions, say exactly which source category is missing.`
+      : "Agent0 instruction: copy and run the exact_read_command value above for the most relevant candidate; do not retype or alter drive_file_id strings. Then analyze/filter/count/compare/calculate from the returned rows. If several candidates are plausible, inspect the top 2 with their exact_read_command values before answering.",
     "[INTERNAL_DRIVE_FILE_CANDIDATES_END]",
   ].join("\n");
 }
