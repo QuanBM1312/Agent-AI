@@ -27,6 +27,15 @@ import {
   buildQueryPlan,
   buildQueryRoutingPolicy,
 } from "@/lib/query-planner";
+import type { QueryPlan } from "@/lib/query-planner";
+import {
+  buildSourceCatalogFromRecords,
+} from "@/lib/source-catalog";
+import {
+  buildSourceDecision,
+  buildSourceRoutePolicy,
+} from "@/lib/source-orchestrator";
+import type { SourceDecision } from "@/lib/source-orchestrator";
 import {
   isInternalLookupInstructionStopWord,
   removeInternalLookupInstructionPhrases,
@@ -63,6 +72,14 @@ type CalculationDriveCandidate = {
   driveFileId: string;
   driveName: string | null;
   fileSearchName: string | null;
+  mimeType?: string | null;
+  source?: string;
+  reason?: string;
+  confidence?: number;
+  matchedTerms?: string[];
+  expectedUse?: string;
+  sourceStateStatus?: string;
+  likelyDomains?: string[];
 };
 
 const DRIVE_FOLDER_MIME_TYPE = "application/vnd.google-apps.folder";
@@ -401,15 +418,6 @@ function buildCalculationFileSearchTerms(value: string) {
   return [...terms].slice(0, 14);
 }
 
-function isInventoryCalculationPrompt(value: string) {
-  const normalized = normalizeIntentText(value);
-  return /\b(kho|ton kho|nhap xuat ton|ton|hang hoa|mat hang)\b/.test(normalized);
-}
-
-function hasInventoryFileMarker(value: string) {
-  return /\b(kho|ton kho|ton hang|hang hoa|nhap xuat ton)\b/.test(normalizeIntentText(value));
-}
-
 function toNumber(value: number | string | bigint | null | undefined) {
   if (typeof value === "bigint") {
     return Number(value);
@@ -574,22 +582,25 @@ async function resolveInventoryDbCalculation(prompt: string): Promise<LocalChatR
   };
 }
 
-async function resolveCalculationDriveCandidates(chatInput: string, businessPlan?: BusinessAnalysisPlan | null) {
+async function resolveSourceDecisionForChat(
+  chatInput: string,
+  businessPlan?: BusinessAnalysisPlan | null,
+  queryPlan?: QueryPlan | null,
+) {
   const terms = Array.from(new Set([
     ...buildCalculationFileSearchTerms(chatInput),
     ...(businessPlan?.retrievalTerms ?? []),
+    ...(queryPlan?.retrievalTerms ?? []),
   ]));
   const normalized = normalizeIntentText(chatInput);
   const pricePrompt = /\b(gia|don gia|bang gia|bao gia|niem yet|price|tren|duoi)\b/.test(normalized);
-  const inventoryPrompt = isInventoryCalculationPrompt(chatInput) || businessPlan?.intent === "inventory_analysis";
-  if (terms.length === 0) {
-    return [];
-  }
 
   let orderedRows: Array<{
     drive_file_id: string | null;
     drive_name: string | null;
     file_search_name: string | null;
+    mime_type?: string | null;
+    source?: "file_search_storage" | "drive_fallback";
   }> = [];
 
   try {
@@ -623,39 +634,75 @@ async function resolveCalculationDriveCandidates(chatInput: string, businessPlan
         })
       : [];
 
-    const rows = await prisma.file_search_storage.findMany({
+    const termRows = terms.length > 0
+      ? await prisma.file_search_storage.findMany({
+          where: {
+            drive_file_id: {
+              not: null,
+            },
+            OR: terms.flatMap((term) => [
+              {
+                drive_name: {
+                  contains: term,
+                  mode: "insensitive" as const,
+                },
+              },
+              {
+                file_search_name: {
+                  contains: term,
+                  mode: "insensitive" as const,
+                },
+              },
+            ]),
+          },
+          select: {
+            drive_file_id: true,
+            drive_name: true,
+            file_search_name: true,
+          },
+          take: 40,
+        })
+      : [];
+
+    const broadRows = await prisma.file_search_storage.findMany({
       where: {
         drive_file_id: {
           not: null,
         },
-        OR: terms.flatMap((term) => [
-          {
-            drive_name: {
-              contains: term,
-              mode: "insensitive" as const,
-            },
-          },
-          {
-            file_search_name: {
-              contains: term,
-              mode: "insensitive" as const,
-            },
-          },
-        ]),
       },
       select: {
         drive_file_id: true,
         drive_name: true,
         file_search_name: true,
       },
-      take: 20,
+      take: 200,
     });
-    orderedRows = [...priceRows, ...rows];
+
+    orderedRows = [...priceRows, ...termRows, ...broadRows].map((row) => ({
+      ...row,
+      source: "file_search_storage" as const,
+    }));
   } catch (error) {
     console.warn("[chat-calculation-db-candidates-unavailable]", {
       error: serializeErrorForClient(error),
     });
     orderedRows = await resolveDriveFolderCalculationRows();
+  }
+
+  const shouldInspectDriveFallback =
+    Boolean(process.env.GOOGLE_DRIVE_FOLDER_ID) &&
+    Boolean(
+      process.env.GOOGLE_SERVICE_ACCOUNT_JSON ||
+      process.env.GOOGLE_SERVICE_ACCOUNT_BASE64 ||
+      process.env.GDRIVE_JSON ||
+      (process.env.GOOGLE_OAUTH_CLIENT_ID &&
+        process.env.GOOGLE_OAUTH_CLIENT_SECRET &&
+        process.env.GOOGLE_OAUTH_REFRESH_TOKEN),
+    );
+
+  if (shouldInspectDriveFallback) {
+    const driveRows = await resolveDriveFolderCalculationRows();
+    orderedRows = [...orderedRows, ...driveRows];
   }
 
   if (orderedRows.length === 0) {
@@ -665,54 +712,45 @@ async function resolveCalculationDriveCandidates(chatInput: string, businessPlan
     orderedRows = await resolveDriveFolderCalculationRows();
   }
 
-  const scored = orderedRows
-    .filter((row) => row.drive_file_id)
-    .map((row) => {
-      const haystack = normalizeIntentText(`${row.drive_name ?? ""} ${row.file_search_name ?? ""}`);
-      const hasPriceMarker = /\b(bang gia|bao gia|niem yet|don gia|price)\b/.test(haystack);
-      const hasInventoryMarker = hasInventoryFileMarker(haystack);
-      const score =
-        terms.reduce((total, term) => total + (haystack.includes(term) ? 1 : 0), 0) +
-        (pricePrompt && hasPriceMarker ? 20 : 0) -
-        (pricePrompt && !hasPriceMarker ? 6 : 0) +
-        (inventoryPrompt && hasInventoryMarker ? 20 : 0) -
-        (inventoryPrompt && !hasInventoryMarker ? 20 : 0);
-      return { row, score };
-    })
-    .filter((item) => {
-      if (inventoryPrompt) {
-        // Prefer explicit inventory files, but do not drop every candidate when
-        // Drive/Supabase metadata is sparse. Agent0 can inspect plausible
-        // spreadsheets if we pass the candidates through.
-        return item.score > 0;
-      }
+  const plan = queryPlan ?? buildQueryPlan(chatInput);
+  const catalog = buildSourceCatalogFromRecords(
+    orderedRows.map((row) => ({
+      driveFileId: row.drive_file_id,
+      driveName: row.drive_name,
+      fileSearchName: row.file_search_name,
+      mimeType: row.mime_type,
+      source: row.source ?? "file_search_storage",
+    })),
+    {
+      prompt: chatInput,
+      limit: 80,
+    },
+  );
+  const sourceDecision = buildSourceDecision({
+    prompt: chatInput,
+    plan,
+    catalog,
+    maxCandidates: businessPlan?.candidateLimit ?? (pricePrompt ? 20 : 8),
+  });
 
-      return item.score > 0 || pricePrompt;
-    })
-    .sort((a, b) => b.score - a.score);
+  const candidateFiles = sourceDecision.candidateFiles.map((candidate) => ({
+    driveFileId: candidate.driveFileId,
+    driveName: candidate.driveName,
+    fileSearchName: candidate.fileSearchName ?? null,
+    mimeType: candidate.mimeType ?? null,
+    source: candidate.source,
+    reason: candidate.reason,
+    confidence: candidate.confidence,
+    matchedTerms: candidate.matchedTerms,
+    expectedUse: candidate.expectedUse,
+    sourceStateStatus: candidate.sourceStateStatus,
+    likelyDomains: candidate.likelyDomains,
+  }));
 
-  const seen = new Set<string>();
-  const candidates: CalculationDriveCandidate[] = [];
-
-  const maxCandidates = businessPlan?.candidateLimit ?? (pricePrompt ? 20 : 8);
-
-  for (const item of scored) {
-    const driveFileId = item.row.drive_file_id;
-    if (!driveFileId || seen.has(driveFileId)) {
-      continue;
-    }
-    seen.add(driveFileId);
-    candidates.push({
-      driveFileId,
-      driveName: item.row.drive_name,
-      fileSearchName: item.row.file_search_name,
-    });
-    if (candidates.length >= maxCandidates) {
-      break;
-    }
-  }
-
-  return candidates;
+  return {
+    sourceDecision,
+    candidateFiles,
+  };
 }
 
 async function resolveDriveFolderCalculationRows() {
@@ -787,6 +825,8 @@ async function resolveDriveFolderCalculationRows() {
         drive_file_id: file.id || null,
         drive_name: file.path || file.name || null,
         file_search_name: file.path || file.name || null,
+        mime_type: file.mimeType || null,
+        source: "drive_fallback" as const,
       }));
     } catch (error) {
       lastError = error;
@@ -805,7 +845,7 @@ function isUserVisibleDriveFile(fileName?: string | null) {
 }
 
 function buildCalculationDriveContext(
-  candidates: Awaited<ReturnType<typeof resolveCalculationDriveCandidates>>,
+  candidates: CalculationDriveCandidate[],
   businessPlan?: BusinessAnalysisPlan | null,
 ) {
   if (candidates.length === 0) {
@@ -817,10 +857,29 @@ function buildCalculationDriveContext(
       `${index + 1}. file="${candidate.driveName || candidate.fileSearchName || "unknown"}"`,
       `drive_file_id="${candidate.driveFileId}"`,
       candidate.fileSearchName ? `search_name="${candidate.fileSearchName}"` : "",
+      candidate.expectedUse ? `expected_use="${candidate.expectedUse}"` : "",
+      candidate.sourceStateStatus ? `source_state="${candidate.sourceStateStatus}"` : "",
+      candidate.reason ? `reason="${candidate.reason}"` : "",
     ].filter(Boolean).join(" | ");
   });
 
   return [
+    "[SOURCE_PLAN_BEGIN]",
+    `intent: ${businessPlan?.intent || "internal_file_analysis"}`,
+    "reason: app resolved internal source candidates before n8n/Agent0 execution",
+    "candidate_files:",
+    ...candidates.map((candidate) => [
+      `- driveFileId: ${candidate.driveFileId}`,
+      `  driveName: ${candidate.driveName || candidate.fileSearchName || "unknown"}`,
+      candidate.expectedUse ? `  expectedUse: ${candidate.expectedUse}` : "",
+      candidate.sourceStateStatus ? `  sourceState: ${candidate.sourceStateStatus}` : "",
+    ].filter(Boolean).join("\n")),
+    "answer_contract:",
+    "- separate_verified_missing_inferred",
+    "- cite_internal_sources",
+    "- do_not_use_web_for_internal_data",
+    "[SOURCE_PLAN_END]",
+    "",
     "[INTERNAL_DRIVE_FILE_CANDIDATES_BEGIN]",
     "The app resolved these likely Google Drive source files for this internal file analysis/calculation. Use these IDs before trying Supabase discovery.",
     ...lines,
@@ -1004,7 +1063,7 @@ function resolveRowsOverUnitPriceThreshold(params: {
 
 async function resolveDriveUnitPriceThresholdCalculation(params: {
   prompt: string;
-  candidates: Awaited<ReturnType<typeof resolveCalculationDriveCandidates>>;
+  candidates: CalculationDriveCandidate[];
 }): Promise<LocalChatResolution | null> {
   const threshold = parsePriceThreshold(params.prompt);
   if (threshold === null) {
@@ -1063,7 +1122,7 @@ async function resolveDriveUnitPriceThresholdCalculation(params: {
 
 async function resolveDriveSpreadsheetCalculation(params: {
   prompt: string;
-  candidates: Awaited<ReturnType<typeof resolveCalculationDriveCandidates>>;
+  candidates: CalculationDriveCandidate[];
 }): Promise<LocalChatResolution | null> {
   let needsColumnsResolution: LocalChatResolution | null = null;
 
@@ -1331,7 +1390,7 @@ function buildSpreadsheetPreview(params: {
 }
 
 async function buildCalculationRawDriveContext(
-  candidates: Awaited<ReturnType<typeof resolveCalculationDriveCandidates>>,
+  candidates: CalculationDriveCandidate[],
   businessPlan?: BusinessAnalysisPlan | null,
 ) {
   const chunks: string[] = [];
@@ -1515,6 +1574,25 @@ function buildInternalPriceUnavailableResolution(): LocalChatResolution {
   };
 }
 
+function buildAgent0MissingSourceResolution(queryPlan: QueryPlan | null): LocalChatResolution {
+  const requiredSources = queryPlan?.sourceRequirements ?? [];
+  const sourceLines = requiredSources.length > 0
+    ? requiredSources.map((source) => `- ${source}`)
+    : ["- internal business source file"];
+
+  return {
+    output: [
+      "Tôi chưa tìm được file nội bộ phù hợp để chuyển sang Agent0 đọc và phân tích, nên tôi sẽ không trả lời bằng suy đoán hoặc dùng web cho câu hỏi dữ liệu nội bộ này.",
+      "",
+      "Dữ liệu chắc chắn: chưa có candidate_files phù hợp từ catalog nguồn hiện tại.",
+      "Dữ liệu thiếu:",
+      ...sourceLines,
+      "Suy luận: cần kiểm tra file đã nằm đúng Google Drive folder, đã lưu metadata/index, hoặc tên file có tín hiệu đúng với nhóm dữ liệu cần tìm.",
+    ].join("\n"),
+    routeHint: "agent0_deep_missing_source",
+  };
+}
+
 function buildBusinessDataBoundaryResolution(value: string): LocalChatResolution | null {
   const normalized = normalizeIntentText(value);
 
@@ -1679,6 +1757,7 @@ export async function POST(req: NextRequest) {
           plannerIntent: queryPlan?.intent ?? null,
           sourcePlanPresent,
           answerContractPresent,
+          candidateFileCount: answerCandidateFileCount,
         }
       : {};
   const buildResponseContract = (params: {
@@ -2460,6 +2539,7 @@ export async function POST(req: NextRequest) {
     let calculationDriveContext = "";
     let calculationDriveSearched = false;
     let calculationDriveCandidates: CalculationDriveCandidate[] = [];
+    let sourceDecision: SourceDecision | null = null;
     const needsInternalFileAnalysis =
       requestType === "chat" &&
       !hasAttachment &&
@@ -2468,15 +2548,19 @@ export async function POST(req: NextRequest) {
       const fileResolveStartedAt = performance.now();
       try {
         calculationDriveSearched = true;
-        const candidates = await resolveCalculationDriveCandidates(userContent, businessAnalysisPlan);
-        calculationDriveCandidates = candidates;
-        answerCandidateFileCount = candidates.length;
+        const sourceResolution = await resolveSourceDecisionForChat(userContent, businessAnalysisPlan, queryPlan);
+        sourceDecision = sourceResolution.sourceDecision;
+        calculationDriveCandidates = sourceResolution.candidateFiles;
+        answerCandidateFileCount = sourceResolution.candidateFiles.length;
         answerCalculationDriveSearched = true;
 
-        if (!businessAnalysisPlan && !queryRoutingPolicy.useAgent0DeepLane) {
+        if (
+          !businessAnalysisPlan &&
+          sourceDecision.recommendedLane !== "agent0_deep"
+        ) {
           const driveSpreadsheetResolution = await resolveDriveSpreadsheetCalculation({
             prompt: userContent,
-            candidates,
+            candidates: sourceResolution.candidateFiles,
           });
           if (driveSpreadsheetResolution?.routeHint === "spreadsheet_calculation") {
             return await persistAndReturnResolution(
@@ -2490,7 +2574,7 @@ export async function POST(req: NextRequest) {
           }
           const priceFilterResolution = await resolveDriveUnitPriceThresholdCalculation({
             prompt: userContent,
-            candidates,
+            candidates: sourceResolution.candidateFiles,
           });
           if (priceFilterResolution) {
             return await persistAndReturnResolution(
@@ -2504,8 +2588,8 @@ export async function POST(req: NextRequest) {
           }
         }
         calculationDriveContext = [
-          buildCalculationDriveContext(candidates, businessAnalysisPlan),
-          await buildCalculationRawDriveContext(candidates, businessAnalysisPlan),
+          buildCalculationDriveContext(sourceResolution.candidateFiles, businessAnalysisPlan),
+          await buildCalculationRawDriveContext(sourceResolution.candidateFiles, businessAnalysisPlan),
         ].filter(Boolean).join("\n\n");
       } catch (error) {
         if (!isTenantDatabaseBoundaryError(error)) {
@@ -2534,9 +2618,18 @@ export async function POST(req: NextRequest) {
       mark("calculation_file_search_store", fileSearchStoreStartedAt);
     }
 
+    const sourceRoutePolicy = queryPlan
+      ? buildSourceRoutePolicy({
+          plan: queryPlan,
+          decision: sourceDecision,
+        })
+      : null;
     const shouldUseAgent0DeepLane =
-      queryRoutingPolicy.useAgent0DeepLane &&
-      calculationDriveCandidates.length > 0;
+      sourceRoutePolicy?.shouldUseAgent0DeepLane === true;
+    const effectiveQueryRoutingPolicy = {
+      ...queryRoutingPolicy,
+      useAgent0DeepLane: shouldUseAgent0DeepLane,
+    };
 
     const recentConversationContext =
       requestType === "chat" && !hasAttachment && isFollowUpPrompt(userContent)
@@ -2645,12 +2738,26 @@ export async function POST(req: NextRequest) {
       });
     }
 
+    if (
+      requestType === "chat" &&
+      !hasAttachment &&
+      sourceRoutePolicy?.routeIntent === "missing_source" &&
+      calculationDriveSearched &&
+      calculationDriveCandidates.length === 0
+    ) {
+      return await persistAndReturnResolution(buildAgent0MissingSourceResolution(queryPlan), {
+        spreadsheetCalculationUsed: false,
+        webSearchUsed: false,
+      });
+    }
+
     // Complex inventory questions should not degrade into a generic n8n/web
     // answer when Drive sources are missing or inconclusive. The app database
     // can still provide a verified stock baseline and explicitly name missing
     // dimensions such as warehouse/location.
     if (
       queryRoutingPolicy.useInventoryBusinessFallback &&
+      !shouldUseAgent0DeepLane &&
       requestType === "chat" &&
       !hasAttachment &&
       isInventorySummaryPrompt(userContent)
@@ -2686,7 +2793,7 @@ export async function POST(req: NextRequest) {
     }
     const n8nSourcePlanPayload = buildN8nSourcePlanPayload({
       queryPlan,
-      routingPolicy: queryRoutingPolicy,
+      routingPolicy: effectiveQueryRoutingPolicy,
       businessAnalysisPlan,
       hasAttachment,
       candidateFiles: calculationDriveCandidates,
@@ -2871,7 +2978,7 @@ export async function POST(req: NextRequest) {
       hasAttachment,
     });
     const shouldLabelAgent0DeepResponse =
-      queryRoutingPolicy.useAgent0DeepLane &&
+      shouldUseAgent0DeepLane &&
       sourcePlanPresent &&
       requestType === "chat" &&
       !hasAttachment;
@@ -2913,7 +3020,7 @@ export async function POST(req: NextRequest) {
       requestType === "chat" &&
       !hasAttachment &&
       geminiWebSearchEnabled &&
-      !queryRoutingPolicy.useAgent0DeepLane &&
+      !shouldUseAgent0DeepLane &&
       shouldOfferGeminiAfterNoResult(userContent, aiContent)
     ) {
       return await persistAndReturnResolution(

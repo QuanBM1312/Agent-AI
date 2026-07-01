@@ -3,6 +3,7 @@ import {
   normalizeBusinessText,
 } from "./entity-normalizer.ts";
 import type { EntityMention } from "./entity-normalizer.ts";
+import { removeInternalLookupInstructionPhrases } from "./internal-query-terms.ts";
 
 export type QueryIntent =
   | "inventory_lookup"
@@ -129,6 +130,11 @@ export type N8nCandidateFile = {
   fileSearchName?: string;
   source: string;
   reason: string;
+  confidence?: number;
+  matchedTerms?: string[];
+  expectedUse?: string;
+  sourceStateStatus?: string;
+  likelyDomains?: string[];
 };
 
 function unique<T>(values: T[]) {
@@ -208,6 +214,21 @@ function sanitizeCandidateFile(input: N8nCandidateFileInput): N8nCandidateFile {
   const type = getStringField(input, ["type"]);
   const sheetName = getStringField(input, ["sheetName", "sheet_name"]);
   const fileSearchName = getStringField(input, ["fileSearchName", "file_search_name"]);
+  const source = getStringField(input, ["source"]) || "agent_ai_candidate_resolution";
+  const reason = getStringField(input, ["reason"]) || "resolved_for_internal_file_analysis";
+  const expectedUse = getStringField(input, ["expectedUse", "expected_use"]);
+  const sourceStateStatus = getStringField(input, ["sourceStateStatus", "source_state_status"]);
+  const confidenceValue = input.confidence;
+  const confidence =
+    typeof confidenceValue === "number" && Number.isFinite(confidenceValue)
+      ? Math.max(0, Math.min(1, confidenceValue))
+      : undefined;
+  const matchedTerms = Array.isArray(input.matchedTerms)
+    ? input.matchedTerms.filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+    : undefined;
+  const likelyDomains = Array.isArray(input.likelyDomains)
+    ? input.likelyDomains.filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+    : undefined;
 
   return {
     ...(fileId ? { fileId } : {}),
@@ -218,8 +239,13 @@ function sanitizeCandidateFile(input: N8nCandidateFileInput): N8nCandidateFile {
     ...(type ? { type } : {}),
     ...(sheetName ? { sheetName } : {}),
     ...(fileSearchName ? { fileSearchName } : {}),
-    source: "agent_ai_candidate_resolution",
-    reason: "resolved_for_internal_file_analysis",
+    source,
+    reason,
+    ...(typeof confidence === "number" ? { confidence } : {}),
+    ...(matchedTerms && matchedTerms.length > 0 ? { matchedTerms } : {}),
+    ...(expectedUse ? { expectedUse } : {}),
+    ...(sourceStateStatus ? { sourceStateStatus } : {}),
+    ...(likelyDomains && likelyDomains.length > 0 ? { likelyDomains } : {}),
   };
 }
 
@@ -331,6 +357,7 @@ export function buildN8nSourcePlanPayload(params: N8nSourcePlanPayloadInput): N8
 
 export function buildQueryPlan(prompt: string, context: QueryPlannerContext = {}): QueryPlan {
   const normalized = normalizeBusinessText(prompt);
+  const normalizedForIntent = removeInternalLookupInstructionPhrases(normalized);
   const entities = extractEntities(prompt);
 
   if (!normalized) {
@@ -346,7 +373,7 @@ export function buildQueryPlan(prompt: string, context: QueryPlannerContext = {}
     });
   }
 
-  const explicitWebIntent = context.explicitWebAllowed || includesAny(normalized, [
+  const explicitWebIntent = context.explicitWebAllowed || includesAny(normalizedForIntent, [
     /\b(web|google|internet|thi truong|cong khai|ben ngoai|gia thi truong|search web)\b/,
   ]);
   const priceSignal = includesAny(normalized, [
