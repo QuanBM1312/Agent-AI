@@ -136,6 +136,16 @@ test("internal Toshiba price with market-price ban stays internal and no-web", (
   assert.deepEqual(plan.retrievalTerms, ["gia", "bang gia", "bao gia", "niem yet", "toshiba"]);
 });
 
+test("service price questions stay price lookup instead of installation support", () => {
+  const plan = buildQueryPlan("Giá lắp đặt điều hòa Toshiba nhỏ lẻ là bao nhiêu?");
+
+  assert.equal(plan.intent, "internal_price_lookup");
+  assert.ok(plan.sourceRequirements.includes("internal_price_file"));
+  assert.ok(plan.retrievalTerms.includes("gia dich vu"));
+  assert.ok(plan.retrievalTerms.includes("lap dat nho le"));
+  assert.ok(plan.blockedFallbacks.includes("web_search"));
+});
+
 test("profit/loss requires revenue and cost", () => {
   const plan = buildQueryPlan("Quý gần nhất công ty đang lời hay lỗ?");
 
@@ -187,10 +197,13 @@ test("installation and operation questions route to technical support", () => {
 
 test("maintenance and warranty procedures route to internal documents", () => {
   const maintenance = buildQueryPlan("Quy trình bảo trì bảo dưỡng điều hòa cục bộ định kỳ như thế nào?");
+  const vrfMaintenance = buildQueryPlan("Quy trình bảo trì định kỳ VRV/VRF gồm bước nào?");
   const warranty = buildQueryPlan("Quy trình bảo hành sản phẩm cần làm gì?");
 
   assert.equal(maintenance.intent, "maintenance_warranty");
   assert.ok(maintenance.sourceRequirements.includes("maintenance_procedure"));
+  assert.equal(vrfMaintenance.intent, "maintenance_warranty");
+  assert.ok(vrfMaintenance.sourceRequirements.includes("maintenance_procedure"));
   assert.equal(warranty.intent, "maintenance_warranty");
   assert.ok(warranty.sourceRequirements.includes("warranty_policy"));
 });

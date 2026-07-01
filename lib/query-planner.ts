@@ -48,7 +48,9 @@ export type SourceRequirement =
   | "contract_status"
   | "project_progress"
   | "technical_manual"
+  | "error_code_reference"
   | "installation_guide"
+  | "repair_procedure"
   | "maintenance_procedure"
   | "warranty_policy"
   | "sales_process_doc"
@@ -431,6 +433,12 @@ export function buildQueryPlan(prompt: string, context: QueryPlannerContext = {}
   const technicalSupportSignal = includesAny(normalized, [
     /\b(ky thuat|ma loi|bang tra cuu ma loi|error code|loi\s+[a-z0-9-]+|vrf|smms|svm|service manual|quick reference|pcb|gateway|thay bo mach|thay may nen|thu hoi ga|sua chua.*vrf|huong dan.*sua chua)\b/,
   ]);
+  const errorCodeReferenceSignal = includesAny(normalized, [
+    /\b(ma loi|bang tra cuu ma loi|error code|loi\s+[a-z0-9-]+|service manual|quick reference|pcb|gateway|svm|smmsi)\b/,
+  ]);
+  const repairProcedureSignal = includesAny(normalized, [
+    /\b(quy trinh.*sua chua|sua chua.*vrf|thay bo mach|thay may nen|thu hoi ga|repair)\b/,
+  ]);
   const installationGuideSignal = includesAny(normalized, [
     /\b(lap dat|cai dat|chay may|van hanh|address setup|huong dan.*lap dat|huong dan.*van hanh|installation|operation)\b/,
   ]);
@@ -611,45 +619,31 @@ export function buildQueryPlan(prompt: string, context: QueryPlannerContext = {}
     });
   }
 
-  if ((technicalSupportSignal || installationGuideSignal) && !priceSignal) {
+  if (priceSignal || (hasEntity(entities, ["brand", "model", "product_code"]) && /\bgia\b/.test(normalized))) {
+    const servicePriceTerms = /\b(sua chua|bao duong|bao tri|lap dat|dich vu|nho le|vat tu|nhan cong)\b/.test(normalized)
+      ? ["gia dich vu", "sua chua", "bao duong", "bao tri", "lap dat nho le", "dich vu"]
+      : [];
+
     return buildPlan({
-      intent: "technical_support",
+      intent: "internal_price_lookup",
       entities,
-      sourceRequirements: unique([
-        "technical_manual",
-        installationGuideSignal ? "installation_guide" : "technical_manual",
-      ]),
+      sourceRequirements: ["internal_price_file", "raw_spreadsheet"],
       allowedTools: ["drive_file_search", "raw_spreadsheet", "gemini_file_search"],
       blockedFallbacks: ["web_search", "general_answer", "drive_visible_as_indexed"],
-      answerContract: ["separate_verified_missing_inferred", "cite_internal_sources"],
-      requiresMultipleSources: true,
-      confidence: "high",
-      retrievalTerms: unique([
-        "ky thuat",
-        "ma loi",
-        "error code",
-        "service manual",
-        "quick reference",
-        "vrf",
-        "smms",
-        "svm",
-        "lap dat",
-        "cai dat",
-        "chay may",
-        "van hanh",
-        ...entityTerms(entities),
-      ]),
+      answerContract: ["do_not_use_web_prices", "separate_verified_missing_inferred", "cite_internal_sources"],
+      requiresMultipleSources: false,
+      confidence: hasEntity(entities, ["brand", "model", "product_code"]) ? "high" : "medium",
+      retrievalTerms: unique(["gia", "bang gia", "bao gia", "niem yet", ...servicePriceTerms, ...entityTerms(entities)]),
     });
   }
 
-  if (maintenanceWarrantySignal && !priceSignal) {
+  if (maintenanceWarrantySignal) {
     return buildPlan({
       intent: "maintenance_warranty",
       entities,
-      sourceRequirements: unique([
+      sourceRequirements: [
         /\b(bao hanh|warranty)\b/.test(normalized) ? "warranty_policy" : "maintenance_procedure",
-        "technical_manual",
-      ]),
+      ],
       allowedTools: ["drive_file_search", "raw_spreadsheet", "gemini_file_search"],
       blockedFallbacks: ["web_search", "general_answer", "drive_visible_as_indexed"],
       answerContract: ["separate_verified_missing_inferred", "cite_internal_sources"],
@@ -663,6 +657,62 @@ export function buildQueryPlan(prompt: string, context: QueryPlannerContext = {}
         "check list",
         "quy trinh",
         "dung cu",
+        ...entityTerms(entities),
+      ]),
+    });
+  }
+
+  if ((technicalSupportSignal || installationGuideSignal) && !priceSignal) {
+    const technicalSourceRequirements = installationGuideSignal && !errorCodeReferenceSignal && !repairProcedureSignal
+      ? ["installation_guide" as const]
+      : repairProcedureSignal
+        ? ["repair_procedure" as const]
+        : unique([
+            "error_code_reference" as const,
+            "technical_manual" as const,
+          ]);
+    const technicalRetrievalTerms = technicalSupportSignal
+      ? [
+          "ky thuat",
+          "ma loi",
+          "error code",
+          "service manual",
+          "quick reference",
+          "vrf",
+          "smms",
+          "svm",
+          "sua chua",
+          "thay bo mach",
+          "thay may nen",
+          "thu hoi ga",
+        ]
+      : [];
+    const installationRetrievalTerms = installationGuideSignal
+      ? [
+          "lap dat",
+          "cai dat",
+          "chay may",
+          "van hanh",
+          "address setup",
+          "installation",
+          "operation",
+          "vrf",
+          "toshiba",
+        ]
+      : [];
+
+    return buildPlan({
+      intent: "technical_support",
+      entities,
+      sourceRequirements: technicalSourceRequirements,
+      allowedTools: ["drive_file_search", "raw_spreadsheet", "gemini_file_search"],
+      blockedFallbacks: ["web_search", "general_answer", "drive_visible_as_indexed"],
+      answerContract: ["separate_verified_missing_inferred", "cite_internal_sources"],
+      requiresMultipleSources: true,
+      confidence: "high",
+      retrievalTerms: unique([
+        ...technicalRetrievalTerms,
+        ...installationRetrievalTerms,
         ...entityTerms(entities),
       ]),
     });
@@ -734,20 +784,6 @@ export function buildQueryPlan(prompt: string, context: QueryPlannerContext = {}
         "nhan su",
         ...entityTerms(entities),
       ]),
-    });
-  }
-
-  if (priceSignal || (hasEntity(entities, ["brand", "model", "product_code"]) && /\bgia\b/.test(normalized))) {
-    return buildPlan({
-      intent: "internal_price_lookup",
-      entities,
-      sourceRequirements: ["internal_price_file", "raw_spreadsheet"],
-      allowedTools: ["drive_file_search", "raw_spreadsheet", "gemini_file_search"],
-      blockedFallbacks: ["web_search", "general_answer", "drive_visible_as_indexed"],
-      answerContract: ["do_not_use_web_prices", "separate_verified_missing_inferred", "cite_internal_sources"],
-      requiresMultipleSources: false,
-      confidence: hasEntity(entities, ["brand", "model", "product_code"]) ? "high" : "medium",
-      retrievalTerms: unique(["gia", "bang gia", "bao gia", "niem yet", ...entityTerms(entities)]),
     });
   }
 

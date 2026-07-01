@@ -106,16 +106,48 @@ const DOMAIN_BY_REQUIREMENT: Partial<Record<SourceRequirement, SourceDomain[]>> 
   cost: ["finance", "contract", "report"],
   contract_status: ["contract", "project", "report"],
   project_progress: ["project", "report"],
-  technical_manual: ["technical", "error_code"],
-  installation_guide: ["technical", "installation"],
-  maintenance_procedure: ["technical", "maintenance"],
-  warranty_policy: ["technical", "warranty", "contract"],
+  technical_manual: ["technical"],
+  error_code_reference: ["error_code"],
+  installation_guide: ["installation"],
+  repair_procedure: ["repair"],
+  maintenance_procedure: ["maintenance"],
+  warranty_policy: ["warranty"],
   sales_process_doc: ["sales_process", "customer"],
   company_policy_doc: ["policy", "hr", "company_profile", "finance"],
   service_job_data: ["service_job", "technical", "customer", "report"],
   customer_data: ["customer", "sales_process"],
   raw_spreadsheet: ["price", "inventory", "finance", "project", "contract", "report"],
 };
+
+const GENERIC_SOURCE_LOOKUP_STOP_WORDS = new Set([
+  "bao",
+  "can",
+  "cho",
+  "con",
+  "cua",
+  "dieu",
+  "duoc",
+  "hang",
+  "hay",
+  "hoa",
+  "la",
+  "luc",
+  "may",
+  "nao",
+  "noi",
+  "phan",
+  "pham",
+  "quy",
+  "san",
+  "the",
+  "thi",
+  "thong",
+  "tin",
+  "trinh",
+  "trong",
+  "tu",
+  "ve",
+]);
 
 function unique<T>(values: T[]) {
   return Array.from(new Set(values));
@@ -126,7 +158,11 @@ function normalizedTokens(value: string) {
   return cleaned
     .split(/\s+/)
     .map((term) => term.replace(/[^a-z0-9]/g, ""))
-    .filter((term) => term.length >= 3 && !isInternalLookupInstructionStopWord(term));
+    .filter((term) =>
+      term.length >= 3 &&
+      !isInternalLookupInstructionStopWord(term) &&
+      !GENERIC_SOURCE_LOOKUP_STOP_WORDS.has(term)
+    );
 }
 
 export function buildSourceLookupTerms(params: {
@@ -151,6 +187,24 @@ export function buildSourceLookupTerms(params: {
 }
 
 function expectedUseForItem(plan: QueryPlan, item: SourceCatalogItem): CandidateExpectedUse {
+  if (plan.intent === "technical_support") {
+    return "technical_support";
+  }
+  if (plan.intent === "maintenance_warranty") {
+    return "maintenance_procedure";
+  }
+  if (plan.intent === "sales_process") {
+    return "sales_process";
+  }
+  if (plan.intent === "company_policy") {
+    return "company_policy";
+  }
+  if (plan.intent === "service_job_status") {
+    return "service_job_status";
+  }
+  if (plan.intent === "customer_lookup") {
+    return "customer_lookup";
+  }
   if (plan.intent === "internal_price_lookup" || item.likelyDomains.includes("price")) {
     return "price_lookup";
   }
@@ -174,22 +228,22 @@ function expectedUseForItem(plan: QueryPlan, item: SourceCatalogItem): Candidate
   if (plan.intent === "risk_summary") {
     return "risk_summary";
   }
-  if (plan.intent === "technical_support" || item.likelyDomains.some((domain) => ["technical", "installation", "error_code"].includes(domain))) {
+  if (item.likelyDomains.some((domain) => ["technical", "installation", "error_code"].includes(domain))) {
     return "technical_support";
   }
-  if (plan.intent === "maintenance_warranty" || item.likelyDomains.some((domain) => ["maintenance", "warranty"].includes(domain))) {
+  if (item.likelyDomains.some((domain) => ["maintenance", "warranty"].includes(domain))) {
     return "maintenance_procedure";
   }
-  if (plan.intent === "sales_process" || item.likelyDomains.includes("sales_process")) {
+  if (item.likelyDomains.includes("sales_process")) {
     return "sales_process";
   }
-  if (plan.intent === "company_policy" || item.likelyDomains.some((domain) => ["policy", "hr", "company_profile"].includes(domain))) {
+  if (item.likelyDomains.some((domain) => ["policy", "hr", "company_profile"].includes(domain))) {
     return "company_policy";
   }
-  if (plan.intent === "service_job_status" || item.likelyDomains.includes("service_job")) {
+  if (item.likelyDomains.includes("service_job")) {
     return "service_job_status";
   }
-  if (plan.intent === "customer_lookup" || item.likelyDomains.includes("customer")) {
+  if (item.likelyDomains.includes("customer")) {
     return "customer_lookup";
   }
   return "general_internal_file";
@@ -232,10 +286,15 @@ function scoreSourceItem(params: {
   });
   const reasons: string[] = [];
   let score = 0;
+  const matchesRequiredDomain = sourceMatchesDomain(item, domains);
 
-  if (sourceMatchesDomain(item, domains)) {
+  if (matchesRequiredDomain) {
     score += 24;
     reasons.push(`domain=${item.likelyDomains.filter((domain) => domains.includes(domain)).join(",")}`);
+  }
+
+  if (!matchesRequiredDomain && matchedTerms.length === 0) {
+    return null;
   }
 
   if (matchedTerms.length > 0) {
@@ -262,7 +321,14 @@ function scoreSourceItem(params: {
       fileSearchName: item.fileSearchName,
       pathHint: item.pathHint,
     });
-    if (priceKind === "product_price") {
+    const wantsServicePrice = lookupTerms.some((term) =>
+      /\b(gia dich vu|dich vu|sua chua|bao duong|bao tri|lap dat|lap dat nho le|vat tu|nhan cong)\b/.test(normalizeBusinessText(term)),
+    );
+
+    if (priceKind === "service_price" && wantsServicePrice) {
+      score += 14;
+      reasons.push("service_price_source");
+    } else if (priceKind === "product_price" && !wantsServicePrice) {
       score += 12;
       reasons.push("product_price_source");
     } else if (priceKind === "service_price") {

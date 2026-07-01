@@ -23,6 +23,7 @@ export type SourceDomain =
   | "maintenance"
   | "warranty"
   | "error_code"
+  | "repair"
   | "sales_process"
   | "company_profile"
   | "policy"
@@ -173,6 +174,10 @@ export function classifySourceDomains(input: {
 
   if (/\b(ma loi|bang tra cuu ma loi|error code|quick reference|service manual|svm|smms|pcb)\b/.test(text)) {
     domains.add("error_code");
+  }
+
+  if (/\b(quy trinh sua chua|sua chua|thay bo mach|thay may nen|thu hoi ga|repair)\b/.test(text)) {
+    domains.add("repair");
   }
 
   if (/\b(quy trinh ban hang|xu ly don hang|kich ban cham soc|lien he khach hang|dam phan|sale process|sales process|sales?|kinh doanh)\b/.test(text)) {
