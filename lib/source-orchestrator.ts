@@ -43,7 +43,11 @@ export type CandidateExpectedUse =
   | "contract_status"
   | "risk_summary"
   | "technical_support"
+  | "error_code_reference"
+  | "installation_guide"
+  | "repair_procedure"
   | "maintenance_procedure"
+  | "warranty_policy"
   | "sales_process"
   | "company_policy"
   | "service_job_status"
@@ -187,6 +191,21 @@ export function buildSourceLookupTerms(params: {
 }
 
 function expectedUseForItem(plan: QueryPlan, item: SourceCatalogItem): CandidateExpectedUse {
+  if (plan.sourceRequirements.includes("repair_procedure") && item.likelyDomains.includes("repair")) {
+    return "repair_procedure";
+  }
+  if (plan.sourceRequirements.includes("installation_guide") && item.likelyDomains.includes("installation")) {
+    return "installation_guide";
+  }
+  if (plan.sourceRequirements.includes("error_code_reference") && item.likelyDomains.includes("error_code")) {
+    return "error_code_reference";
+  }
+  if (plan.sourceRequirements.includes("warranty_policy") && item.likelyDomains.includes("warranty")) {
+    return "warranty_policy";
+  }
+  if (plan.sourceRequirements.includes("maintenance_procedure") && item.likelyDomains.includes("maintenance")) {
+    return "maintenance_procedure";
+  }
   if (plan.intent === "technical_support") {
     return "technical_support";
   }
@@ -337,6 +356,30 @@ function scoreSourceItem(params: {
     }
   }
 
+  if (
+    plan.intent !== "internal_price_lookup" &&
+    plan.sourceRequirements.some((requirement) =>
+      [
+        "technical_manual",
+        "error_code_reference",
+        "installation_guide",
+        "repair_procedure",
+        "maintenance_procedure",
+        "warranty_policy",
+      ].includes(requirement)
+    )
+  ) {
+    const priceKind = classifyPriceSourceKind({
+      name: item.driveName,
+      fileSearchName: item.fileSearchName,
+      pathHint: item.pathHint,
+    });
+    if (priceKind !== "price_unknown") {
+      score -= 18;
+      reasons.push("price_source_demoted_for_procedure");
+    }
+  }
+
   if (plan.intent === "risk_summary" && item.likelyDomains.some((domain) => ["finance", "inventory", "project", "contract", "report"].includes(domain))) {
     score += 6;
     reasons.push("risk_summary_domain_coverage");
@@ -477,15 +520,18 @@ export function buildSourceDecision(params: {
     entities: params.entities,
   });
   const domains = requiredDomains(params.plan);
-  const ranked = params.catalog
-    .map((item) => scoreSourceItem({
-      item,
-      plan: params.plan,
-      lookupTerms,
-      domains,
-    }))
-    .filter((item): item is RankedCandidate => Boolean(item))
-    .sort((left, right) => right.score - left.score);
+  const shouldRankInternalCandidates = params.plan.intent !== "external_web" && params.plan.intent !== "general";
+  const ranked = shouldRankInternalCandidates
+    ? params.catalog
+        .map((item) => scoreSourceItem({
+          item,
+          plan: params.plan,
+          lookupTerms,
+          domains,
+        }))
+        .filter((item): item is RankedCandidate => Boolean(item))
+        .sort((left, right) => right.score - left.score)
+    : [];
 
   const missingSources = missingRequirements(params.plan, ranked);
   const lane = chooseLane({

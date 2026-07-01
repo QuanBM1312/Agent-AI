@@ -138,12 +138,16 @@ test("internal Toshiba price with market-price ban stays internal and no-web", (
 
 test("service price questions stay price lookup instead of installation support", () => {
   const plan = buildQueryPlan("Giá lắp đặt điều hòa Toshiba nhỏ lẻ là bao nhiêu?");
+  const broadServicePlan = buildQueryPlan("Giá lắp đặt/sửa chữa/bảo dưỡng nhỏ lẻ là bao nhiêu?");
 
   assert.equal(plan.intent, "internal_price_lookup");
   assert.ok(plan.sourceRequirements.includes("internal_price_file"));
   assert.ok(plan.retrievalTerms.includes("gia dich vu"));
   assert.ok(plan.retrievalTerms.includes("lap dat nho le"));
   assert.ok(plan.blockedFallbacks.includes("web_search"));
+  assert.equal(broadServicePlan.intent, "internal_price_lookup");
+  assert.ok(broadServicePlan.retrievalTerms.includes("gia dich vu"));
+  assert.ok(broadServicePlan.blockedFallbacks.includes("web_search"));
 });
 
 test("profit/loss requires revenue and cost", () => {
@@ -325,4 +329,29 @@ test("n8n candidate file serialization excludes raw content", () => {
   assert.doesNotMatch(serialized, /SECRET RAW SPREADSHEET TEXT/);
   assert.doesNotMatch(serialized, /FULL FILE TEXT/);
   assert.doesNotMatch(serialized, /not-a-real-key/);
+});
+
+test("n8n answer contract flags raw-unreadable internal source candidates", () => {
+  const queryPlan = buildQueryPlan("Quy trình sửa chữa thay máy nén VRF như thế nào?");
+  const payload = buildN8nSourcePlanPayload({
+    queryPlan,
+    routingPolicy: buildQueryRoutingPolicy(queryPlan),
+    candidateFiles: [
+      {
+        driveFileId: "repair-compressor",
+        driveName: "KỸ THUẬT/Quy trình sửa chữa/thay máy nén VRF.pdf",
+        sourceStateStatus: "raw_unreadable",
+        likelyDomains: ["technical", "repair"],
+      },
+    ],
+    needsInternalFileAnalysis: true,
+    calculationDriveSearched: true,
+    geminiWebSearchEnabled: false,
+  });
+
+  const answerContract = JSON.parse(payload.answerContract);
+
+  assert.ok(answerContract.includes("state_unreadable_sources"));
+  assert.ok(answerContract.includes("cite_internal_sources"));
+  assert.ok(answerContract.includes("separate_verified_missing_inferred"));
 });

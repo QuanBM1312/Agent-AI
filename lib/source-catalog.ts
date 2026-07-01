@@ -95,6 +95,12 @@ export function isProbeOrTestSourceName(name: string) {
   );
 }
 
+export function isSystemJunkSourceName(name: string) {
+  const basename = name.split(/[\\/]/).pop()?.trim().toLowerCase() || "";
+  const normalized = sourceCatalogText(name);
+  return basename === ".ds_store" || normalized === "ds store" || normalized.endsWith(" ds store");
+}
+
 export function promptExplicitlyNamesSource(prompt: string, sourceName: string) {
   const normalizedPrompt = sourceCatalogText(prompt);
   const normalizedName = sourceCatalogText(sourceName);
@@ -266,6 +272,10 @@ export function buildSourceCatalogFromRecords(
     const source = record.source ?? "file_search_storage";
     const driveName = (record.driveName || record.pathHint || record.fileSearchName || record.driveFileId || "").trim();
     if (!driveName) {
+      continue;
+    }
+
+    if (isSystemJunkSourceName(driveName)) {
       continue;
     }
 

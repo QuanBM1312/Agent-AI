@@ -117,6 +117,21 @@ test("raw probe failure marks indexed spreadsheet raw-unreadable", () => {
   assert.equal(state.usableForCalculation, false);
 });
 
+test("raw probe failure marks Drive-visible scanned PDFs raw-unreadable", () => {
+  const state = buildKnowledgeSourceState({
+    driveVisible: true,
+    metadataSaved: false,
+    rawReadable: false,
+    rawReadChecked: true,
+    spreadsheetCompatible: false,
+  });
+
+  assert.equal(state.status, "raw_unreadable");
+  assert.match(state.statusMessage, /OCR\/vision/);
+  assert.equal(state.usableForRag, false);
+  assert.equal(state.usableForCalculation, false);
+});
+
 test("spreadsheet compatibility is explicit", () => {
   assert.equal(isSpreadsheetCompatibleSource("CSV"), true);
   assert.equal(isSpreadsheetCompatibleSource("xlsx"), true);

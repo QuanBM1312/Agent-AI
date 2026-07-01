@@ -75,6 +75,23 @@ export function buildKnowledgeSourceState(
     };
   }
 
+  if (rawReadChecked && !rawReadable && (driveVisible || metadataSaved)) {
+    return {
+      driveVisible,
+      metadataSaved,
+      vectorIndexed,
+      rawReadable,
+      rawReadChecked,
+      n8nIngested,
+      usableForCalculation: false,
+      usableForRag,
+      status: "raw_unreadable",
+      statusMessage: usableForRag
+        ? "Da index cho tra cuu, nhung khong doc raw duoc; can OCR/vision neu noi dung bi scan."
+        : "Co nguon nhung khong doc raw duoc; can OCR/vision truoc khi tra loi chi tiet.",
+    };
+  }
+
   if (driveVisible && !metadataSaved) {
     return {
       driveVisible,

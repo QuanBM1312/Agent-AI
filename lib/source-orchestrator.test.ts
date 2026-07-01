@@ -78,6 +78,30 @@ test("Toshiba internal price chooses Agent0 with product price candidates", () =
   assert.ok(decision.candidateFiles[0].reason.includes("product_price_source"));
 });
 
+test("service price wording chooses service price file before procedure manuals", () => {
+  const prompt = "Giá lắp đặt/sửa chữa/bảo dưỡng nhỏ lẻ là bao nhiêu?";
+  const plan = buildQueryPlan(prompt);
+  const catalog = buildSourceCatalogFromRecords([
+    {
+      driveFileId: "service-price",
+      driveName: "SALE/050924_BẢNG GIÁ NIÊM YẾT SỬA CHỮA, BẢO DƯỠNG, LẮP ĐẶT NHỎ LẺ.xlsx",
+      source: "drive_fallback",
+    },
+    {
+      driveFileId: "install-guide",
+      driveName: "KỸ THUẬT/Hướng dẫn lắp đặt và vận hành/Address Setup - VRF Toshiba.pdf",
+      source: "drive_fallback",
+    },
+  ], { prompt });
+  const decision = buildSourceDecision({ prompt, plan, catalog });
+
+  assert.equal(plan.intent, "internal_price_lookup");
+  assert.equal(decision.recommendedLane, "agent0_deep");
+  assert.equal(decision.candidateFiles[0].driveFileId, "service-price");
+  assert.equal(decision.candidateFiles[0].expectedUse, "price_lookup");
+  assert.ok(decision.candidateFiles[0].reason.includes("service_price_source"));
+});
+
 test("RBC per-warehouse inventory routes Agent0 when inventory Drive candidates exist", () => {
   const prompt = "Hàng RBC còn tồn bao nhiêu ở từng kho?";
   const plan = buildQueryPlan(prompt);
@@ -219,8 +243,55 @@ test("route policy sends technical error-code candidates to Agent0", () => {
   assert.equal(probe.plan.intent, "technical_support");
   assert.equal(probe.decision.recommendedLane, "agent0_deep");
   assert.equal(probe.routePolicy.shouldUseAgent0DeepLane, true);
-  assert.equal(probe.outgoingCandidates[0].expectedUse, "technical_support");
+  assert.equal(probe.outgoingCandidates[0].expectedUse, "error_code_reference");
   assert.ok(probe.outgoingCandidates[0].likelyDomains.includes("error_code"));
+});
+
+test("explicit external web prompts do not serialize internal source candidates", () => {
+  const probe = buildRouteProbe("Giá thị trường điều hòa Toshiba trên web hiện nay?", [
+    {
+      driveFileId: "price-toshiba",
+      driveName: "SALE/BẢNG GIÁ T8.2025 CẬP NHẬT CHỈNH - Copy.xlsx",
+      source: "drive_fallback",
+    },
+  ]);
+
+  assert.equal(probe.plan.intent, "external_web");
+  assert.equal(probe.decision.recommendedLane, "web");
+  assert.equal(probe.outgoingCandidates.length, 0);
+});
+
+test("route policy sends installation questions to installation guides", () => {
+  const probe = buildRouteProbe("Hướng dẫn cài đặt chạy máy Address Setup VRF Toshiba", [
+    {
+      driveFileId: "address-setup",
+      driveName: "KỸ THUẬT/Hướng dẫn lắp đặt và vận hành/Address Setup - VRF Toshiba.pdf",
+      source: "drive_fallback",
+    },
+  ]);
+
+  assert.equal(probe.plan.intent, "technical_support");
+  assert.equal(probe.decision.recommendedLane, "agent0_deep");
+  assert.equal(probe.outgoingCandidates[0].expectedUse, "installation_guide");
+  assert.ok(probe.outgoingCandidates[0].likelyDomains.includes("installation"));
+});
+
+test("route policy sends repair questions to repair procedures even when raw unreadable", () => {
+  const probe = buildRouteProbe("Quy trình sửa chữa thay bo mạch VRF như thế nào?", [
+    {
+      driveFileId: "repair-board",
+      driveName: "KỸ THUẬT/Quy trình sửa chữa/thay bo mạch VRF.pdf",
+      source: "drive_fallback",
+      rawReadable: false,
+      rawReadChecked: true,
+    },
+  ]);
+
+  assert.equal(probe.plan.intent, "technical_support");
+  assert.equal(probe.decision.recommendedLane, "agent0_deep");
+  assert.equal(probe.outgoingCandidates[0].expectedUse, "repair_procedure");
+  assert.equal(probe.outgoingCandidates[0].sourceStateStatus, "raw_unreadable");
+  assert.ok(probe.outgoingCandidates[0].likelyDomains.includes("repair"));
 });
 
 test("route policy sends sales process documents to Agent0", () => {

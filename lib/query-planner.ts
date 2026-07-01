@@ -66,6 +66,7 @@ export type AnswerContract =
   | "do_not_use_web_prices"
   | "do_not_conclude_profit_without_cost"
   | "state_missing_warehouse_dimension"
+  | "state_unreadable_sources"
   | "state_formula"
   | "ground_web_sources";
 
@@ -280,12 +281,18 @@ function sanitizeCandidateFile(input: N8nCandidateFileInput): N8nCandidateFile {
 function buildAnswerContract(params: {
   queryPlan: QueryPlan | null;
   businessAnswerContract: string[];
+  candidateFiles?: N8nCandidateFile[];
 }) {
-  const { queryPlan, businessAnswerContract } = params;
+  const { queryPlan, businessAnswerContract, candidateFiles = [] } = params;
+  const hasUnreadableCandidates = candidateFiles.some((candidate) =>
+    candidate.sourceStateStatus === "raw_unreadable" ||
+    candidate.sourceStateStatus === "ingestion_failed"
+  );
 
   return uniqueStrings([
     ...(queryPlan?.answerContract ?? []),
     ...businessAnswerContract,
+    hasUnreadableCandidates ? "state_unreadable_sources" : null,
     queryPlan?.intent === "internal_price_lookup" || queryPlan?.blockedFallbacks.includes("web_search")
       ? "do_not_use_web_prices"
       : null,
@@ -322,11 +329,12 @@ function safeJsonStringify(params: {
 export function buildN8nSourcePlanPayload(params: N8nSourcePlanPayloadInput): N8nSourcePlanPayload {
   const queryPlan = params.queryPlan;
   const businessPlan = params.businessAnalysisPlan;
+  const candidateFiles = (params.candidateFiles ?? []).map(sanitizeCandidateFile);
   const answerContract = buildAnswerContract({
     queryPlan,
     businessAnswerContract: businessPlan?.answerContract ?? [],
+    candidateFiles,
   });
-  const candidateFiles = (params.candidateFiles ?? []).map(sanitizeCandidateFile);
   const sourcePlan: N8nSourcePlan = {
     intent: queryPlan?.intent ?? businessPlan?.intent ?? (params.hasAttachment ? "attachment_analysis" : "general"),
     entities: queryPlan?.entities ?? [],
@@ -406,6 +414,8 @@ export function buildQueryPlan(prompt: string, context: QueryPlannerContext = {}
   ]);
   const priceSignal = includesAny(normalized, [
     /\b(phieu tinh gia|tim gia|gia cua|gia san pham|gia dieu hoa|bao gia|bang gia|don gia|price)\b/,
+    /\bgia\b.*\b(sua chua|bao duong|bao tri|lap dat|dich vu|nho le|vat tu|nhan cong)\b/,
+    /\b(sua chua|bao duong|bao tri|lap dat|dich vu|nho le|vat tu|nhan cong)\b.*\bgia\b/,
   ]);
   const inventorySignal = includesAny(normalized, [
     /\b(ton kho|hang ton|kho hang|nhap xuat ton|ton hien tai|con ton|ton bao nhieu|con bao nhieu|trong kho|tung kho|theo kho|o kho|am kho|duoi nguong|nguong toi thieu)\b/,

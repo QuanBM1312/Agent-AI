@@ -6,6 +6,7 @@ import {
   classifyPriceSourceKind,
   classifySourceDomains,
   isProbeOrTestSourceName,
+  isSystemJunkSourceName,
 } from "./source-catalog.ts";
 
 test("classifies business source domains from names and paths", () => {
@@ -92,6 +93,30 @@ test("filters probe and test files unless prompt explicitly names them", () => {
     prompt: "Đọc file upload-probe-live-smoke",
   });
   assert.equal(explicit.length, 1);
+});
+
+test("filters system junk files from source catalog", () => {
+  assert.equal(isSystemJunkSourceName(".DS_Store"), true);
+  assert.equal(isSystemJunkSourceName("KỸ THUẬT/.DS_Store"), true);
+
+  const catalog = buildSourceCatalogFromRecords([
+    {
+      driveFileId: "junk-1",
+      driveName: ".DS_Store",
+      pathHint: "KỸ THUẬT/.DS_Store",
+      source: "drive_fallback",
+    },
+    {
+      driveFileId: "technical-1",
+      driveName: "KỸ THUẬT/Bảng tra cứu mã lỗi/SMMSi Error Code Quick Reference.pdf",
+      source: "drive_fallback",
+    },
+  ], {
+    prompt: "Đọc file .DS_Store và mã lỗi SMMSi",
+  });
+
+  assert.equal(catalog.length, 1);
+  assert.equal(catalog[0].driveFileId, "technical-1");
 });
 
 test("drive fallback rows are candidates but not treated as indexed", () => {
