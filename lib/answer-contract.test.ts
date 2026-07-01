@@ -18,7 +18,7 @@ test("missing cost blocks verified profit conclusion", () => {
 
   assert.equal(metadata.verificationStatus, "missing");
   assert.ok(metadata.missingData.some((item) => item.sourceRequirement === "cost"));
-  assert.ok(metadata.warnings.some((warning) => warning.includes("Web fallback is blocked")));
+  assert.ok(metadata.warnings.some((warning) => warning.includes("Không dùng web")));
   assert.ok(metadata.executionTrace.some((event) => event.step === "evidence_verifier"));
 });
 
@@ -51,7 +51,7 @@ test("internal price unavailable is missing source and never verified", () => {
 
   assert.equal(metadata.verificationStatus, "missing");
   assert.ok(metadata.missingData.some((item) => item.sourceRequirement === "internal_price_file"));
-  assert.ok(metadata.warnings.some((warning) => warning.includes("Web fallback is blocked")));
+  assert.ok(metadata.warnings.some((warning) => warning.includes("Không dùng web")));
 });
 
 test("n8n failure is explicit tool unavailable", () => {
@@ -69,6 +69,7 @@ test("n8n failure is explicit tool unavailable", () => {
 
   assert.equal(metadata.verificationStatus, "tool_unavailable");
   assert.ok(metadata.warnings.some((warning) => warning.includes("n8n_timeout")));
+  assert.ok(metadata.warnings.some((warning) => warning.includes("không phải bằng chứng rằng nghiệp vụ không có dữ liệu")));
   assert.ok(metadata.executionTrace.some((event) => event.status === "tool_unavailable"));
 });
 
@@ -87,6 +88,8 @@ test("Agent0 credential errors are tool unavailable, not verified evidence", () 
 
   assert.equal(metadata.verificationStatus, "tool_unavailable");
   assert.ok(metadata.evidence.some((item) => item.kind === "agent0"));
+  assert.ok(metadata.missingData.some((item) => item.reason.includes("Đã tìm thấy file nội bộ")));
+  assert.ok(metadata.warnings.some((warning) => warning.includes("lỗi truy cập/công cụ")));
   assert.ok(metadata.executionTrace.some((event) => event.status === "tool_unavailable"));
 });
 

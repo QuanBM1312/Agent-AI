@@ -95,7 +95,7 @@ const verificationLabels: Record<VerificationStatus, { label: string; className:
     className: "border-orange-300 bg-orange-50 text-orange-700",
   },
   tool_unavailable: {
-    label: "Tool lỗi",
+    label: "Chưa đọc được nguồn",
     className: "border-rose-300 bg-rose-50 text-rose-700",
   },
   unverified: {

@@ -199,11 +199,18 @@ function missingDataForPlan(params: BuildAnswerContractMetadataInput): MissingDa
 
   if (
     plan.intent === "internal_price_lookup" &&
-    routeIncludes(routeHint, ["internal_price_unavailable", "source_not_found", "needs_data", "unavailable"])
+    (routeIncludes(routeHint, ["internal_price_unavailable", "source_not_found", "needs_data", "unavailable"]) ||
+      /invalid[_\s-]?grant|khong co quyen|loi xac thuc|loi quyen|khong the truy xuat/.test(output))
   ) {
+    const sourceWasFoundButUnreadable =
+      params.candidateFileCount !== undefined && params.candidateFileCount > 0 &&
+      (routeHint.includes("unavailable") || params.degradedFrom || /invalid[_\s-]?grant|khong co quyen|loi xac thuc/.test(output));
+
     missing.push({
       field: "internal_price_file",
-      reason: "The internal price file was not readable or not found.",
+      reason: sourceWasFoundButUnreadable
+        ? "Đã tìm thấy file nội bộ có khả năng liên quan nhưng chưa đọc được do lỗi quyền/kết nối công cụ; chưa thể kết luận dữ liệu nghiệp vụ không tồn tại."
+        : "Chưa tìm thấy file giá nội bộ phù hợp trong nguồn đã xác minh.",
       sourceRequirement: "internal_price_file",
     });
   }
@@ -227,13 +234,14 @@ function missingDataForPlan(params: BuildAnswerContractMetadataInput): MissingDa
 function warningsForPlan(params: BuildAnswerContractMetadataInput) {
   const warnings: string[] = [];
   const routeHint = params.routeHint;
+  const output = normalize(params.output ?? "");
 
   if (params.queryPlan?.blockedFallbacks.includes("web_search")) {
-    warnings.push("Web fallback is blocked for this internal business prompt.");
+    warnings.push("Không dùng web/giá thị trường cho câu hỏi nghiệp vụ nội bộ này.");
   }
 
   if (params.queryPlan?.blockedFallbacks.includes("drive_visible_as_indexed")) {
-    warnings.push("Drive visibility is not treated as indexed or calculation-ready evidence.");
+    warnings.push("File chỉ thấy trên Drive chưa được coi là đã index hoặc sẵn sàng tính toán.");
   }
 
   if (routeHint.includes("gemini_web_search")) {
@@ -241,11 +249,19 @@ function warningsForPlan(params: BuildAnswerContractMetadataInput) {
   }
 
   if (params.degradedFrom) {
-    warnings.push(`Upstream path degraded: ${params.degradedFrom}.`);
+    warnings.push(`Đường đọc nguồn nội bộ đang lỗi hoặc quá thời gian chờ: ${params.degradedFrom}.`);
   }
 
   if (params.calculationDriveSearched && (params.candidateFileCount ?? 0) === 0) {
-    warnings.push("No internal Drive candidate files were resolved for the required source search.");
+    warnings.push("Chưa tìm được file Drive nội bộ phù hợp với nguồn cần tra cứu.");
+  }
+
+  if (
+    (params.candidateFileCount ?? 0) > 0 &&
+    (routeHint.includes("unavailable") ||
+      /invalid[_\s-]?grant|khong co quyen|loi xac thuc|loi quyen|khong the truy xuat/.test(output))
+  ) {
+    warnings.push("Đã có file ứng viên, nhưng hiện chưa đọc được nguồn; đây là lỗi truy cập/công cụ, không phải bằng chứng rằng nghiệp vụ không có dữ liệu.");
   }
 
   return Array.from(new Set(warnings));

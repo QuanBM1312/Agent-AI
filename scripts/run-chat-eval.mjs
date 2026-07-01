@@ -397,6 +397,8 @@ const BUSINESS_EVAL_CASES = [
         "không dùng giá thị trường",
         "không trả giá web",
         "web fallback is blocked",
+        "không dùng web",
+        "không dùng web/giá thị trường",
       ],
     ],
     ...internalCase({}),
