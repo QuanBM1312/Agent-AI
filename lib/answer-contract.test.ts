@@ -105,6 +105,25 @@ test("generic n8n transport without source proof is not verified", () => {
   assert.equal(metadata.evidence.length, 0);
 });
 
+test("Agent0 missing-source route is missing, not verified Agent0 evidence", () => {
+  const queryPlan = buildQueryPlan("Hàng RBC còn tồn bao nhiêu ở từng kho?");
+  const metadata = buildAnswerContractMetadata({
+    queryPlan,
+    routeHint: "agent0_deep_missing_source",
+    output: "Tôi chưa tìm được file nội bộ phù hợp để chuyển sang Agent0 đọc và phân tích.",
+    toolProvider: "n8n",
+    calculationDriveSearched: true,
+    candidateFileCount: 0,
+    sourcePlanPresent: false,
+    answerContractPresent: false,
+  });
+
+  assert.equal(metadata.verificationStatus, "missing");
+  assert.equal(metadata.evidence.length, 0);
+  assert.ok(metadata.missingData.some((item) => item.sourceRequirement === "inventory_current_stock"));
+  assert.ok(metadata.executionTrace.some((event) => event.status === "missing_source"));
+});
+
 test("n8n sourced response needs citation or evidence proof", () => {
   const metadata = buildAnswerContractMetadata({
     queryPlan: null,

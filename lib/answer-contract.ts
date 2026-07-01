@@ -109,7 +109,10 @@ function evidenceFromRoute(params: BuildAnswerContractMetadataInput): EvidenceIt
   const citations = readCitations(params.citations);
   const hasCitations = citations.length > 0;
   const hasResponseEvidence = hasStructuredEvidence(params.responseEvidence);
-  const hasAgent0Proof = Boolean(params.agent0ContextId?.trim()) || routeIncludes(routeHint, ["agent0", "search_agent0"]);
+  const isMissingSourceRoute = routeIncludes(routeHint, ["missing_source", "source_not_found", "needs_data"]);
+  const hasAgent0Proof =
+    !isMissingSourceRoute &&
+    (Boolean(params.agent0ContextId?.trim()) || routeIncludes(routeHint, ["agent0", "search_agent0"]));
   const hasN8nToolProof = params.toolExecutionProof === true || hasCitations || hasResponseEvidence;
   const evidence: EvidenceItem[] = [];
 
@@ -217,7 +220,7 @@ function missingDataForPlan(params: BuildAnswerContractMetadataInput): MissingDa
 
   for (const requirement of plan.sourceRequirements) {
     if (
-      routeIncludes(routeHint, ["source_not_found", "needs_data"]) &&
+      routeIncludes(routeHint, ["missing_source", "source_not_found", "needs_data"]) &&
       !missing.some((item) => item.sourceRequirement === requirement)
     ) {
       missing.push({
@@ -279,7 +282,7 @@ function statusFor(params: BuildAnswerContractMetadataInput, evidence: EvidenceI
     return "tool_unavailable" satisfies VerificationStatus;
   }
 
-  if (routeIncludes(routeHint, ["source_not_found", "needs_data", "need_selection", "internal_price_unavailable"])) {
+  if (routeIncludes(routeHint, ["missing_source", "source_not_found", "needs_data", "need_selection", "internal_price_unavailable"])) {
     return "missing" satisfies VerificationStatus;
   }
 

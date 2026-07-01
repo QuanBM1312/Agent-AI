@@ -2742,19 +2742,6 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    if (
-      requestType === "chat" &&
-      !hasAttachment &&
-      sourceRoutePolicy?.routeIntent === "missing_source" &&
-      calculationDriveSearched &&
-      calculationDriveCandidates.length === 0
-    ) {
-      return await persistAndReturnResolution(buildAgent0MissingSourceResolution(queryPlan), {
-        spreadsheetCalculationUsed: false,
-        webSearchUsed: false,
-      });
-    }
-
     // Complex inventory questions should not degrade into a generic n8n/web
     // answer when Drive sources are missing or inconclusive. The app database
     // can still provide a verified stock baseline and explicitly name missing
@@ -2785,6 +2772,19 @@ export async function POST(req: NextRequest) {
           error: serializeErrorForClient(error),
         });
       }
+    }
+
+    if (
+      requestType === "chat" &&
+      !hasAttachment &&
+      sourceRoutePolicy?.routeIntent === "missing_source" &&
+      calculationDriveSearched &&
+      calculationDriveCandidates.length === 0
+    ) {
+      return await persistAndReturnResolution(buildAgent0MissingSourceResolution(queryPlan), {
+        spreadsheetCalculationUsed: false,
+        webSearchUsed: false,
+      });
     }
 
     const outgoingFormData = new FormData();

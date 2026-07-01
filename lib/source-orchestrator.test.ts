@@ -184,6 +184,16 @@ test("route policy sends RBC per-warehouse inventory candidates to Agent0", () =
   assert.equal(probe.sourcePlan.routingPolicy.useAgent0DeepLane, true);
 });
 
+test("route policy keeps inventory analysis on DB fallback when no source candidates exist", () => {
+  const probe = buildRouteProbe("Hàng RBC còn tồn bao nhiêu ở từng kho?", []);
+
+  assert.equal(probe.plan.intent, "inventory_analysis");
+  assert.equal(probe.decision.recommendedLane, "missing_source");
+  assert.equal(probe.routePolicy.shouldUseAgent0DeepLane, false);
+  assert.equal(probe.routePolicy.shouldUseInventoryFallback, true);
+  assert.equal(probe.outgoingCandidates.length, 0);
+});
+
 test("route policy keeps simple Panasonic inventory totals on local DB", () => {
   const probe = buildRouteProbe("Hàng Panasonic trong kho có bao nhiêu loại?", [
     {
