@@ -391,7 +391,7 @@ export function buildQueryPlan(prompt: string, context: QueryPlannerContext = {}
     /\b(tach ro|phan tach|du lieu chac chan|du lieu thieu|suy luan)\b.*\b(du lieu|cau tra loi|tra loi|noi ro)\b/,
   ]);
   const profitLossSignal = includesAny(normalized, [
-    /\b(lai[\s/.-]*lo|loi nhuan|dang lai|dang lo|lo nhat|lai nhat|doanh thu.*chi phi|chi phi.*doanh thu|doanh thu.*gia von|gia von.*doanh thu|quy\s*\d|quy gan nhat)\b/,
+    /\b(lai[\s/.-]*lo|loi[\s/.-]*lo|lai hay lo|loi hay lo|lai hoac lo|loi hoac lo|loi nhuan|dang lai|dang loi|dang lo|lo nhat|lai nhat|doanh thu.*chi phi|chi phi.*doanh thu|doanh thu.*gia von|gia von.*doanh thu|quy\s*\d|quy gan nhat)\b/,
   ]);
   const contractStatusSignal = includesAny(normalized, [
     /\b(hop dong|quyet toan|hoan thanh.*chua quyet toan|chua quyet toan|cong no|thanh toan|nghiem thu)\b/,

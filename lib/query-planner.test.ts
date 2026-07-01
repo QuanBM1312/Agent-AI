@@ -147,6 +147,18 @@ test("profit/loss requires revenue and cost", () => {
   assert.equal(buildQueryRoutingPolicy(plan).useAgent0DeepLane, true);
 });
 
+test("natural company profit/loss wording still requires internal finance sources", () => {
+  const plan = buildQueryPlan("công ty đang lời hay lỗ?");
+
+  assert.equal(plan.intent, "profit_loss");
+  assert.ok(plan.sourceRequirements.includes("revenue"));
+  assert.ok(plan.sourceRequirements.includes("cost"));
+  assert.ok(plan.answerContract.includes("do_not_conclude_profit_without_cost"));
+  assert.ok(plan.answerContract.includes("state_formula"));
+  assert.ok(plan.blockedFallbacks.includes("web_search"));
+  assert.equal(buildQueryRoutingPolicy(plan).useAgent0DeepLane, true);
+});
+
 test("public market question allows web", () => {
   const plan = buildQueryPlan("Giá thị trường điều hòa Toshiba trên web hiện nay?");
 
