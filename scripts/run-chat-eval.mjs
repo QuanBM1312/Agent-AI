@@ -91,6 +91,7 @@ const INTERNAL_FILE_ROUTES = [
   "agent0_deep",
   "calculation_needs_data",
   "calculation_drive_candidates_need_selection",
+  "calculation_drive_candidates_upstream_unavailable",
   "calculation_drive_source_not_found",
   "calculation_drive_source_not_found_upstream_unavailable",
   "drive_spreadsheet_price_filter",
@@ -103,6 +104,7 @@ const INTERNAL_FILE_ROUTES = [
 ];
 const INVENTORY_ROUTES = [
   "agent0_deep",
+  "calculation_drive_candidates_upstream_unavailable",
   "local_business_data_boundary",
   "local_inventory_filtered",
   "local_inventory_filter_not_found",
@@ -113,6 +115,7 @@ const INVENTORY_ROUTES = [
 const PROJECT_CONTRACT_ROUTES = [
   "agent0_deep",
   "calculation_drive_candidates_need_selection",
+  "calculation_drive_candidates_upstream_unavailable",
   "calculation_drive_source_not_found",
   "calculation_drive_source_not_found_upstream_unavailable",
   "gemini_file_search_calculation",
@@ -377,6 +380,7 @@ const BUSINESS_EVAL_CASES = [
     allowedRoutes: [
       "agent0_deep",
       "local_internal_price_unavailable",
+      "calculation_drive_candidates_upstream_unavailable",
       "spreadsheet_calculation",
       "drive_spreadsheet_price_filter",
       "gemini_file_search_calculation",
@@ -384,7 +388,17 @@ const BUSINESS_EVAL_CASES = [
     ],
     // If the app finds an internal spreadsheet/file, the proof is the cited file/sheet
     // and no-web route. Do not require a refusal phrase unless no source is found.
-    requiredWarningsAny: [["file", "sheet", "dữ liệu nội bộ", "không trả giá lấy từ web", "không dùng giá thị trường", "không trả giá web"]],
+    requiredWarningsAny: [
+      [
+        "file",
+        "sheet",
+        "dữ liệu nội bộ",
+        "không trả giá lấy từ web",
+        "không dùng giá thị trường",
+        "không trả giá web",
+        "web fallback is blocked",
+      ],
+    ],
     ...internalCase({}),
   },
 ];
